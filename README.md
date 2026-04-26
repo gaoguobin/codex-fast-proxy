@@ -6,7 +6,7 @@ Local Fast proxy for Codex App and Codex CLI. It lets Codex use providers that
 support `service_tier="priority"` even when the official Codex App does not send
 that field.
 
-[中文说明](#中文说明) · [Install](#install) · [Safety](#safety-model) · [Sponsor](#sponsor)
+[中文说明](#中文说明) · [Install](#install) · [Update](#update) · [Uninstall](#uninstall) · [Safety](#safety-model) · [Sponsor](#sponsor)
 
 ## What It Does
 
@@ -49,6 +49,64 @@ process. Then ask:
 After enabling, restart Codex App again, or open a new Codex CLI process, so the running Codex
 process reloads `~/.codex/config.toml`. Future Codex starts use the installed `SessionStart` hook
 to restart the proxy automatically when the recorded provider still points to the local proxy.
+
+## Verify
+
+Ask Codex:
+
+```text
+查看 Codex Fast proxy 状态
+```
+
+Or run:
+
+```powershell
+python -m codex_fast_proxy status
+```
+
+A healthy enabled setup should report `healthy: true`, `config_matches: true`, and
+`startup_hook: true`. After sending a Codex App message, the redacted log should contain a
+`POST /v1/responses` entry with `service_tier_before="<absent>"`,
+`service_tier_after="priority"`, `service_tier_injected=true`, and
+`response_content_type="text/event-stream"`.
+
+## Update
+
+Paste this into Codex:
+
+```text
+Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md
+```
+
+The update flow pulls the installed repository, reinstalls the editable Python package, refreshes
+the skill junction if needed, and runs `doctor`. If the proxy is already enabled, the update flow
+also refreshes the `SessionStart` hook by running `install --start` after confirming the current
+config still points to the proxy.
+
+Restart Codex App, or open a new Codex CLI process, after an update that changes skill files.
+Running proxy processes do not hot-reload code; use `status` to inspect the current process and
+restart the proxy when you want the running process to use the updated package.
+
+## Uninstall
+
+Paste this into Codex:
+
+```text
+Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UNINSTALL.md
+```
+
+Uninstall is intentionally two-phase when the current Codex process may still be using the proxy:
+
+1. The first run restores Codex config to the upstream provider and removes the startup hook, but
+   leaves the proxy process running so the current response can finish.
+2. Restart Codex App, return to the same conversation if desired, or open a new Codex CLI process.
+3. Run the same uninstall prompt again. The second run stops the remaining proxy process, removes
+   runtime state, uninstalls the Python package, removes the skill junction, and deletes
+   `~/.codex/codex-fast-proxy`.
+
+If uninstall reports `config_restore="skipped_config_changed"`, Codex config no longer points to
+the recorded local proxy. Review `~/.codex/config.toml` before using `--force`; the manager avoids
+overwriting user edits in that state.
 
 ## Common Commands
 
@@ -142,6 +200,53 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 
 启用完成后，再重启 Codex App 或新开 CLI 实例，让 Codex 重新读取 provider config。
 
+### 状态检查
+
+对 Codex 说：
+
+```text
+查看 Codex Fast proxy 状态
+```
+
+或直接运行：
+
+```powershell
+python -m codex_fast_proxy status
+```
+
+健康状态应包含 `healthy: true`、`config_matches: true`、`startup_hook: true`。App 发出消息后，
+日志里应出现 `/v1/responses`，并显示 `service_tier_before="<absent>"`、
+`service_tier_after="priority"`、`service_tier_injected=true`、`response_content_type="text/event-stream"`。
+
+### 更新
+
+把这句话贴给 Codex：
+
+```text
+Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md
+```
+
+更新会拉取 GitHub 仓库、重新安装 editable Python 包、补齐 skill junction，并运行 `doctor`。
+如果当前已经启用了代理，更新流程还会刷新 `SessionStart` hook。更新 skill 文件后需要重启
+Codex App，或新开 CLI 实例；已运行的 proxy 进程不会热加载代码。
+
+### 卸载
+
+把这句话贴给 Codex：
+
+```text
+Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UNINSTALL.md
+```
+
+如果当前 Codex 进程可能还在走 proxy，卸载是两阶段：
+
+1. 第一次执行会先把 config 恢复直连，并移除 startup hook，但暂时保留 proxy 进程，避免打断当前会话。
+2. 重启 Codex App 并回到原对话，或新开 CLI 实例。
+3. 第二次执行同一个卸载入口，会停止残留 proxy、卸载 pip 包、删除 skill junction、删除 repo 和 state。
+
+如果返回 `config_restore="skipped_config_changed"`，说明当前 provider 已经不指向记录的本地 proxy。
+这时工具会保守停止，避免覆盖用户手动改过的配置；确认后再考虑 `--force`。
+
 ### 行为边界
 
 - 只修改 `POST /v1/responses`。
@@ -153,16 +258,13 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 启动或恢复会话时，如果配置仍指向本地
   proxy，会自动启动代理。用户手动改回直连时 hook 会静默跳过。
 
-### 卸载和回滚
+### 回滚保护
 
 卸载会优先保护用户配置：
 
 - config 没变：还原安装前备份。
 - config 改过，但 provider 仍指向本地 proxy：只把该 provider 的 `base_url` 改回 upstream，其它改动保留。
 - provider 已经不指向记录的 proxy：停止自动回滚，要求用户确认，避免覆盖用户配置。
-
-如果当前 Codex 进程可能还在走 proxy，先执行 `uninstall --defer-stop`，重启 Codex App
-并回到原对话，或新开 CLI 实例后，再执行 `uninstall` 完成停服务和清理。
 
 卸载只移除 `codex-fast-proxy` 自己写入的 hook，保留用户已有的其它 Codex hooks。
 
