@@ -14,7 +14,9 @@ Running Codex processes do not hot-switch provider config. If this process is us
 
 If the user changed `~/.codex/config.toml` after enabling the proxy, the manager preserves those changes when it can: when the recorded provider still points to the local proxy, it restores only that provider's `base_url` to the saved upstream.
 
-If the Codex environment uses sandbox or approval controls, request approval/escalation for uninstall because it may restore `~/.codex/config.toml`, stop a background proxy, uninstall a Python package, remove a junction under `%USERPROFILE%\.agents`, and delete `%USERPROFILE%\.codex\codex-fast-proxy`.
+Uninstall removes only the `codex-fast-proxy` entry from `~/.codex/hooks.json`; unrelated user hooks must be preserved.
+
+If the Codex environment uses sandbox or approval controls, request approval/escalation for uninstall because it may restore `~/.codex/config.toml`, edit `~/.codex/hooks.json`, stop a background proxy, uninstall a Python package, remove a junction under `%USERPROFILE%\.agents`, and delete `%USERPROFILE%\.codex\codex-fast-proxy`.
 
 If any command fails because of permissions, sandbox write limits, process locks, or junction removal, do not try unrelated workarounds. Ask for approval and rerun the same intended uninstall step.
 

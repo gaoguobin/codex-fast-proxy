@@ -16,15 +16,19 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import codex_fast_proxy.manager as manager  # noqa: E402
 from codex_fast_proxy.manager import (  # noqa: E402
+    autostart_proxy,
     choose_provider,
     command_install,
     command_stop,
     command_uninstall,
     ConfigError,
     doctor_report,
+    has_startup_hook,
+    install_startup_hook,
     load_toml_config,
     paths_for,
     provider_base_url,
+    read_hooks,
     set_provider_base_url,
     stop_process,
 )
@@ -180,6 +184,77 @@ class ManagerConfigTests(unittest.TestCase):
         config = load_toml_config(config_path)
         self.assertEqual(provider_base_url(config, "acme"), "http://127.0.0.1:18787/v1")
 
+    def test_install_start_installs_codex_startup_hook(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+
+        original_start_background = manager.start_background
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+        finally:
+            manager.start_background = original_start_background
+
+        paths = paths_for(codex_home)
+        config = load_toml_config(config_path)
+        hooks = read_hooks(paths.hooks_path)
+        session_start = hooks["hooks"]["SessionStart"]
+        command = session_start[0]["hooks"][0]["command"]
+
+        self.assertTrue(config["features"]["codex_hooks"])
+        self.assertTrue(has_startup_hook(paths))
+        self.assertEqual(session_start[0]["matcher"], "startup|resume")
+        self.assertIn("codex_fast_proxy", command)
+        self.assertIn("autostart", command)
+        self.assertIn("--quiet", command)
+
+    def test_install_startup_hook_updates_existing_fast_proxy_hook(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.hooks_path.parent.mkdir(parents=True)
+        paths.hooks_path.write_text(
+            json.dumps({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup|resume",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python -m codex_fast_proxy autostart --quiet",
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "python -m codex_fast_proxy autostart --quiet",
+                                },
+                            ],
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+
+        result = install_startup_hook(paths)
+        hooks = read_hooks(paths.hooks_path)["hooks"]["SessionStart"][0]["hooks"]
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(len(hooks), 1)
+        self.assertIn("--codex-home", hooks[0]["command"])
+
     def test_install_start_and_uninstall_restore_before_stop(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
@@ -218,6 +293,64 @@ class ManagerConfigTests(unittest.TestCase):
 
         self.assertEqual(config_path.read_text(encoding="utf-8"), original)
 
+    def test_uninstall_removes_fast_proxy_hook_and_keeps_other_hooks(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        paths.hooks_path.write_text(
+            json.dumps({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python -c \"print('keep')\"",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+
+        original_start_background = manager.start_background
+        original_stop_process = manager.stop_process
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234}
+
+        def fake_stop_process(paths, force=False):
+            return {"status": "stopped", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        manager.stop_process = fake_stop_process
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+            self.assertTrue(has_startup_hook(paths))
+            uninstall_args = argparse.Namespace(codex_home=str(codex_home), force=False, keep_state=False, defer_stop=False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_uninstall(uninstall_args), 0)
+        finally:
+            manager.start_background = original_start_background
+            manager.stop_process = original_stop_process
+
+        hooks = read_hooks(paths.hooks_path)
+        kept = hooks["hooks"]["SessionStart"][0]["hooks"][0]
+        self.assertEqual(kept["command"], "python -c \"print('keep')\"")
+        self.assertFalse(has_startup_hook(paths))
+
     def test_install_start_failure_leaves_config_unchanged(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
@@ -243,6 +376,51 @@ class ManagerConfigTests(unittest.TestCase):
             manager.start_background = original_start_background
 
         self.assertEqual(config_path.read_text(encoding="utf-8"), original)
+
+    def test_install_failure_after_hook_change_restores_original_hooks(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        original_config = (
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n'
+        )
+        original_hooks = json.dumps({
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "matcher": "startup",
+                        "hooks": [{"type": "command", "command": "python -c \"print('keep')\""}],
+                    }
+                ]
+            }
+        })
+        config_path.write_text(original_config, encoding="utf-8")
+        paths.hooks_path.write_text(original_hooks, encoding="utf-8")
+
+        original_start_background = manager.start_background
+        original_install_startup_hook = manager.install_startup_hook
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234}
+
+        def fail_after_writing_hook(paths):
+            paths.hooks_path.write_text(json.dumps({"hooks": {"SessionStart": []}}), encoding="utf-8")
+            raise ConfigError("hook failed")
+
+        manager.start_background = fake_start_background
+        manager.install_startup_hook = fail_after_writing_hook
+        try:
+            with self.assertRaises(ConfigError):
+                command_install(self.install_args(codex_home))
+        finally:
+            manager.start_background = original_start_background
+            manager.install_startup_hook = original_install_startup_hook
+
+        self.assertEqual(config_path.read_text(encoding="utf-8"), original_config)
+        self.assertEqual(paths.hooks_path.read_text(encoding="utf-8"), original_hooks)
 
     def test_uninstall_skips_stop_and_files_when_config_changed(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -422,6 +600,80 @@ class ManagerConfigTests(unittest.TestCase):
 
         self.assertEqual(result, {"status": "stopped", "pid": 9999})
         self.assertEqual(terminated, [9999])
+
+    def test_autostart_skips_when_config_no_longer_points_to_proxy(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.settings_path.write_text(
+            json.dumps({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+            }),
+            encoding="utf-8",
+        )
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n[model_providers.acme]\nbase_url = "https://manual.example/v1"\n',
+            encoding="utf-8",
+        )
+
+        original_start_background = manager.start_background
+        start_called = False
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            nonlocal start_called
+            start_called = True
+            return {"status": "started", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        try:
+            result = autostart_proxy(paths, verbose_proxy=False)
+        finally:
+            manager.start_background = original_start_background
+
+        self.assertFalse(start_called)
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "config_not_proxy")
+
+    def test_autostart_starts_when_config_points_to_proxy(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.settings_path.write_text(
+            json.dumps({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+            }),
+            encoding="utf-8",
+        )
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n[model_providers.acme]\nbase_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+
+        original_start_background = manager.start_background
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234, "base_url": settings.base_url}
+
+        manager.start_background = fake_start_background
+        try:
+            result = autostart_proxy(paths, verbose_proxy=False)
+        finally:
+            manager.start_background = original_start_background
+
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["base_url"], "http://127.0.0.1:18787/v1")
 
     def test_uninstall_defer_stop_restores_config_and_keeps_proxy_for_restart(self) -> None:
         codex_home = self.temp_dir / ".codex"

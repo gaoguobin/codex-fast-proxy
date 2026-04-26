@@ -15,6 +15,8 @@ that field.
 - Preserves SSE streaming responses without parsing or rewriting `event:` / `data:` frames.
 - Reads the active Codex provider from `~/.codex/config.toml` and saves the original `base_url` as the upstream.
 - Backs up Codex config, restores safely, and avoids overwriting user edits during uninstall.
+- Installs a Codex `SessionStart` hook after enable, so future Codex App/CLI startups restart the
+  proxy before the first provider request when config still points to the proxy.
 - Writes redacted JSONL logs without headers, API keys, cookies, request bodies, or prompts.
 - Ships with a Codex skill so users can ask Codex to install, enable, check, update, or uninstall it.
 
@@ -45,7 +47,8 @@ process. Then ask:
 ```
 
 After enabling, restart Codex App again, or open a new Codex CLI process, so the running Codex
-process reloads `~/.codex/config.toml`.
+process reloads `~/.codex/config.toml`. Future Codex starts use the installed `SessionStart` hook
+to restart the proxy automatically when the recorded provider still points to the local proxy.
 
 ## Common Commands
 
@@ -55,6 +58,7 @@ Agents should run the manager as the source of truth:
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
 python -m codex_fast_proxy status
+python -m codex_fast_proxy autostart --quiet
 python -m codex_fast_proxy stop --force
 python -m codex_fast_proxy uninstall --defer-stop
 python -m codex_fast_proxy uninstall
@@ -67,12 +71,16 @@ Default paths:
 | Local proxy base URL | `http://127.0.0.1:8787/v1` |
 | Repository install | `~/.codex/codex-fast-proxy` |
 | Runtime state | `~/.codex/codex-fast-proxy-state` |
+| Startup hook | `~/.codex/hooks.json` |
 | Logs | `~/.codex/codex-fast-proxy-state/state/fast_proxy.jsonl` |
 | Config backups | `~/.codex/backups/codex-fast-proxy` |
 
 ## Safety Model
 
 - `install --start` starts the local proxy first, health-checks it, then switches Codex config.
+- Enable also sets `features.codex_hooks = true` and adds one user-level `SessionStart` hook. The
+  hook calls `codex-fast-proxy autostart --quiet`, starts the proxy only when Codex config still
+  points to the recorded local proxy, and otherwise exits quietly.
 - Plain `install` refuses to switch config without a running proxy.
 - If startup or config switching fails, the manager restores the backed-up config.
 - Running Codex processes do not hot-switch provider config. Restart Codex App and return to the
@@ -80,6 +88,8 @@ Default paths:
 - `stop` refuses to stop while Codex config still points to the proxy unless `--force` is explicit.
 - `uninstall --defer-stop` restores config first and leaves the proxy running so a proxy-backed
   current process can finish its response.
+- `uninstall` removes only the `codex-fast-proxy` hook from `~/.codex/hooks.json` and preserves
+  unrelated user hooks.
 - If users edited `~/.codex/config.toml` after enabling the proxy, uninstall preserves those edits
   when possible: if the recorded provider still points to the local proxy, only that provider's
   `base_url` is restored to the saved upstream. If the provider no longer points to the recorded
@@ -140,6 +150,8 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - SSE 流式响应原样透传。
 - 日志脱敏，不记录 API key、Cookie、请求体、prompt 或响应内容。
 - provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
+- 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 启动或恢复会话时，如果配置仍指向本地
+  proxy，会自动启动代理。用户手动改回直连时 hook 会静默跳过。
 
 ### 卸载和回滚
 
@@ -151,6 +163,8 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 
 如果当前 Codex 进程可能还在走 proxy，先执行 `uninstall --defer-stop`，重启 Codex App
 并回到原对话，或新开 CLI 实例后，再执行 `uninstall` 完成停服务和清理。
+
+卸载只移除 `codex-fast-proxy` 自己写入的 hook，保留用户已有的其它 Codex hooks。
 
 ## Sponsor
 

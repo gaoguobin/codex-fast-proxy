@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -30,6 +31,9 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 DEFAULT_PROXY_BASE = "/v1"
 DEFAULT_SERVICE_TIER = "priority"
+HOOK_EVENT = "SessionStart"
+HOOK_MATCHER = "startup|resume"
+HOOK_TIMEOUT_SECONDS = 10
 ENABLE_SESSION_EFFECT = (
     "Running Codex processes keep their current base_url. Restart Codex App, then resume the same conversation if desired, "
     "or open a new CLI process to use the proxy."
@@ -47,6 +51,7 @@ class ProxyPaths:
     app_home: Path
     state_dir: Path
     config_path: Path
+    hooks_path: Path
     settings_path: Path
     manifest_path: Path
     pid_path: Path
@@ -112,6 +117,7 @@ def paths_for(codex_home: str | Path | None) -> ProxyPaths:
         app_home=app_home,
         state_dir=state_dir,
         config_path=resolved_home / "config.toml",
+        hooks_path=resolved_home / "hooks.json",
         settings_path=app_home / "settings.json",
         manifest_path=app_home / "install-manifest.json",
         pid_path=state_dir / "fast_proxy.pid",
@@ -275,6 +281,185 @@ def set_active_provider(config_path: Path, provider: str) -> None:
 
     lines.insert(0, replacement)
     write_toml_lines(config_path, lines, newline)
+
+
+def find_table(lines: list[str], table_name: str) -> int | None:
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]") and stripped[1:-1].strip() == table_name:
+            return index
+    return None
+
+
+def set_feature_flag(config_path: Path, key: str, enabled: bool) -> None:
+    lines, newline = read_toml_lines(config_path)
+    table_index = find_table(lines, "features")
+    replacement = f"{key} = {str(enabled).lower()}"
+
+    if table_index is None:
+        if lines:
+            lines.append("")
+        lines.extend(["[features]", replacement])
+        write_toml_lines(config_path, lines, newline)
+        return
+
+    end_index = next_table_index(lines, table_index)
+    for index in range(table_index + 1, end_index):
+        if is_toml_key(lines[index], key):
+            indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+            lines[index] = indent + replacement
+            write_toml_lines(config_path, lines, newline)
+            return
+
+    lines.insert(end_index, replacement)
+    write_toml_lines(config_path, lines, newline)
+
+
+def command_for_hook(paths: ProxyPaths) -> str:
+    args = [
+        "python",
+        "-m",
+        "codex_fast_proxy",
+        "autostart",
+        "--codex-home",
+        str(paths.codex_home),
+        "--quiet",
+    ]
+    if os.name == "nt":
+        return subprocess.list2cmdline(args)
+    return shlex.join(args)
+
+
+def hook_handler(paths: ProxyPaths) -> dict[str, Any]:
+    return {
+        "type": "command",
+        "command": command_for_hook(paths),
+        "timeout": HOOK_TIMEOUT_SECONDS,
+    }
+
+
+def is_fast_proxy_hook(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("type") == "command"
+        and "codex_fast_proxy" in str(value.get("command", ""))
+        and "autostart" in str(value.get("command", ""))
+    )
+
+
+def read_hooks(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"hooks": {}}
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict):
+        raise ConfigError(f"Invalid Codex hooks file: {path}")
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ConfigError(f"Invalid Codex hooks file: {path}")
+    return data
+
+
+def write_hooks(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def install_startup_hook(paths: ProxyPaths) -> dict[str, Any]:
+    data = read_hooks(paths.hooks_path)
+    event_hooks = data["hooks"].setdefault(HOOK_EVENT, [])
+    if not isinstance(event_hooks, list):
+        raise ConfigError(f"Invalid {HOOK_EVENT} hooks in {paths.hooks_path}")
+
+    handler = hook_handler(paths)
+    found = False
+    changed = False
+    for group in event_hooks:
+        if not isinstance(group, dict):
+            continue
+        hooks = group.get("hooks")
+        if not isinstance(hooks, list):
+            continue
+        kept_hooks = []
+        for hook in hooks:
+            if not is_fast_proxy_hook(hook):
+                kept_hooks.append(hook)
+                continue
+            if not found:
+                kept_hooks.append(handler)
+                found = True
+                changed = changed or hook != handler
+            else:
+                changed = True
+        if len(kept_hooks) != len(hooks):
+            changed = True
+        group["hooks"] = kept_hooks
+
+    if found:
+        if changed:
+            write_hooks(paths.hooks_path, data)
+            return {"status": "updated", "path": str(paths.hooks_path), "command": handler["command"]}
+        return {"status": "already_installed", "path": str(paths.hooks_path), "command": handler["command"]}
+
+    event_hooks.append({"matcher": HOOK_MATCHER, "hooks": [handler]})
+    write_hooks(paths.hooks_path, data)
+    return {"status": "installed", "path": str(paths.hooks_path), "command": handler["command"]}
+
+
+def remove_startup_hook(paths: ProxyPaths) -> dict[str, Any]:
+    if not paths.hooks_path.exists():
+        return {"status": "missing", "path": str(paths.hooks_path)}
+
+    data = read_hooks(paths.hooks_path)
+    event_hooks = data.get("hooks", {}).get(HOOK_EVENT, [])
+    if not isinstance(event_hooks, list):
+        raise ConfigError(f"Invalid {HOOK_EVENT} hooks in {paths.hooks_path}")
+
+    removed = 0
+    kept_groups = []
+    for group in event_hooks:
+        if not isinstance(group, dict):
+            kept_groups.append(group)
+            continue
+        hooks = group.get("hooks")
+        if not isinstance(hooks, list):
+            kept_groups.append(group)
+            continue
+        kept_hooks = [hook for hook in hooks if not is_fast_proxy_hook(hook)]
+        removed += len(hooks) - len(kept_hooks)
+        if kept_hooks:
+            kept_group = dict(group)
+            kept_group["hooks"] = kept_hooks
+            kept_groups.append(kept_group)
+
+    hooks_root = data.setdefault("hooks", {})
+    if kept_groups:
+        hooks_root[HOOK_EVENT] = kept_groups
+    else:
+        hooks_root.pop(HOOK_EVENT, None)
+
+    if not hooks_root:
+        paths.hooks_path.unlink(missing_ok=True)
+        return {"status": "removed_file", "path": str(paths.hooks_path), "removed": removed}
+
+    write_hooks(paths.hooks_path, data)
+    return {"status": "updated", "path": str(paths.hooks_path), "removed": removed}
+
+
+def has_startup_hook(paths: ProxyPaths) -> bool:
+    if not paths.hooks_path.exists():
+        return False
+    try:
+        data = read_hooks(paths.hooks_path)
+    except (ConfigError, json.JSONDecodeError):
+        return False
+    event_hooks = data.get("hooks", {}).get(HOOK_EVENT, [])
+    if not isinstance(event_hooks, list):
+        return False
+    for group in event_hooks:
+        if isinstance(group, dict) and isinstance(group.get("hooks"), list):
+            if any(is_fast_proxy_hook(hook) for hook in group["hooks"]):
+                return True
+    return False
 
 
 def current_process(paths: ProxyPaths) -> tuple[int | None, bool]:
@@ -493,7 +678,9 @@ def command_install(args: argparse.Namespace) -> int:
         backup_path.write_text("", encoding="utf-8")
 
     config_hash_before = sha256_file(paths.config_path)
+    hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
     start_result = None
+    hook_result = None
     try:
         write_settings(paths, settings)
         start_result = start_background(paths, settings, args.verbose_proxy)
@@ -501,6 +688,8 @@ def command_install(args: argparse.Namespace) -> int:
         set_provider_base_url(paths.config_path, provider, settings.base_url)
         if args.activate_provider or active_provider is None:
             set_active_provider(paths.config_path, provider)
+        set_feature_flag(paths.config_path, "codex_hooks", True)
+        hook_result = install_startup_hook(paths)
         config_hash_after = sha256_file(paths.config_path)
 
         manifest = {
@@ -508,15 +697,21 @@ def command_install(args: argparse.Namespace) -> int:
             "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "provider": provider,
             "config_path": str(paths.config_path),
+            "hooks_path": str(paths.hooks_path),
             "backup_path": str(backup_path),
             "config_hash_before": config_hash_before,
             "config_hash_after": config_hash_after,
+            "hook": hook_result,
             "settings": {**asdict(settings), "base_url": settings.base_url},
         }
         write_json(paths.manifest_path, manifest)
     except Exception:
         if start_result and start_result.get("status") == "started":
             stop_process(paths)
+        if hooks_bytes_before is None:
+            paths.hooks_path.unlink(missing_ok=True)
+        else:
+            paths.hooks_path.write_bytes(hooks_bytes_before)
         shutil.copy2(backup_path, paths.config_path)
         raise
 
@@ -528,6 +723,7 @@ def command_install(args: argparse.Namespace) -> int:
         "backup_path": str(backup_path),
         "started": True,
         "config_switched": True,
+        "startup_hook": hook_result,
         "switch_order": "proxy_started_before_config_switch",
         "current_session_effect": ENABLE_SESSION_EFFECT,
         "start_result": start_result,
@@ -617,6 +813,47 @@ def start_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: 
     }
 
 
+def append_autostart_event(paths: ProxyPaths, event: dict[str, Any]) -> None:
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
+    with event_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(compact_json({"ts": time.time(), **event}) + "\n")
+
+
+def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
+    settings_data = read_json(paths.settings_path)
+    if not settings_data:
+        return {"status": "skipped", "reason": "settings_missing"}
+
+    settings = settings_from_dict(settings_data)
+    config = load_toml_config(paths.config_path)
+    config_base_url = provider_base_url(config, settings.provider)
+    if config_base_url != settings.base_url:
+        return {"status": "skipped", "reason": "config_not_proxy", "provider": settings.provider}
+
+    pid, running = current_process(paths)
+    if running:
+        health = proxy_health(settings)
+        if health_matches_settings(health, settings):
+            return {"status": "already_running", "pid": pid, "healthy": True}
+        return {"status": "error", "reason": "running_unhealthy_or_mismatched", "pid": pid}
+
+    return start_background(paths, settings, verbose_proxy)
+
+
+def command_autostart(args: argparse.Namespace) -> int:
+    paths = paths_for(args.codex_home)
+    try:
+        result = autostart_proxy(paths, args.verbose_proxy)
+    except Exception as exc:
+        result = {"status": "error", "error": str(exc)}
+
+    append_autostart_event(paths, result)
+    if not args.quiet:
+        print(json_line(result))
+    return 0
+
+
 def command_stop(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     settings_data = read_json(paths.settings_path)
@@ -653,6 +890,7 @@ def command_status(args: argparse.Namespace) -> int:
         "upstream_base": settings.upstream_base if settings else None,
         "config_base_url": config_base_url,
         "config_matches": bool(settings and config_base_url == settings.base_url),
+        "startup_hook": has_startup_hook(paths),
         "port_available": is_port_available(settings.host, settings.port) if settings else None,
         "health": health,
         "log": str(paths.log_path),
@@ -670,6 +908,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     settings = settings_from_dict(settings_data) if settings_data else None
     pid, running = current_process(paths)
     health = proxy_health(settings) if settings and running else None
+    features = config.get("features", {})
+    hooks_enabled = isinstance(features, dict) and features.get("codex_hooks") is True
 
     checks = [
         {"name": "python", "ok": sys.version_info >= (3, 11), "detail": sys.version.split()[0]},
@@ -683,6 +923,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
             {"name": "config_points_to_proxy", "ok": upstream_base == settings.base_url, "detail": upstream_base},
             {"name": "upstream_saved", "ok": bool(settings.upstream_base), "detail": settings.upstream_base},
             {"name": "proxy_health", "ok": not running or health_matches_settings(health, settings), "detail": health},
+            {"name": "codex_hooks_enabled", "ok": hooks_enabled, "detail": hooks_enabled},
+            {"name": "startup_hook", "ok": has_startup_hook(paths), "detail": str(paths.hooks_path)},
         ])
     else:
         checks.append({"name": "proxy_settings", "ok": False, "detail": str(paths.settings_path)})
@@ -712,6 +954,10 @@ def command_uninstall(args: argparse.Namespace) -> int:
     restore_status = "no_manifest"
     backup_path = None
     can_stop = args.force or manifest is None
+    try:
+        hook_result = remove_startup_hook(paths)
+    except ConfigError as exc:
+        hook_result = {"status": "error", "error": str(exc), "path": str(paths.hooks_path)}
 
     if manifest:
         config_path = Path(manifest["config_path"])
@@ -754,6 +1000,7 @@ def command_uninstall(args: argparse.Namespace) -> int:
         "status": "uninstalled",
         "stop_result": stop_result,
         "config_restore": restore_status,
+        "startup_hook": hook_result,
         "backup_path": backup_path,
         "files": files_status,
     }
@@ -796,6 +1043,11 @@ def build_parser() -> argparse.ArgumentParser:
     start = subparsers.add_parser("start", help="Start the background proxy.")
     add_shared_options(start)
     start.add_argument("--verbose-proxy", action="store_true")
+
+    autostart = subparsers.add_parser("autostart", help="Start proxy from a Codex SessionStart hook if enabled.")
+    add_shared_options(autostart)
+    autostart.add_argument("--quiet", action="store_true")
+    autostart.add_argument("--verbose-proxy", action="store_true")
 
     stop = subparsers.add_parser("stop", help="Stop the background proxy.")
     add_shared_options(stop)
@@ -845,6 +1097,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = {
         "install": command_install,
         "start": command_start,
+        "autostart": command_autostart,
         "stop": command_stop,
         "status": command_status,
         "doctor": command_doctor,

@@ -16,10 +16,12 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - Python package: editable user install of `codex-fast-proxy`
 - Skill namespace junction: `%USERPROFILE%\.agents\skills\codex-fast-proxy -> %USERPROFILE%\.codex\codex-fast-proxy\skills`
 - Runtime state after enable: `%USERPROFILE%\.codex\codex-fast-proxy-state`
+- Startup hook after enable: `%USERPROFILE%\.codex\hooks.json`
 
 ## Install steps
 
 This install only installs files and the skill. It must not switch Codex App to the proxy.
+The startup hook is installed later by `python -m codex_fast_proxy install --start`, not by this file-only install.
 
 If the Codex environment uses sandbox or approval controls, request approval/escalation for the install block because it clones from GitHub, installs a Python package, writes under `%USERPROFILE%\.codex`, and creates a junction under `%USERPROFILE%\.agents`.
 

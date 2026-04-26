@@ -20,6 +20,7 @@ Run the manager as the source of truth:
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
 python -m codex_fast_proxy status
+python -m codex_fast_proxy autostart --quiet
 python -m codex_fast_proxy stop --force
 python -m codex_fast_proxy uninstall --defer-stop
 python -m codex_fast_proxy uninstall
@@ -29,17 +30,21 @@ python -m codex_fast_proxy uninstall
 
 - Installing the repo or skill must not change Codex provider config.
 - Enable with `install --start`; it starts the local proxy before switching Codex config.
+- Enable also installs one user-level Codex `SessionStart` hook in `~/.codex/hooks.json` and sets
+  `features.codex_hooks = true`; the hook starts the proxy on future Codex startup/resume only when
+  the recorded provider still points to the local proxy.
 - Do not run plain `install` to enable the proxy; the manager rejects config switching without `--start`.
 - If proxy startup or config switching fails, the manager restores the backed-up config before returning.
 - Running Codex processes do not hot-switch provider config. After enable, restart Codex App and resume the same conversation if desired, or open a new CLI process.
 - If the current process is already using the proxy, stopping the proxy can interrupt the conversation. Disable with `uninstall --defer-stop`, tell the user to restart Codex App or open a new CLI process, then run uninstall again to finish cleanup.
+- Uninstall removes only the `codex-fast-proxy` hook and must preserve unrelated hooks.
 - Do not run `stop` while Codex config still points to the proxy unless the user explicitly accepts that current and future sessions may fail.
 - `status` and `doctor` include a local health check; treat `healthy=false` as a reason to stop and diagnose before continuing.
 - After a successful enable, report the JSON result and avoid chaining unrelated work in the same turn.
 
 ## Sandbox and approval discipline
 
-- Operations that clone from GitHub, install with `pip`, create `~/.agents` junctions, write `~/.codex/config.toml`, start a background proxy, or remove installed files may need user approval or elevated sandbox permissions.
+- Operations that clone from GitHub, install with `pip`, create `~/.agents` junctions, write `~/.codex/config.toml`, write `~/.codex/hooks.json`, start a background proxy, or remove installed files may need user approval or elevated sandbox permissions.
 - If the harness supports escalation, request approval for the intended command instead of trying alternate paths.
 - If a command fails because of network, permissions, sandbox write limits, junction creation, or background-process restrictions, stop and rerun the same intended action with approval. Do not invent workarounds that bypass the user's sandbox policy.
 - Do not edit `auth.json`, print secrets, copy API keys, or change unrelated Codex config fields.
@@ -67,6 +72,7 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - `install --start` backs up `~/.codex/config.toml`.
 - The selected provider's original `base_url` becomes `upstream_base`.
 - The selected provider's `base_url` becomes `http://127.0.0.1:8787/v1`.
+- A `SessionStart` hook calls `python -m codex_fast_proxy autostart --quiet` on future Codex starts.
 - The proxy only injects `service_tier="priority"` into `POST /v1/responses` when that field is absent.
 - `uninstall` restores the full backup when the current config still matches the installed state.
 - If the config changed but the selected provider still points to the local proxy, `uninstall` restores only that provider's `base_url` to `upstream_base` and preserves other config changes.
