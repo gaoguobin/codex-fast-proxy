@@ -393,7 +393,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--proxy-base", default="/v1")
-    parser.add_argument("--upstream-base", default="https://www.packyapi.com/v1")
+    parser.add_argument("--upstream-base", required=True)
     parser.add_argument("--service-tier", default="priority")
     parser.add_argument("--log-dir", default=str(Path.home() / ".codex" / "codex-fast-proxy-state" / "state"))
     parser.add_argument("--verbose", action="store_true")

@@ -130,7 +130,7 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(writer.getvalue(), b"event: response.output_text.delta\ndata: {\"x\":1}\n\n")
 
     def test_foreground_proxy_default_log_dir_uses_runtime_state_dir(self) -> None:
-        args = parse_args([])
+        args = parse_args(["--upstream-base", "https://api.example.test/v1"])
         expected_suffixes = (
             ".codex\\codex-fast-proxy-state\\state",
             ".codex/codex-fast-proxy-state/state",
