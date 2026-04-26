@@ -315,6 +315,36 @@ def set_feature_flag(config_path: Path, key: str, enabled: bool) -> None:
     write_toml_lines(config_path, lines, newline)
 
 
+def remove_feature_flag(config_path: Path, key: str) -> None:
+    lines, newline = read_toml_lines(config_path)
+    table_index = find_table(lines, "features")
+    if table_index is None:
+        return
+
+    end_index = next_table_index(lines, table_index)
+    for index in range(table_index + 1, end_index):
+        if is_toml_key(lines[index], key):
+            del lines[index]
+            write_toml_lines(config_path, lines, newline)
+            return
+
+
+def config_feature_enabled(config: dict[str, Any], key: str) -> bool:
+    features = config.get("features", {})
+    return isinstance(features, dict) and features.get(key) is True
+
+
+def restore_hook_feature_flag(config_path: Path, backup_path: str | None, hook_result: dict[str, Any]) -> None:
+    if hook_result.get("status") not in {"removed_file", "missing"}:
+        return
+
+    backup_config = load_toml_config(Path(backup_path)) if backup_path else {}
+    if config_feature_enabled(backup_config, "codex_hooks"):
+        set_feature_flag(config_path, "codex_hooks", True)
+    else:
+        remove_feature_flag(config_path, "codex_hooks")
+
+
 def command_for_hook(paths: ProxyPaths) -> str:
     args = [
         "python",
@@ -908,8 +938,7 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     settings = settings_from_dict(settings_data) if settings_data else None
     pid, running = current_process(paths)
     health = proxy_health(settings) if settings and running else None
-    features = config.get("features", {})
-    hooks_enabled = isinstance(features, dict) and features.get("codex_hooks") is True
+    hooks_enabled = config_feature_enabled(config, "codex_hooks")
 
     checks = [
         {"name": "python", "ok": sys.version_info >= (3, 11), "detail": sys.version.split()[0]},
@@ -973,9 +1002,15 @@ def command_uninstall(args: argparse.Namespace) -> int:
         else:
             settings = settings_from_dict(manifest["settings"])
             config = load_toml_config(config_path)
-            if provider_base_url(config, settings.provider) == settings.base_url:
+            config_base_url = provider_base_url(config, settings.provider)
+            if config_base_url == settings.base_url:
                 set_provider_base_url(config_path, settings.provider, settings.upstream_base)
+                restore_hook_feature_flag(config_path, backup_path, hook_result)
                 restore_status = "restored_base_url"
+                can_stop = True
+            elif config_base_url == settings.upstream_base:
+                restore_hook_feature_flag(config_path, backup_path, hook_result)
+                restore_status = "already_restored_base_url"
                 can_stop = True
             elif args.force:
                 shutil.copy2(backup_path, config_path)

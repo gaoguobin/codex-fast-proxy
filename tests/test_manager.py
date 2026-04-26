@@ -738,6 +738,81 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(stop_calls, 1)
         self.assertFalse(paths_for(codex_home).app_home.exists())
 
+    def test_deferred_uninstall_can_finish_after_base_url_only_restore(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n'
+            'model = "gpt-5.4"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+
+        original_start_background = manager.start_background
+        original_stop_process = manager.stop_process
+        stop_calls = 0
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234}
+
+        def fake_stop_process(paths, force=False):
+            nonlocal stop_calls
+            stop_calls += 1
+            return {"status": "stopped", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        manager.stop_process = fake_stop_process
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+
+            config_path.write_text(
+                'model_provider = "acme"\n'
+                'model = "gpt-5.5"\n\n'
+                "[model_providers.acme]\n"
+                'base_url = "http://127.0.0.1:18787/v1"\n\n'
+                "[features]\n"
+                "codex_hooks = true\n",
+                encoding="utf-8",
+            )
+
+            first_uninstall = argparse.Namespace(
+                codex_home=str(codex_home),
+                force=False,
+                keep_state=False,
+                defer_stop=True,
+            )
+            with contextlib.redirect_stdout(io.StringIO()) as first_output:
+                self.assertEqual(command_uninstall(first_uninstall), 0)
+            first_result = json.loads(first_output.getvalue())
+
+            first_config = load_toml_config(config_path)
+            self.assertEqual(first_result["config_restore"], "restored_base_url")
+            self.assertEqual(provider_base_url(first_config, "acme"), "https://api.acme.test/v1")
+            self.assertEqual(first_config["model"], "gpt-5.5")
+            self.assertNotIn("codex_hooks", first_config.get("features", {}))
+            self.assertEqual(stop_calls, 0)
+
+            second_uninstall = argparse.Namespace(
+                codex_home=str(codex_home),
+                force=False,
+                keep_state=False,
+                defer_stop=False,
+            )
+            with contextlib.redirect_stdout(io.StringIO()) as second_output:
+                self.assertEqual(command_uninstall(second_uninstall), 0)
+            second_result = json.loads(second_output.getvalue())
+        finally:
+            manager.start_background = original_start_background
+            manager.stop_process = original_stop_process
+
+        self.assertEqual(second_result["config_restore"], "already_restored_base_url")
+        self.assertEqual(stop_calls, 1)
+        self.assertFalse(paths_for(codex_home).app_home.exists())
+
     def test_doctor_fails_when_installed_config_no_longer_points_to_proxy(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
