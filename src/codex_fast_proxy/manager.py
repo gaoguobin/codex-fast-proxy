@@ -23,6 +23,8 @@ try:
 except ModuleNotFoundError:
     tomllib = None  # type: ignore[assignment]
 
+TOML_DECODE_ERROR = tomllib.TOMLDecodeError if tomllib else ValueError
+
 from . import __version__
 from .proxy import compact_json
 
@@ -655,6 +657,59 @@ def resolve_upstream_base(
     raise ConfigError(f"Provider {provider!r} has no usable upstream base_url; pass --upstream-base.")
 
 
+def backup_matches_upstream(path: Path, provider: str, upstream_base: str) -> bool:
+    try:
+        return provider_base_url(load_toml_config(path), provider) == upstream_base
+    except (ConfigError, OSError, TOML_DECODE_ERROR):
+        return False
+
+
+def find_upstream_backup(paths: ProxyPaths, provider: str, upstream_base: str) -> Path | None:
+    if not paths.backup_dir.exists():
+        return None
+    backups = sorted(paths.backup_dir.glob("config.toml.*.bak"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for backup in backups:
+        if backup_matches_upstream(backup, provider, upstream_base):
+            return backup
+    return None
+
+
+def create_synthetic_upstream_backup(paths: ProxyPaths, provider: str, settings: ProxySettings) -> Path:
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_path = paths.backup_dir / f"config.toml.{timestamp}.bak"
+    if paths.config_path.exists():
+        shutil.copy2(paths.config_path, backup_path)
+        set_provider_base_url(backup_path, provider, settings.upstream_base)
+        remove_feature_flag(backup_path, "codex_hooks")
+    else:
+        backup_path.write_text("", encoding="utf-8")
+    return backup_path
+
+
+def choose_config_backup(paths: ProxyPaths, provider: str, settings: ProxySettings, config: dict[str, Any]) -> Path:
+    enabled = provider_base_url(config, provider) == settings.base_url
+    manifest = read_json(paths.manifest_path)
+    if enabled and manifest:
+        manifest_backup_value = manifest.get("backup_path")
+        manifest_backup = Path(str(manifest_backup_value)) if manifest_backup_value else None
+        if manifest_backup and backup_matches_upstream(manifest_backup, provider, settings.upstream_base):
+            return manifest_backup
+
+        upstream_backup = find_upstream_backup(paths, provider, settings.upstream_base)
+        if upstream_backup:
+            return upstream_backup
+
+        return create_synthetic_upstream_backup(paths, provider, settings)
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    backup_path = paths.backup_dir / f"config.toml.{timestamp}.bak"
+    if paths.config_path.exists():
+        shutil.copy2(paths.config_path, backup_path)
+    else:
+        backup_path.write_text("", encoding="utf-8")
+    return backup_path
+
+
 def command_install(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     config = load_toml_config(paths.config_path)
@@ -700,14 +755,9 @@ def command_install(args: argparse.Namespace) -> int:
     if not args.start:
         raise ConfigError("Refusing to switch Codex config without a running proxy. Use install --start.")
 
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    backup_path = paths.backup_dir / f"config.toml.{timestamp}.bak"
-    if paths.config_path.exists():
-        shutil.copy2(paths.config_path, backup_path)
-    else:
-        backup_path.write_text("", encoding="utf-8")
-
-    config_hash_before = sha256_file(paths.config_path)
+    backup_path = choose_config_backup(paths, provider, settings, config)
+    config_hash_before = sha256_file(backup_path)
+    config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
     hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
     start_result = None
     hook_result = None
@@ -742,7 +792,10 @@ def command_install(args: argparse.Namespace) -> int:
             paths.hooks_path.unlink(missing_ok=True)
         else:
             paths.hooks_path.write_bytes(hooks_bytes_before)
-        shutil.copy2(backup_path, paths.config_path)
+        if config_bytes_before is None:
+            paths.config_path.unlink(missing_ok=True)
+        else:
+            paths.config_path.write_bytes(config_bytes_before)
         raise
 
     print(json_line({

@@ -255,6 +255,106 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(len(hooks), 1)
         self.assertIn("--codex-home", hooks[0]["command"])
 
+    def test_enabled_update_preserves_upstream_backup_for_uninstall(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+
+        original_start_background = manager.start_background
+        original_stop_process = manager.stop_process
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234}
+
+        def fake_stop_process(paths, force=False):
+            return {"status": "stopped", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        manager.stop_process = fake_stop_process
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+            first_manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+            first_backup = Path(first_manifest["backup_path"])
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+            second_manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+            second_backup = Path(second_manifest["backup_path"])
+
+            uninstall_args = argparse.Namespace(codex_home=str(codex_home), force=False, keep_state=False, defer_stop=False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_uninstall(uninstall_args), 0)
+        finally:
+            manager.start_background = original_start_background
+            manager.stop_process = original_stop_process
+
+        self.assertEqual(second_backup, first_backup)
+        self.assertEqual(provider_base_url(load_toml_config(second_backup), "acme"), "https://api.acme.test/v1")
+        config = load_toml_config(config_path)
+        self.assertEqual(provider_base_url(config, "acme"), "https://api.acme.test/v1")
+        self.assertFalse(paths.app_home.exists())
+
+    def test_enabled_update_recovers_from_proxy_backup_manifest(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+
+        original_start_background = manager.start_background
+        original_stop_process = manager.stop_process
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234}
+
+        def fake_stop_process(paths, force=False):
+            return {"status": "stopped", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        manager.stop_process = fake_stop_process
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+            original_backup = Path(json.loads(paths.manifest_path.read_text(encoding="utf-8"))["backup_path"])
+
+            bad_backup = paths.backup_dir / "config.toml.20990101-000000.bak"
+            bad_backup.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8")
+            bad_manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+            bad_manifest["backup_path"] = str(bad_backup)
+            paths.manifest_path.write_text(json.dumps(bad_manifest), encoding="utf-8")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+            repaired_manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+            repaired_backup = Path(repaired_manifest["backup_path"])
+
+            uninstall_args = argparse.Namespace(codex_home=str(codex_home), force=False, keep_state=False, defer_stop=False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_uninstall(uninstall_args), 0)
+        finally:
+            manager.start_background = original_start_background
+            manager.stop_process = original_stop_process
+
+        self.assertEqual(repaired_backup, original_backup)
+        self.assertEqual(provider_base_url(load_toml_config(repaired_backup), "acme"), "https://api.acme.test/v1")
+        config = load_toml_config(config_path)
+        self.assertEqual(provider_base_url(config, "acme"), "https://api.acme.test/v1")
+
     def test_install_start_and_uninstall_restore_before_stop(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
