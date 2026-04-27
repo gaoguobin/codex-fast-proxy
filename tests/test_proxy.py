@@ -220,12 +220,17 @@ class DashboardTests(unittest.TestCase):
                     "ts": "2026-04-27T06:00:00.000+00:00",
                     "provider": "acme",
                     "model": "gpt-test",
+                    "benchmark_mode": "codex-cli",
+                    "profile": "full",
                     "pairs": 3,
                     "provider_confirmed_priority": True,
+                    "priority_accepted": True,
+                    "observed_priority_effective": True,
                     "observed_speedup_total": 1.53,
                     "observed_speedup_ttfb": 1.2,
-                    "default": {"count": 3, "ok": 3, "median_total_ms": 1200.0},
-                    "priority": {"count": 3, "ok": 3, "median_total_ms": 784.3},
+                    "observed_speedup_first_output": 1.4,
+                    "default": {"count": 3, "ok": 3, "median_total_ms": 1200.0, "median_first_output_ms": 500.0},
+                    "priority": {"count": 3, "ok": 3, "median_total_ms": 784.3, "median_first_output_ms": 357.1},
                     "api_key_env": "ACME_API_KEY",
                 }),
                 encoding="utf-8",
@@ -244,10 +249,12 @@ class DashboardTests(unittest.TestCase):
             shutil.rmtree(temp_dir)
 
         self.assertEqual(benchmark["provider"], "acme")
-        self.assertIn("provider acme / model gpt-test / pairs 3", html)
+        self.assertIn("provider acme / model gpt-test / mode codex-cli / profile full / pairs 3", html)
+        self.assertIn("<div class=\"metric-value\">effective</div>", html)
         self.assertIn("<div class=\"metric-value\">1.53x</div>", html)
-        self.assertIn("<div class=\"metric-value\">1200.0 ms</div>", html)
+        self.assertIn("<div class=\"metric-value\">1.40x</div>", html)
         self.assertIn("<div class=\"metric-value\">784.3 ms</div>", html)
+        self.assertIn("default total 1200.0 ms", html)
         self.assertIn("Last run <time class=\"local-time\"", html)
         self.assertNotIn("ACME_API_KEY", html)
 

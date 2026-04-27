@@ -1094,22 +1094,29 @@ def command_doctor(args: argparse.Namespace) -> int:
 
 
 def command_benchmark(args: argparse.Namespace) -> int:
-    from .benchmark import BenchmarkTarget, resolve_api_key, run_benchmark, save_benchmark_result
+    from .benchmark import BenchmarkTarget, discover_api_key, profile_for_name, run_benchmark, save_benchmark_result
 
     paths = paths_for(args.codex_home)
     settings = read_settings(paths)
     config = load_toml_config(paths.config_path)
     provider_config = provider_config_for(config, settings.provider)
     model = args.model or config.get("model")
+    reasoning_effort = args.reasoning_effort or config.get("model_reasoning_effort")
     if not isinstance(model, str) or not model:
         raise ConfigError("Codex config has no model; rerun with --model.")
+    if reasoning_effort is not None and not isinstance(reasoning_effort, str):
+        raise ConfigError("Codex config model_reasoning_effort must be a string; rerun with --reasoning-effort.")
     if args.pairs < 1:
         raise ConfigError("--pairs must be at least 1.")
     if args.pairs > 20:
         raise ConfigError("--pairs must be 20 or less.")
+    try:
+        profile_for_name(args.profile)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
     try:
-        api_key_env, api_key = resolve_api_key(provider_config, args.api_key_env)
+        api_key_source, api_key = discover_api_key(provider_config, args.api_key_env, paths.codex_home)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -1117,12 +1124,13 @@ def command_benchmark(args: argparse.Namespace) -> int:
         provider=settings.provider,
         upstream_base=settings.upstream_base,
         model=model,
+        profile=args.profile,
         service_tier=settings.service_tier,
-        api_key_env=api_key_env,
+        api_key_source=api_key_source,
         api_key=api_key,
+        reasoning_effort=reasoning_effort,
     )
-    result = run_benchmark(target, args.pairs, args.timeout)
-    result["api_key_env"] = api_key_env
+    result = run_benchmark(target, args.pairs, args.timeout, mode=args.mode)
     if args.save:
         save_benchmark_result(paths.benchmark_path, result)
         result["saved_to"] = str(paths.benchmark_path)
@@ -1255,6 +1263,9 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--pairs", type=int, default=3)
     benchmark.add_argument("--timeout", type=float, default=120.0)
     benchmark.add_argument("--model")
+    benchmark.add_argument("--reasoning-effort")
+    benchmark.add_argument("--profile", default="full")
+    benchmark.add_argument("--mode", choices=("codex-cli", "direct"), default="codex-cli")
     benchmark.add_argument("--api-key-env")
     benchmark.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
 

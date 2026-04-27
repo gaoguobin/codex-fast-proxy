@@ -541,7 +541,7 @@ def render_dashboard(server: Any) -> str:
         <summary>Commands</summary>
         <div class="detail-body">
           <code>python -m codex_fast_proxy status</code>
-          <code>python -m codex_fast_proxy benchmark --pairs 3</code>
+          <code>python -m codex_fast_proxy benchmark</code>
           <code>python -m codex_fast_proxy install --start</code>
           <code>python -m codex_fast_proxy uninstall --defer-stop</code>
         </div>
@@ -613,11 +613,24 @@ def render_status_badge(status: Any) -> str:
     return f'<span class="badge"><span class="dot {dot_class}" aria-hidden="true"></span>{label}</span>'
 
 
-def render_confirmation_badge(value: Any) -> str:
-    if value is True:
-        return '<span class="badge"><span class="dot" aria-hidden="true"></span>yes</span>'
-    if value is False:
-        return '<span class="badge"><span class="dot bad" aria-hidden="true"></span>no</span>'
+def benchmark_fast_label(benchmark: dict[str, Any]) -> str:
+    if benchmark.get("observed_priority_effective") is True:
+        return "effective"
+    if benchmark.get("priority_accepted") is True:
+        return "accepted"
+    if benchmark.get("provider_confirmed_priority") is True:
+        return "confirmed"
+    if benchmark.get("priority_accepted") is False:
+        return "not accepted"
+    return "unknown"
+
+
+def render_benchmark_fast_badge(benchmark: dict[str, Any]) -> str:
+    label = benchmark_fast_label(benchmark)
+    if label in {"effective", "accepted", "confirmed"}:
+        return f'<span class="badge"><span class="dot" aria-hidden="true"></span>{label}</span>'
+    if label == "not accepted":
+        return '<span class="badge"><span class="dot bad" aria-hidden="true"></span>not accepted</span>'
     return '<span class="badge muted"><span class="dot warn" aria-hidden="true"></span>unknown</span>'
 
 
@@ -649,64 +662,60 @@ def render_benchmark_section(benchmark: dict[str, Any] | None) -> str:
         <span class="badge muted">Not run</span>
       </div>
       <div class="benchmark-empty">
-        <p>Run <code>python -m codex_fast_proxy benchmark --pairs 3</code> from Codex or a terminal to compare default vs priority latency.</p>
+        <p>Run <code>python -m codex_fast_proxy benchmark</code> from Codex or a terminal to compare default vs priority latency with the full coding workload.</p>
       </div>
     </section>
 """
 
     provider = benchmark.get("provider")
     model = benchmark.get("model")
+    profile = benchmark.get("profile", "full")
+    mode = benchmark.get("benchmark_mode", "direct")
     pairs = benchmark.get("pairs")
     default_total = benchmark_summary_value(benchmark, "default", "median_total_ms")
     priority_total = benchmark_summary_value(benchmark, "priority", "median_total_ms")
+    default_first_output = benchmark_summary_value(benchmark, "default", "median_first_output_ms")
+    priority_first_output = benchmark_summary_value(benchmark, "priority", "median_first_output_ms")
     default_ok = benchmark_summary_value(benchmark, "default", "ok")
     priority_ok = benchmark_summary_value(benchmark, "priority", "ok")
     default_count = benchmark_summary_value(benchmark, "default", "count")
     priority_count = benchmark_summary_value(benchmark, "priority", "count")
     speedup = format_speedup(benchmark.get("observed_speedup_total"))
     ttfb_speedup = format_speedup(benchmark.get("observed_speedup_ttfb"))
-    confirmed = benchmark.get("provider_confirmed_priority")
+    first_output_speedup = format_speedup(benchmark.get("observed_speedup_first_output"))
     sample_text = f"default {html_value(default_ok)}/{html_value(default_count)} / priority {html_value(priority_ok)}/{html_value(priority_count)}"
     return f"""
     <section class="panel section" aria-label="Benchmark">
       <div class="section-head">
         <div>
           <h2>Benchmark</h2>
-          <p>provider {html_value(provider)} / model {html_value(model)} / pairs {html_value(pairs)}</p>
+          <p>provider {html_value(provider)} / model {html_value(model)} / mode {html_value(mode)} / profile {html_value(profile)} / pairs {html_value(pairs)}</p>
         </div>
-        {render_confirmation_badge(confirmed)}
+        {render_benchmark_fast_badge(benchmark)}
       </div>
       <div class="benchmark-grid">
         <div class="metric">
-          <div class="metric-label">Provider Fast</div>
-          <div class="metric-value">{html_value(confirmed_label(confirmed))}</div>
+          <div class="metric-label">Fast result</div>
+          <div class="metric-value">{html_value(benchmark_fast_label(benchmark))}</div>
         </div>
         <div class="metric">
           <div class="metric-label">Observed speedup</div>
           <div class="metric-value">{html_value(speedup)}</div>
         </div>
         <div class="metric">
-          <div class="metric-label">Default median</div>
-          <div class="metric-value">{html_value(format_duration(default_total))}</div>
+          <div class="metric-label">First output</div>
+          <div class="metric-value">{html_value(first_output_speedup)}</div>
         </div>
         <div class="metric">
-          <div class="metric-label">Priority median</div>
+          <div class="metric-label">Priority total</div>
           <div class="metric-value">{html_value(format_duration(priority_total))}</div>
         </div>
       </div>
       <p class="benchmark-note">
-        Last run {render_time_value(benchmark.get("ts"))} / samples {sample_text} / TTFB speedup {html_value(ttfb_speedup)}. Small synthetic sample; not a guarantee.
+        Last run {render_time_value(benchmark.get("ts"))} / samples {sample_text} / default total {html_value(format_duration(default_total))} / first output {html_value(format_duration(default_first_output))} -> {html_value(format_duration(priority_first_output))} / TTFB speedup {html_value(ttfb_speedup)}. Synthetic workload; not a guarantee.
       </p>
     </section>
 """
-
-
-def confirmed_label(value: Any) -> str:
-    if value is True:
-        return "yes"
-    if value is False:
-        return "no"
-    return "unknown"
 
 
 def render_event_row(event: dict[str, Any]) -> str:

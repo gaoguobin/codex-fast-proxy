@@ -86,20 +86,37 @@ Ask Codex:
 Or run:
 
 ```powershell
-python -m codex_fast_proxy benchmark --pairs 3
+python -m codex_fast_proxy benchmark
 ```
 
-The benchmark is opt-in because it sends synthetic Responses API requests and consumes provider
-quota. It compares requests without `service_tier` against requests with `service_tier="priority"`
-directly against the saved upstream, then reports median latency, observed speedup, and whether the
-provider response confirmed `service_tier="priority"`. If the provider config does not define an API
-key environment field, rerun with `--api-key-env NAME`. The dashboard shows a read-only summary of
-the latest saved benchmark result.
+The benchmark is opt-in because it sends a full synthetic Codex workload to the provider and can
+consume noticeable tokens and quota. By default it runs in `codex-cli` mode: the tool starts a local
+forwarding capture proxy, launches real `codex exec` requests, compares three interleaved default vs
+priority pairs, and records the upstream `/v1/responses` latency without storing response content.
+This uses the same kind of request envelope Codex actually sends, including the official Fast config
+mapping where `service_tier="fast"` becomes wire-level `service_tier="priority"`. It reports median
+first-event latency, first-output latency, total latency, observed speedup, whether priority requests
+were accepted, and whether the observed total latency shows an effective priority lane. If the
+provider config does not define an API key environment field, the benchmark also checks common
+environment variables and `~/.codex/auth.json`; rerun with `--api-key-env NAME` only when automatic
+discovery cannot find the key. The dashboard shows a read-only summary of the latest saved benchmark
+result.
+
+Codex App is a desktop client, not a headless benchmark runner. The automated benchmark therefore
+uses Codex CLI/app-server traffic as the repeatable A/B path and labels the result with
+`benchmark_mode`. For App-specific verification, enable the proxy and check recent dashboard traffic:
+App requests should appear as `POST /v1/responses` with `stream=true`, `service_tier` originally
+absent, and the proxy-injected value set to `priority`.
+
+For a cheap connectivity check only, use `python -m codex_fast_proxy benchmark --profile smoke`.
+If Codex CLI is unavailable, use `python -m codex_fast_proxy benchmark --mode direct`; direct mode is
+less representative than the default capture-based benchmark.
 
 Normal proxy logs with `service_tier_injected=true` and HTTP 200 prove only that the proxy sent a
-successful injected request. They do not prove the provider actually routed the request through a
-Fast/Priority lane. Treat Fast support as confirmed only when benchmark reports
-`provider_confirmed_priority=true`; otherwise it is not confirmed or unknown.
+successful injected request. Benchmark results are stronger: `priority_accepted=true` means the
+provider accepted the wire parameter, and `observed_priority_effective=true` means the measured full
+workload was materially faster. `provider_confirmed_priority=true` is extra response metadata when a
+provider exposes it, but many providers do not echo that field.
 
 ## Update
 
@@ -149,7 +166,7 @@ Agents should run the manager as the source of truth:
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
 python -m codex_fast_proxy status
-python -m codex_fast_proxy benchmark --pairs 3
+python -m codex_fast_proxy benchmark
 python -m codex_fast_proxy autostart --quiet
 python -m codex_fast_proxy stop --force
 python -m codex_fast_proxy uninstall --defer-stop
@@ -268,18 +285,32 @@ python -m codex_fast_proxy status
 或直接运行：
 
 ```powershell
-python -m codex_fast_proxy benchmark --pairs 3
+python -m codex_fast_proxy benchmark
 ```
 
-Benchmark 是手动触发的，因为它会发送少量合成 Responses API 请求并消耗 provider quota。它会直接打
-已保存的 upstream，对比不带 `service_tier` 和带 `service_tier="priority"` 的请求，输出 median
-latency、观测到的 speedup，以及供应商响应是否确认 `service_tier="priority"`。如果 provider 配置里
-没有 API key 环境变量字段，使用 `--api-key-env NAME` 指定。dashboard 会只读展示最近一次已保存的
-benchmark 摘要。
+Benchmark 是手动触发的，因为它会向 provider 发送完整的 Codex 合成任务，可能消耗明显的 token 和
+quota。默认使用 `codex-cli` 模式：工具会启动一个本地转发抓包代理，拉起真实 `codex exec` 请求，
+跑 3 组交错的 default vs priority，并记录 upstream `/v1/responses` 耗时，但不保存响应内容。这个
+模式使用 Codex 实际会发送的请求外壳，也会覆盖官方 Fast 配置映射：`service_tier="fast"` 在 wire
+body 中会变成 `service_tier="priority"`。结果会输出首个事件、首个输出、完整耗时的 median latency、
+观测到的 speedup、priority 请求是否被接受，以及完整任务耗时是否体现出有效 priority 通道。dashboard
+会只读展示最近一次已保存的 benchmark 摘要。如果 provider 配置里没有 API key 环境变量字段，
+benchmark 还会检查常见环境变量和 `~/.codex/auth.json`；只有自动发现失败时才需要用
+`--api-key-env NAME` 指定。
+
+Codex App 是桌面客户端，不是适合无头自动化的 benchmark runner。因此自动 benchmark 使用
+Codex CLI/app-server 流量作为可重复的 A/B 路径，并在结果里标出 `benchmark_mode`。如果要验证 App
+侧是否真的走代理，启用 proxy 后看 dashboard 的近期流量：应能看到 `POST /v1/responses`、
+`stream=true`、原始 `service_tier` 缺失，并由 proxy 注入为 `priority`。
+
+如果只想做低成本连通检查，可以运行 `python -m codex_fast_proxy benchmark --profile smoke`。
+如果没有 Codex CLI，可以运行 `python -m codex_fast_proxy benchmark --mode direct`；direct 模式不如
+默认抓包模式贴近真实 Codex 使用。
 
 普通代理日志里的 `service_tier_injected=true` 和 HTTP 200 只能证明代理成功发出了注入后的请求，
-不能证明供应商真的走了 Fast/Priority 通道。只有 benchmark 返回 `provider_confirmed_priority=true`
-时才算确认支持；否则应报告未确认或未知。
+不能证明供应商真的走了 Fast/Priority 通道。Benchmark 里的 `priority_accepted=true` 表示供应商
+接受了这个 wire 参数，`observed_priority_effective=true` 表示完整任务实测明显变快。
+`provider_confirmed_priority=true` 只是供应商响应里额外回显的证据，很多供应商不会返回这个字段。
 
 ### 更新
 
