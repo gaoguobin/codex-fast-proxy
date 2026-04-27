@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 DASHBOARD_PATH = "/__codex_fast_proxy/dashboard"
 DASHBOARD_EVENT_LIMIT = 8
+BENCHMARK_FILENAME = "fast_proxy.benchmark.json"
 
 
 def safe_url_display(url: str) -> str:
@@ -42,6 +43,14 @@ def read_recent_events(log_path: Path, limit: int = DASHBOARD_EVENT_LIMIT) -> li
     return list(events)
 
 
+def read_benchmark_result(log_path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads((log_path.parent / BENCHMARK_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def html_value(value: Any, default: str = "n/a") -> str:
     if value is None:
         return default
@@ -52,6 +61,7 @@ def html_value(value: Any, default: str = "n/a") -> str:
 
 def render_dashboard(server: Any) -> str:
     events = read_recent_events(server.log_path)
+    benchmark = read_benchmark_result(server.log_path)
     last_response = next((event for event in reversed(events) if event.get("eligible")), None)
     latest_event = events[-1] if events else None
     success_count = sum(1 for event in events if int(event.get("status") or 0) < 400)
@@ -285,6 +295,26 @@ def render_dashboard(server: Any) -> str:
       letter-spacing: 0;
       overflow-wrap: anywhere;
     }}
+    .benchmark-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      margin: 12px 16px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--line);
+    }}
+    .benchmark-note {{
+      padding: 0 16px 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .benchmark-empty {{
+      padding: 18px 16px 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
     .section {{
       margin-top: 12px;
     }}
@@ -391,7 +421,7 @@ def render_dashboard(server: Any) -> str:
       main {{ padding: 20px 14px 36px; }}
       .topbar, .headline {{ display: block; }}
       .actions {{ justify-content: flex-start; margin-top: 14px; }}
-      .hero, .details-grid {{ grid-template-columns: 1fr; }}
+      .hero, .details-grid, .benchmark-grid {{ grid-template-columns: 1fr; }}
       .headline h2 {{ font-size: 26px; }}
       .status-chip {{ margin-top: 14px; }}
       .route {{ grid-template-columns: 1fr; }}
@@ -504,11 +534,14 @@ def render_dashboard(server: Any) -> str:
       </div>
     </section>
 
+    {render_benchmark_section(benchmark)}
+
     <section class="details-grid" aria-label="More information">
       <details open>
         <summary>Commands</summary>
         <div class="detail-body">
           <code>python -m codex_fast_proxy status</code>
+          <code>python -m codex_fast_proxy benchmark --pairs 3</code>
           <code>python -m codex_fast_proxy install --start</code>
           <code>python -m codex_fast_proxy uninstall --defer-stop</code>
         </div>
@@ -578,6 +611,102 @@ def render_status_badge(status: Any) -> str:
     dot_class = "bad" if status_code >= 400 else ""
     label = "Needs attention" if status_code >= 400 else "Healthy"
     return f'<span class="badge"><span class="dot {dot_class}" aria-hidden="true"></span>{label}</span>'
+
+
+def render_confirmation_badge(value: Any) -> str:
+    if value is True:
+        return '<span class="badge"><span class="dot" aria-hidden="true"></span>yes</span>'
+    if value is False:
+        return '<span class="badge"><span class="dot bad" aria-hidden="true"></span>no</span>'
+    return '<span class="badge muted"><span class="dot warn" aria-hidden="true"></span>unknown</span>'
+
+
+def format_speedup(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        return f"{float(value):.2f}x"
+    except (TypeError, ValueError):
+        return None
+
+
+def benchmark_summary_value(benchmark: dict[str, Any], tier: str, key: str) -> Any:
+    summary = benchmark.get(tier)
+    if not isinstance(summary, dict):
+        return None
+    return summary.get(key)
+
+
+def render_benchmark_section(benchmark: dict[str, Any] | None) -> str:
+    if not benchmark:
+        return """
+    <section class="panel section" aria-label="Benchmark">
+      <div class="section-head">
+        <div>
+          <h2>Benchmark</h2>
+          <p>Provider Fast check</p>
+        </div>
+        <span class="badge muted">Not run</span>
+      </div>
+      <div class="benchmark-empty">
+        <p>Run <code>python -m codex_fast_proxy benchmark --pairs 3</code> from Codex or a terminal to compare default vs priority latency.</p>
+      </div>
+    </section>
+"""
+
+    provider = benchmark.get("provider")
+    model = benchmark.get("model")
+    pairs = benchmark.get("pairs")
+    default_total = benchmark_summary_value(benchmark, "default", "median_total_ms")
+    priority_total = benchmark_summary_value(benchmark, "priority", "median_total_ms")
+    default_ok = benchmark_summary_value(benchmark, "default", "ok")
+    priority_ok = benchmark_summary_value(benchmark, "priority", "ok")
+    default_count = benchmark_summary_value(benchmark, "default", "count")
+    priority_count = benchmark_summary_value(benchmark, "priority", "count")
+    speedup = format_speedup(benchmark.get("observed_speedup_total"))
+    ttfb_speedup = format_speedup(benchmark.get("observed_speedup_ttfb"))
+    confirmed = benchmark.get("provider_confirmed_priority")
+    sample_text = f"default {html_value(default_ok)}/{html_value(default_count)} / priority {html_value(priority_ok)}/{html_value(priority_count)}"
+    return f"""
+    <section class="panel section" aria-label="Benchmark">
+      <div class="section-head">
+        <div>
+          <h2>Benchmark</h2>
+          <p>provider {html_value(provider)} / model {html_value(model)} / pairs {html_value(pairs)}</p>
+        </div>
+        {render_confirmation_badge(confirmed)}
+      </div>
+      <div class="benchmark-grid">
+        <div class="metric">
+          <div class="metric-label">Provider Fast</div>
+          <div class="metric-value">{html_value(confirmed_label(confirmed))}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Observed speedup</div>
+          <div class="metric-value">{html_value(speedup)}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Default median</div>
+          <div class="metric-value">{html_value(format_duration(default_total))}</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Priority median</div>
+          <div class="metric-value">{html_value(format_duration(priority_total))}</div>
+        </div>
+      </div>
+      <p class="benchmark-note">
+        Last run {render_time_value(benchmark.get("ts"))} / samples {sample_text} / TTFB speedup {html_value(ttfb_speedup)}. Small synthetic sample; not a guarantee.
+      </p>
+    </section>
+"""
+
+
+def confirmed_label(value: Any) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "unknown"
 
 
 def render_event_row(event: dict[str, Any]) -> str:

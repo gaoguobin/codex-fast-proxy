@@ -6,6 +6,7 @@ import os
 import statistics
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -76,6 +77,10 @@ def extract_response_service_tier(body: bytes) -> str | None:
         return None
     value = payload.get("service_tier")
     return value if isinstance(value, str) and value else None
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def run_sample(
@@ -172,6 +177,7 @@ def run_benchmark(
     priority_summary = summarize_samples(samples, "priority")
     return {
         "status": "completed",
+        "ts": utc_now(),
         "provider": target.provider,
         "upstream_base": target.upstream_base,
         "model": target.model,

@@ -89,6 +89,7 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - The proxy only injects `service_tier="priority"` into `POST /v1/responses` when that field is absent.
 - `benchmark` compares synthetic requests with no `service_tier` against `service_tier="priority"`;
   it stores only redacted metrics in `~/.codex/codex-fast-proxy-state/state/fast_proxy.benchmark.json`.
+  The local dashboard shows the latest saved benchmark summary and never starts benchmark runs.
 - `uninstall` restores the full backup when the current config still matches the installed state.
 - If the config changed but the selected provider still points to the local proxy, `uninstall` restores only that provider's `base_url` to `upstream_base` and preserves other config changes.
 - If `uninstall` reports `config_restore="skipped_config_changed"`, do not delete the package or repo; the selected provider no longer points to the recorded proxy, so ask the user before using `--force`.

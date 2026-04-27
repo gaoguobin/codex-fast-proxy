@@ -93,7 +93,8 @@ The benchmark is opt-in because it sends synthetic Responses API requests and co
 quota. It compares requests without `service_tier` against requests with `service_tier="priority"`
 directly against the saved upstream, then reports median latency, observed speedup, and whether the
 provider response confirmed `service_tier="priority"`. If the provider config does not define an API
-key environment field, rerun with `--api-key-env NAME`.
+key environment field, rerun with `--api-key-env NAME`. The dashboard shows a read-only summary of
+the latest saved benchmark result.
 
 ## Update
 
@@ -189,7 +190,8 @@ response contents. Logs include only operational metadata such as path, status, 
 flag, and whether `service_tier` was injected.
 
 Benchmark sends a fixed synthetic prompt only. It stores redacted metrics such as status, latency,
-and response `service_tier`; it does not store the API key or response content.
+and response `service_tier`; it does not store the API key or response content. The dashboard reads
+only this saved redacted summary.
 
 ## Development
 
@@ -267,7 +269,8 @@ python -m codex_fast_proxy benchmark --pairs 3
 Benchmark 是手动触发的，因为它会发送少量合成 Responses API 请求并消耗 provider quota。它会直接打
 已保存的 upstream，对比不带 `service_tier` 和带 `service_tier="priority"` 的请求，输出 median
 latency、观测到的 speedup，以及供应商响应是否确认 `service_tier="priority"`。如果 provider 配置里
-没有 API key 环境变量字段，使用 `--api-key-env NAME` 指定。
+没有 API key 环境变量字段，使用 `--api-key-env NAME` 指定。dashboard 会只读展示最近一次已保存的
+benchmark 摘要。
 
 ### 更新
 
@@ -311,6 +314,7 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - SSE 流式响应原样透传。
 - 日志脱敏，不记录 API key、Cookie、请求体、prompt 或响应内容。
 - Benchmark 只发送固定合成 prompt，只保存 status、latency、response `service_tier` 等脱敏指标。
+- dashboard 只读取最近一次 benchmark 的脱敏摘要，不提供会消耗 quota 的启动按钮。
 - 浏览器打开 `http://127.0.0.1:8787/v1` 时显示只读本地状态页；API 请求仍按原逻辑转发。
 - provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
 - 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 新建或恢复会话时，如果配置仍指向本地

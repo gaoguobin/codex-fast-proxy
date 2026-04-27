@@ -94,6 +94,7 @@ class BenchmarkTests(unittest.TestCase):
             benchmark.time.perf_counter = original_clock
 
         self.assertEqual(result["status"], "completed")
+        self.assertIn("ts", result)
         self.assertEqual(result["default"]["ok"], 1)
         self.assertEqual(result["priority"]["ok"], 1)
         self.assertEqual(result["priority"]["response_service_tiers"], ["priority"])

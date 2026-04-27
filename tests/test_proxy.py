@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import unittest
+import uuid
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy.dashboard import (  # noqa: E402
+    read_benchmark_result,
     read_recent_events,
     render_dashboard,
     safe_url_display,
@@ -188,6 +191,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("<details open>", html)
         self.assertIn("<summary>Commands</summary>", html)
         self.assertIn("<summary>Privacy</summary>", html)
+        self.assertIn("Benchmark", html)
+        self.assertIn("Not run", html)
         self.assertNotIn("<summary>Health</summary>", html)
         self.assertNotIn("Health JSON", html)
         self.assertIn('<time class="local-time" datetime="2026-04-27T00:00:00.000+00:00"', html)
@@ -199,6 +204,52 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("secret=1", html)
         self.assertNotIn("Bearer should-not-render", html)
         self.assertNotIn("prompt should-not-render", html)
+
+    def test_dashboard_renders_saved_benchmark_result(self) -> None:
+        temp_root = ROOT / ".test_tmp"
+        temp_root.mkdir(exist_ok=True)
+        temp_dir = temp_root / f"dashboard-benchmark-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            log_path = temp_dir / "fast_proxy.jsonl"
+            log_path.write_text("", encoding="utf-8")
+            benchmark_path = temp_dir / "fast_proxy.benchmark.json"
+            benchmark_path.write_text(
+                json.dumps({
+                    "status": "completed",
+                    "ts": "2026-04-27T06:00:00.000+00:00",
+                    "provider": "acme",
+                    "model": "gpt-test",
+                    "pairs": 3,
+                    "provider_confirmed_priority": True,
+                    "observed_speedup_total": 1.53,
+                    "observed_speedup_ttfb": 1.2,
+                    "default": {"count": 3, "ok": 3, "median_total_ms": 1200.0},
+                    "priority": {"count": 3, "ok": 3, "median_total_ms": 784.3},
+                    "api_key_env": "ACME_API_KEY",
+                }),
+                encoding="utf-8",
+            )
+            server = SimpleNamespace(
+                log_path=log_path,
+                server_address=("127.0.0.1", 8787),
+                proxy_base="/v1",
+                upstream_base="https://api.example.test/v1",
+                service_tier="priority",
+            )
+
+            html = render_dashboard(server)
+            benchmark = read_benchmark_result(log_path)
+        finally:
+            shutil.rmtree(temp_dir)
+
+        self.assertEqual(benchmark["provider"], "acme")
+        self.assertIn("provider acme / model gpt-test / pairs 3", html)
+        self.assertIn("<div class=\"metric-value\">1.53x</div>", html)
+        self.assertIn("<div class=\"metric-value\">1200.0 ms</div>", html)
+        self.assertIn("<div class=\"metric-value\">784.3 ms</div>", html)
+        self.assertIn("Last run <time class=\"local-time\"", html)
+        self.assertNotIn("ACME_API_KEY", html)
 
 
 if __name__ == "__main__":
