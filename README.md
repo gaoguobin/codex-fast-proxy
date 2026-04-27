@@ -89,8 +89,10 @@ also refreshes the `SessionStart` hook by running `install --start` after confir
 config still points to the proxy.
 
 Restart Codex App, or open a new Codex CLI process, after an update that changes skill files.
-Running proxy processes do not hot-reload code; use `status` to inspect the current process and
-restart the proxy when you want the running process to use the updated package.
+Running proxy processes do not hot-reload code during the current response. On the next
+`SessionStart`, the hook compares the running proxy runtime with the installed code and restarts a
+stale proxy automatically when Codex config still points to the local proxy. Use `status` to inspect
+`runtime_matches` and `needs_restart`.
 
 ## Uninstall
 
@@ -233,7 +235,9 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 
 更新会拉取 GitHub 仓库、重新安装 editable Python 包、补齐 skill junction，并运行 `doctor`。
 如果当前已经启用了代理，更新流程还会刷新 `SessionStart` hook。更新 skill 文件后需要重启
-Codex App，或新开 CLI 实例；已运行的 proxy 进程不会热加载代码。
+Codex App，或新开 CLI 实例；当前回复中的 proxy 进程不会热加载代码。后续 `SessionStart`
+hook 会比较运行中 proxy 的代码指纹和已安装代码，如果发现旧运行时且 config 仍指向本地 proxy，
+会自动重启代理。
 
 ### 卸载
 

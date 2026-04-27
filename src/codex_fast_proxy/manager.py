@@ -26,7 +26,7 @@ except ModuleNotFoundError:
 TOML_DECODE_ERROR = tomllib.TOMLDecodeError if tomllib else ValueError
 
 from . import __version__
-from .proxy import compact_json
+from .proxy import RUNTIME_ID, compact_json
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -584,6 +584,10 @@ def health_matches_settings(health: dict[str, Any] | None, settings: ProxySettin
     )
 
 
+def health_matches_runtime(health: dict[str, Any] | None) -> bool:
+    return bool(health and health.get("runtime_id") == RUNTIME_ID)
+
+
 def wait_for_proxy_health(settings: ProxySettings, process: subprocess.Popen[Any], timeout: float = 5.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_health = None
@@ -918,7 +922,19 @@ def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
     if running:
         health = proxy_health(settings)
         if health_matches_settings(health, settings):
-            return {"status": "already_running", "pid": pid, "healthy": True}
+            if health_matches_runtime(health):
+                return {"status": "already_running", "pid": pid, "healthy": True, "runtime_id": health.get("runtime_id")}
+            stop_result = stop_process(paths)
+            start_result = start_background(paths, settings, verbose_proxy)
+            return {
+                "status": "restarted",
+                "reason": "runtime_changed",
+                "old_pid": pid,
+                "old_runtime_id": health.get("runtime_id"),
+                "runtime_id": RUNTIME_ID,
+                "stop_result": stop_result,
+                "start_result": start_result,
+            }
         return {"status": "error", "reason": "running_unhealthy_or_mismatched", "pid": pid}
 
     return start_background(paths, settings, verbose_proxy)
@@ -963,11 +979,16 @@ def command_status(args: argparse.Namespace) -> int:
     provider = args.provider or (settings.provider if settings else active_provider_name(config))
     config_base_url = provider_base_url(config, provider) if provider else None
     health = proxy_health(settings) if settings and running else None
+    healthy = health_matches_settings(health, settings) if settings and running else False
+    runtime_matches = health_matches_runtime(health) if healthy else None
 
     print(json_line({
         "status": "running" if running else "stopped",
         "pid": pid,
-        "healthy": health_matches_settings(health, settings) if settings and running else False,
+        "healthy": healthy,
+        "runtime_id": RUNTIME_ID,
+        "runtime_matches": runtime_matches,
+        "needs_restart": bool(healthy and not runtime_matches),
         "provider": provider,
         "base_url": settings.base_url if settings else None,
         "upstream_base": settings.upstream_base if settings else None,
@@ -991,6 +1012,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     settings = settings_from_dict(settings_data) if settings_data else None
     pid, running = current_process(paths)
     health = proxy_health(settings) if settings and running else None
+    healthy = health_matches_settings(health, settings) if settings and running else False
+    runtime_matches = health_matches_runtime(health) if healthy else None
     hooks_enabled = config_feature_enabled(config, "codex_hooks")
 
     checks = [
@@ -1004,7 +1027,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
             {"name": "proxy_settings", "ok": True, "detail": str(paths.settings_path)},
             {"name": "config_points_to_proxy", "ok": upstream_base == settings.base_url, "detail": upstream_base},
             {"name": "upstream_saved", "ok": bool(settings.upstream_base), "detail": settings.upstream_base},
-            {"name": "proxy_health", "ok": not running or health_matches_settings(health, settings), "detail": health},
+            {"name": "proxy_health", "ok": not running or healthy, "detail": health},
+            {"name": "proxy_runtime", "ok": not healthy or runtime_matches, "detail": health.get("runtime_id") if health else None},
             {"name": "codex_hooks_enabled", "ok": hooks_enabled, "detail": hooks_enabled},
             {"name": "startup_hook", "ok": has_startup_hook(paths), "detail": str(paths.hooks_path)},
         ])

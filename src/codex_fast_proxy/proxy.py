@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.client
 import json
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit
 
+from . import __version__
 from .dashboard import DASHBOARD_PATH, render_dashboard
 
 
@@ -33,6 +35,19 @@ HOP_BY_HOP_HEADERS = {
 BODY_METHODS = {"POST", "PUT", "PATCH"}
 RESPONSES_PATH = "/v1/responses"
 HEALTH_PATH = "/__codex_fast_proxy/health"
+
+
+def source_fingerprint(paths: Iterable[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(str(path).encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
+RUNTIME_ID = source_fingerprint([Path(__file__), Path(render_dashboard.__code__.co_filename)])
 
 
 def utc_now() -> str:
@@ -274,6 +289,8 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "proxy_base": self.server.proxy_base,
             "upstream_base": self.server.upstream_base,
             "service_tier": self.server.service_tier,
+            "version": __version__,
+            "runtime_id": RUNTIME_ID,
         }
         encoded = compact_json(payload).encode("utf-8")
         self.send_response(200)

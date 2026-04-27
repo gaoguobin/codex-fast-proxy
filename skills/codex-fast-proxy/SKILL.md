@@ -33,13 +33,18 @@ python -m codex_fast_proxy uninstall
 - Enable also installs one user-level Codex `SessionStart` hook in `~/.codex/hooks.json` and sets
   `features.codex_hooks = true`; the hook starts the proxy on future Codex startup/resume only when
   the recorded provider still points to the local proxy.
+- After an enabled update, a running proxy may still use old code during the current response.
+  On the next `SessionStart`, the hook compares the running proxy runtime with the installed code
+  and restarts stale proxy runtime automatically when config still points to the local proxy.
 - Do not run plain `install` to enable the proxy; the manager rejects config switching without `--start`.
 - If proxy startup or config switching fails, the manager restores the backed-up config before returning.
 - Running Codex processes do not hot-switch provider config. After enable, restart Codex App and resume the same conversation if desired, or open a new CLI process.
 - If the current process is already using the proxy, stopping the proxy can interrupt the conversation. Disable with `uninstall --defer-stop`, tell the user to restart Codex App or open a new CLI process, then run uninstall again to finish cleanup.
 - Uninstall removes only the `codex-fast-proxy` hook and must preserve unrelated hooks.
 - Do not run `stop` while Codex config still points to the proxy unless the user explicitly accepts that current and future sessions may fail.
-- `status` and `doctor` include a local health check; treat `healthy=false` as a reason to stop and diagnose before continuing.
+- `status` and `doctor` include a local health check and runtime check; treat `healthy=false` as a
+  reason to stop and diagnose before continuing. If `status.needs_restart=true` after update, tell
+  the user to restart Codex App or open a new CLI process so the startup hook can restart stale runtime.
 - After a successful enable, report the JSON result and avoid chaining unrelated work in the same turn.
 
 ## Sandbox and approval discipline
