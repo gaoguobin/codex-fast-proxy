@@ -384,6 +384,9 @@ def render_dashboard(server: Any) -> str:
       overflow-wrap: anywhere;
       white-space: pre-wrap;
     }}
+    .local-time {{
+      font-variant-numeric: tabular-nums;
+    }}
     @media (max-width: 860px) {{
       main {{ padding: 20px 14px 36px; }}
       .topbar, .headline {{ display: block; }}
@@ -519,6 +522,34 @@ def render_dashboard(server: Any) -> str:
       </details>
     </section>
   </main>
+  <script>
+    (() => {{
+      const pad = (value) => String(value).padStart(2, "0");
+      const formatLocalTime = (date) => [
+        date.getFullYear(),
+        "-",
+        pad(date.getMonth() + 1),
+        "-",
+        pad(date.getDate()),
+        " ",
+        pad(date.getHours()),
+        ":",
+        pad(date.getMinutes()),
+        ":",
+        pad(date.getSeconds()),
+      ].join("");
+
+      document.querySelectorAll("time.local-time[datetime]").forEach((node) => {{
+        const value = node.getAttribute("datetime");
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {{
+          return;
+        }}
+        node.textContent = formatLocalTime(date);
+        node.title = `UTC ${{value}}`;
+      }});
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -555,7 +586,7 @@ def render_event_row(event: dict[str, Any]) -> str:
     stream = event.get("stream")
     return (
         "<tr>"
-        f"<td>{html_value(event.get('ts'))}</td>"
+        f"<td>{render_time_value(event.get('ts'))}</td>"
         f"<td class=\"path\" title=\"{html_value(event.get('path'), '')}\">{html_value(event.get('method'))} {html_value(event.get('path'))}</td>"
         f"<td>{render_status_badge(status)}</td>"
         f"<td>{html_value(format_duration(event.get('duration_ms')))}</td>"
@@ -564,6 +595,13 @@ def render_event_row(event: dict[str, Any]) -> str:
         f"<td>{render_boolean_badge(stream)}</td>"
         "</tr>"
     )
+
+
+def render_time_value(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    text = html_value(value)
+    return f'<time class="local-time" datetime="{text}" title="UTC {text}">{text}</time>'
 
 
 def render_tier_change(event: dict[str, Any]) -> str:

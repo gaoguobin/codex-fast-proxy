@@ -190,6 +190,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("<summary>Privacy</summary>", html)
         self.assertNotIn("<summary>Health</summary>", html)
         self.assertNotIn("Health JSON", html)
+        self.assertIn('<time class="local-time" datetime="2026-04-27T00:00:00.000+00:00"', html)
+        self.assertIn("formatLocalTime", html)
         self.assertIn("&lt;absent&gt; -> priority", html)
         self.assertIn('class="badge muted">n/a</span>', html)
         self.assertNotIn("<span class=\"badge\">-</span>", html)
