@@ -60,6 +60,7 @@ class ProxyPaths:
     log_path: Path
     stdout_path: Path
     stderr_path: Path
+    benchmark_path: Path
     backup_dir: Path
 
 
@@ -126,6 +127,7 @@ def paths_for(codex_home: str | Path | None) -> ProxyPaths:
         log_path=state_dir / "fast_proxy.jsonl",
         stdout_path=state_dir / "fast_proxy.stdout.log",
         stderr_path=state_dir / "fast_proxy.stderr.log",
+        benchmark_path=state_dir / "fast_proxy.benchmark.json",
         backup_dir=resolved_home / "backups" / "codex-fast-proxy",
     )
 
@@ -168,11 +170,16 @@ def choose_provider(config: dict[str, Any], provider: str | None) -> str:
 
 
 def provider_base_url(config: dict[str, Any], provider: str) -> str | None:
-    provider_config = configured_providers(config).get(provider, {})
-    if not isinstance(provider_config, dict):
-        return None
+    provider_config = provider_config_for(config, provider)
     value = provider_config.get("base_url")
     return value if isinstance(value, str) and value else None
+
+
+def provider_config_for(config: dict[str, Any], provider: str) -> dict[str, Any]:
+    provider_config = configured_providers(config).get(provider, {})
+    if not isinstance(provider_config, dict):
+        return {}
+    return provider_config
 
 
 def settings_from_dict(value: dict[str, Any]) -> ProxySettings:
@@ -1086,6 +1093,43 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 2
 
 
+def command_benchmark(args: argparse.Namespace) -> int:
+    from .benchmark import BenchmarkTarget, resolve_api_key, run_benchmark, save_benchmark_result
+
+    paths = paths_for(args.codex_home)
+    settings = read_settings(paths)
+    config = load_toml_config(paths.config_path)
+    provider_config = provider_config_for(config, settings.provider)
+    model = args.model or config.get("model")
+    if not isinstance(model, str) or not model:
+        raise ConfigError("Codex config has no model; rerun with --model.")
+    if args.pairs < 1:
+        raise ConfigError("--pairs must be at least 1.")
+    if args.pairs > 20:
+        raise ConfigError("--pairs must be 20 or less.")
+
+    try:
+        api_key_env, api_key = resolve_api_key(provider_config, args.api_key_env)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    target = BenchmarkTarget(
+        provider=settings.provider,
+        upstream_base=settings.upstream_base,
+        model=model,
+        service_tier=settings.service_tier,
+        api_key_env=api_key_env,
+        api_key=api_key,
+    )
+    result = run_benchmark(target, args.pairs, args.timeout)
+    result["api_key_env"] = api_key_env
+    if args.save:
+        save_benchmark_result(paths.benchmark_path, result)
+        result["saved_to"] = str(paths.benchmark_path)
+    print(json_line(result))
+    return 0
+
+
 def command_uninstall(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     manifest = read_json(paths.manifest_path)
@@ -1206,6 +1250,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_shared_options(doctor)
     doctor.add_argument("--provider")
 
+    benchmark = subparsers.add_parser("benchmark", help="Run an opt-in default vs priority latency benchmark.")
+    add_shared_options(benchmark)
+    benchmark.add_argument("--pairs", type=int, default=3)
+    benchmark.add_argument("--timeout", type=float, default=120.0)
+    benchmark.add_argument("--model")
+    benchmark.add_argument("--api-key-env")
+    benchmark.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
+
     uninstall = subparsers.add_parser("uninstall", help="Stop proxy and restore the backed-up Codex config.")
     add_shared_options(uninstall)
     uninstall.add_argument("--force", action="store_true")
@@ -1246,6 +1298,7 @@ def main(argv: list[str] | None = None) -> int:
         "stop": command_stop,
         "status": command_status,
         "doctor": command_doctor,
+        "benchmark": command_benchmark,
         "uninstall": command_uninstall,
     }
     try:

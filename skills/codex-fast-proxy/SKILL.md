@@ -1,6 +1,6 @@
 ---
 name: codex-fast-proxy
-description: Installs, enables, checks, stops, or uninstalls Codex App Fast proxy. Use when the user asks for Codex App Fast, priority service_tier, PackyAPI Fast, provider acceleration, or says phrases like "启用 Codex Fast proxy", "让 Codex App 使用 Fast", "查看 Fast proxy 状态", or "停止 Codex Fast proxy".
+description: Installs, enables, checks, benchmarks, stops, or uninstalls Codex App Fast proxy. Use when the user asks for Codex App Fast, priority service_tier, PackyAPI Fast, provider acceleration, Fast/Priority A/B benchmark, or says phrases like "启用 Codex Fast proxy", "让 Codex App 使用 Fast", "跑 Fast proxy benchmark", "验证供应商是否支持 Fast", "查看 Fast proxy 状态", or "停止 Codex Fast proxy".
 ---
 
 Use this skill when the user wants Codex to manage the local Fast proxy for Codex App.
@@ -10,6 +10,7 @@ Use this skill when the user wants Codex to manage the local Fast proxy for Code
 - Natural language enable requests such as `启用 Codex Fast proxy`
 - App Fast requests such as `让 Codex App 使用 Fast`
 - Provider-specific requests such as `PackyAPI 开 Fast`
+- Benchmark requests such as `跑 Fast proxy benchmark`, `验证供应商是否支持 Fast`, `Fast 模式有没有变快`
 - Maintenance requests such as `查看 Fast proxy 状态`, `停止 Fast proxy`, `卸载 Fast proxy`
 
 ## How to execute
@@ -20,6 +21,7 @@ Run the manager as the source of truth:
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
 python -m codex_fast_proxy status
+python -m codex_fast_proxy benchmark --pairs 3
 python -m codex_fast_proxy autostart --quiet
 python -m codex_fast_proxy stop --force
 python -m codex_fast_proxy uninstall --defer-stop
@@ -43,6 +45,9 @@ python -m codex_fast_proxy uninstall
 - If the current process is already using the proxy, stopping the proxy can interrupt the conversation. Disable with `uninstall --defer-stop`, tell the user to restart Codex App or open a new CLI process, then run uninstall again to finish cleanup.
 - Uninstall removes only the `codex-fast-proxy` hook and must preserve unrelated hooks.
 - Do not run `stop` while Codex config still points to the proxy unless the user explicitly accepts that current and future sessions may fail.
+- Run `benchmark` only when the user explicitly asks for an A/B check or confirms the cost. It sends
+  synthetic `default` and `priority` Responses API requests directly to the saved upstream, consumes
+  provider quota, and may need `--api-key-env` if the provider config has no API key env field.
 - `status` and `doctor` include a local health check and runtime check; treat `healthy=false` as a
   reason to stop and diagnose before continuing. If `status.needs_restart=true` after update, tell
   the user to restart Codex App or open a new CLI process so the startup hook can restart stale runtime.
@@ -71,6 +76,8 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - Treat the JSON output as the source of truth.
 - Report `provider`, `base_url`, `upstream_base`, `running`, and backup or restore status.
 - Do not print API keys, `auth.json`, request bodies, prompts, or Codex history.
+- For benchmark results, report medians, observed speedup, provider-confirmed priority, sample
+  counts, and errors. Do not claim a guaranteed speedup from small samples.
 - If install or update changed the skill files, tell the user to restart Codex.
 
 ## Expected behavior
@@ -80,6 +87,8 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - The selected provider's `base_url` becomes `http://127.0.0.1:8787/v1`.
 - A `SessionStart` hook calls `python -m codex_fast_proxy autostart --quiet` on future Codex sessions.
 - The proxy only injects `service_tier="priority"` into `POST /v1/responses` when that field is absent.
+- `benchmark` compares synthetic requests with no `service_tier` against `service_tier="priority"`;
+  it stores only redacted metrics in `~/.codex/codex-fast-proxy-state/state/fast_proxy.benchmark.json`.
 - `uninstall` restores the full backup when the current config still matches the installed state.
 - If the config changed but the selected provider still points to the local proxy, `uninstall` restores only that provider's `base_url` to `upstream_base` and preserves other config changes.
 - If `uninstall` reports `config_restore="skipped_config_changed"`, do not delete the package or repo; the selected provider no longer points to the recorded proxy, so ask the user before using `--force`.

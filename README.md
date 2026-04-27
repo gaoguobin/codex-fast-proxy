@@ -75,6 +75,26 @@ You can also open `http://127.0.0.1:8787/v1` in a browser. Browser-style HTML re
 read-only dashboard with local proxy status and recent redacted events; API requests continue to be
 forwarded normally.
 
+## Benchmark
+
+Ask Codex:
+
+```text
+跑一下 Codex Fast proxy A/B benchmark
+```
+
+Or run:
+
+```powershell
+python -m codex_fast_proxy benchmark --pairs 3
+```
+
+The benchmark is opt-in because it sends synthetic Responses API requests and consumes provider
+quota. It compares requests without `service_tier` against requests with `service_tier="priority"`
+directly against the saved upstream, then reports median latency, observed speedup, and whether the
+provider response confirmed `service_tier="priority"`. If the provider config does not define an API
+key environment field, rerun with `--api-key-env NAME`.
+
 ## Update
 
 Paste this into Codex:
@@ -123,6 +143,7 @@ Agents should run the manager as the source of truth:
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
 python -m codex_fast_proxy status
+python -m codex_fast_proxy benchmark --pairs 3
 python -m codex_fast_proxy autostart --quiet
 python -m codex_fast_proxy stop --force
 python -m codex_fast_proxy uninstall --defer-stop
@@ -166,6 +187,9 @@ Default paths:
 The proxy never logs authorization headers, cookies, request bodies, prompts, tool arguments, or
 response contents. Logs include only operational metadata such as path, status, duration, stream
 flag, and whether `service_tier` was injected.
+
+Benchmark sends a fixed synthetic prompt only. It stores redacted metrics such as status, latency,
+and response `service_tier`; it does not store the API key or response content.
 
 ## Development
 
@@ -226,6 +250,25 @@ python -m codex_fast_proxy status
 日志里应出现 `/v1/responses`，并显示 `service_tier_before="<absent>"`、
 `service_tier_after="priority"`、`service_tier_injected=true`、`response_content_type="text/event-stream"`。
 
+### Benchmark
+
+对 Codex 说：
+
+```text
+跑一下 Codex Fast proxy A/B benchmark
+```
+
+或直接运行：
+
+```powershell
+python -m codex_fast_proxy benchmark --pairs 3
+```
+
+Benchmark 是手动触发的，因为它会发送少量合成 Responses API 请求并消耗 provider quota。它会直接打
+已保存的 upstream，对比不带 `service_tier` 和带 `service_tier="priority"` 的请求，输出 median
+latency、观测到的 speedup，以及供应商响应是否确认 `service_tier="priority"`。如果 provider 配置里
+没有 API key 环境变量字段，使用 `--api-key-env NAME` 指定。
+
 ### 更新
 
 把这句话贴给 Codex：
@@ -267,6 +310,7 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - 不改 `model`、`reasoning`、`tools`、`input`。
 - SSE 流式响应原样透传。
 - 日志脱敏，不记录 API key、Cookie、请求体、prompt 或响应内容。
+- Benchmark 只发送固定合成 prompt，只保存 status、latency、response `service_tier` 等脱敏指标。
 - 浏览器打开 `http://127.0.0.1:8787/v1` 时显示只读本地状态页；API 请求仍按原逻辑转发。
 - provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
 - 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 新建或恢复会话时，如果配置仍指向本地
