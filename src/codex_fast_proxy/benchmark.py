@@ -34,7 +34,10 @@ def resolve_api_key_env(provider_config: dict[str, Any], requested: str | None) 
         value = provider_config.get(key)
         if isinstance(value, str) and value:
             return value
-    raise ValueError("Provider has no api key environment field; rerun with --api-key-env.")
+    raise ValueError(
+        "Benchmark cannot confirm Fast support without an API key environment variable. "
+        "Proxy 200 logs only prove the injected request succeeded; rerun with --api-key-env NAME."
+    )
 
 
 def resolve_api_key(provider_config: dict[str, Any], requested: str | None) -> tuple[str, str]:

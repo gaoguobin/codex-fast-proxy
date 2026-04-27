@@ -48,6 +48,11 @@ python -m codex_fast_proxy uninstall
 - Run `benchmark` only when the user explicitly asks for an A/B check or confirms the cost. It sends
   synthetic `default` and `priority` Responses API requests directly to the saved upstream, consumes
   provider quota, and may need `--api-key-env` if the provider config has no API key env field.
+- When the user asks whether their provider supports Fast/Priority, run or request enough input to run
+  `benchmark`. Do not use normal proxy logs, `service_tier_injected=true`, or HTTP 200 responses as
+  proof of provider Fast support; those only prove the proxy sent a successful request. If benchmark
+  cannot run because the API key env var is unknown, report support as unknown/unverified and ask the
+  user for the API key environment variable name.
 - `status` and `doctor` include a local health check and runtime check; treat `healthy=false` as a
   reason to stop and diagnose before continuing. If `status.needs_restart=true` after update, tell
   the user to restart Codex App or open a new CLI process so the startup hook can restart stale runtime.
@@ -77,7 +82,9 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - Report `provider`, `base_url`, `upstream_base`, `running`, and backup or restore status.
 - Do not print API keys, `auth.json`, request bodies, prompts, or Codex history.
 - For benchmark results, report medians, observed speedup, provider-confirmed priority, sample
-  counts, and errors. Do not claim a guaranteed speedup from small samples.
+  counts, and errors. Treat only `provider_confirmed_priority=true` as confirmed Fast support. If it
+  is `false`, report not confirmed; if it is `null` or benchmark did not run, report unknown. Do not
+  claim a guaranteed speedup from small samples.
 - If install or update changed the skill files, tell the user to restart Codex.
 
 ## Expected behavior
