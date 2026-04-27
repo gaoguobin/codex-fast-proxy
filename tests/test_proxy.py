@@ -5,13 +5,20 @@ import sys
 import unittest
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from codex_fast_proxy.dashboard import (  # noqa: E402
+    read_recent_events,
+    render_dashboard,
+    safe_url_display,
+)
 from codex_fast_proxy.proxy import (  # noqa: E402
     copy_request_headers,
+    dashboard_requested,
     parse_args,
     service_tier_patch,
     stream_response_body,
@@ -137,6 +144,59 @@ class ProxyPatchTests(unittest.TestCase):
         )
 
         self.assertTrue(args.log_dir.endswith(expected_suffixes))
+
+
+class DashboardTests(unittest.TestCase):
+    def test_dashboard_only_handles_browser_visits_to_root_or_proxy_base(self) -> None:
+        browser_accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+        self.assertTrue(dashboard_requested("GET", "/", browser_accept, "/v1"))
+        self.assertTrue(dashboard_requested("GET", "/v1", browser_accept, "/v1"))
+        self.assertFalse(dashboard_requested("GET", "/v1", "application/json", "/v1"))
+        self.assertFalse(dashboard_requested("GET", "/v1/models", browser_accept, "/v1"))
+        self.assertFalse(dashboard_requested("POST", "/v1/responses", browser_accept, "/v1"))
+
+    def test_safe_url_display_removes_userinfo_query_and_fragment(self) -> None:
+        self.assertEqual(
+            safe_url_display("https://token:secret@api.example.test:8443/v1?api_key=hidden#frag"),
+            "https://api.example.test:8443/v1",
+        )
+
+    def test_recent_events_ignores_invalid_lines_and_keeps_tail(self) -> None:
+        log_path = ROOT / "tests" / "fixtures" / "fast_proxy_dashboard.jsonl"
+
+        self.assertEqual(
+            [event["path"] for event in read_recent_events(log_path, limit=1)],
+            ["/v1/responses"],
+        )
+
+    def test_dashboard_uses_only_redacted_event_fields(self) -> None:
+        log_path = ROOT / "tests" / "fixtures" / "fast_proxy_dashboard.jsonl"
+        server = SimpleNamespace(
+            log_path=log_path,
+            server_address=("127.0.0.1", 8787),
+            proxy_base="/v1",
+            upstream_base="https://token@api.example.test/v1?secret=1",
+            service_tier="priority",
+        )
+
+        html = render_dashboard(server)
+
+        self.assertIn("Codex Fast Proxy", html)
+        self.assertIn("https://api.example.test/v1", html)
+        self.assertIn("/v1/responses", html)
+        self.assertIn("<details open>", html)
+        self.assertIn("<summary>Commands</summary>", html)
+        self.assertIn("<summary>Privacy</summary>", html)
+        self.assertNotIn("<summary>Health</summary>", html)
+        self.assertNotIn("Health JSON", html)
+        self.assertIn("&lt;absent&gt; -> priority", html)
+        self.assertIn('class="badge muted">n/a</span>', html)
+        self.assertNotIn("<span class=\"badge\">-</span>", html)
+        self.assertNotIn("token@", html)
+        self.assertNotIn("secret=1", html)
+        self.assertNotIn("Bearer should-not-render", html)
+        self.assertNotIn("prompt should-not-render", html)
 
 
 if __name__ == "__main__":

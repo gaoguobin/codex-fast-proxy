@@ -17,6 +17,7 @@ that field.
 - Backs up Codex config, restores safely, and avoids overwriting user edits during uninstall.
 - Installs a Codex `SessionStart` hook after enable, so future Codex App/CLI startups restart the
   proxy before the first provider request when config still points to the proxy.
+- Serves a read-only local status page for browser visits to the proxy root or base URL.
 - Writes redacted JSONL logs without headers, API keys, cookies, request bodies, or prompts.
 - Ships with a Codex skill so users can ask Codex to install, enable, check, update, or uninstall it.
 
@@ -69,6 +70,10 @@ A healthy enabled setup should report `healthy: true`, `config_matches: true`, a
 `POST /v1/responses` entry with `service_tier_before="<absent>"`,
 `service_tier_after="priority"`, `service_tier_injected=true`, and
 `response_content_type="text/event-stream"`.
+
+You can also open `http://127.0.0.1:8787/v1` in a browser. Browser-style HTML requests show a
+read-only dashboard with local proxy status and recent redacted events; API requests continue to be
+forwarded normally.
 
 ## Update
 
@@ -254,6 +259,7 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - 不改 `model`、`reasoning`、`tools`、`input`。
 - SSE 流式响应原样透传。
 - 日志脱敏，不记录 API key、Cookie、请求体、prompt 或响应内容。
+- 浏览器打开 `http://127.0.0.1:8787/v1` 时显示只读本地状态页；API 请求仍按原逻辑转发。
 - provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
 - 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 启动或恢复会话时，如果配置仍指向本地
   proxy，会自动启动代理。用户手动改回直连时 hook 会静默跳过。

@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit
 
+from .dashboard import DASHBOARD_PATH, render_dashboard
+
 
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -64,6 +66,22 @@ def upstream_request_path(raw_path: str, proxy_base: str, upstream_base_path: st
 
     upstream_path = join_paths(upstream_base_path or "/", suffix)
     return f"{upstream_path}?{parsed.query}" if parsed.query else upstream_path
+
+
+def accepts_html(accept_header: str) -> bool:
+    for entry in accept_header.lower().split(","):
+        media_type = entry.split(";", 1)[0].strip()
+        if media_type in {"text/html", "application/xhtml+xml"}:
+            return True
+    return False
+
+
+def dashboard_requested(method: str, raw_path: str, accept_header: str, proxy_base: str) -> bool:
+    if method.upper() != "GET" or not accepts_html(accept_header):
+        return False
+
+    path = normalized_path(raw_path)
+    return path in {"/", normalized_path(proxy_base), DASHBOARD_PATH}
 
 
 def copy_request_headers(headers: Any, upstream_host: str, body_length: int | None) -> dict[str, str]:
@@ -185,6 +203,9 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         if normalized_path(self.path) == HEALTH_PATH:
             self.respond_health()
             return
+        if dashboard_requested(self.command, self.path, self.headers.get("Accept", ""), self.server.proxy_base):
+            self.respond_dashboard()
+            return
         self.proxy()
 
     def do_HEAD(self) -> None:
@@ -258,6 +279,16 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+        self.wfile.flush()
+
+    def respond_dashboard(self) -> None:
+        encoded = render_dashboard(self.server).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(encoded)
         self.wfile.flush()
