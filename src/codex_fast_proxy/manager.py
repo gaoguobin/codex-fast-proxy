@@ -825,6 +825,41 @@ def command_start(args: argparse.Namespace) -> int:
     return 0
 
 
+def already_running_result(paths: ProxyPaths, settings: ProxySettings, pid: int, health: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "already_running",
+        "pid": pid,
+        "healthy": True,
+        "runtime_id": health.get("runtime_id"),
+        "runtime_matches": True,
+        "base_url": settings.base_url,
+        "upstream_base": settings.upstream_base,
+        "log": str(paths.log_path),
+    }
+
+
+def restart_background(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    verbose_proxy: bool,
+    pid: int,
+    health: dict[str, Any],
+) -> dict[str, Any]:
+    stop_result = stop_process(paths)
+    start_result = launch_background(paths, settings, verbose_proxy)
+    return {
+        "status": "restarted",
+        "reason": "runtime_changed",
+        "old_pid": pid,
+        "old_runtime_id": health.get("runtime_id"),
+        "runtime_id": RUNTIME_ID,
+        "base_url": settings.base_url,
+        "upstream_base": settings.upstream_base,
+        "stop_result": stop_result,
+        "start_result": start_result,
+    }
+
+
 def start_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: bool) -> dict[str, Any]:
     paths.state_dir.mkdir(parents=True, exist_ok=True)
 
@@ -832,16 +867,17 @@ def start_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: 
     if running:
         health = proxy_health(settings)
         if health_matches_settings(health, settings):
-            return {
-                "status": "already_running",
-                "pid": pid,
-                "healthy": True,
-                "base_url": settings.base_url,
-                "upstream_base": settings.upstream_base,
-                "log": str(paths.log_path),
-            }
+            if health_matches_runtime(health):
+                return already_running_result(paths, settings, pid, health)
+            return restart_background(paths, settings, verbose_proxy, pid, health)
         raise ConfigError(f"Existing proxy process {pid} is running with different or unhealthy settings. Stop it first.")
     paths.pid_path.unlink(missing_ok=True)
+
+    return launch_background(paths, settings, verbose_proxy)
+
+
+def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: bool) -> dict[str, Any]:
+    paths.state_dir.mkdir(parents=True, exist_ok=True)
 
     if not is_port_available(settings.host, settings.port):
         raise ConfigError(f"Port {settings.port} is already in use on {settings.host}.")
@@ -907,6 +943,12 @@ def append_autostart_event(paths: ProxyPaths, event: dict[str, Any]) -> None:
         log_file.write(compact_json({"ts": time.time(), **event}) + "\n")
 
 
+def should_log_autostart_event(event: dict[str, Any], quiet: bool) -> bool:
+    if not quiet:
+        return True
+    return event.get("status") not in {"already_running", "skipped"}
+
+
 def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
     settings_data = read_json(paths.settings_path)
     if not settings_data:
@@ -923,18 +965,8 @@ def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
         health = proxy_health(settings)
         if health_matches_settings(health, settings):
             if health_matches_runtime(health):
-                return {"status": "already_running", "pid": pid, "healthy": True, "runtime_id": health.get("runtime_id")}
-            stop_result = stop_process(paths)
-            start_result = start_background(paths, settings, verbose_proxy)
-            return {
-                "status": "restarted",
-                "reason": "runtime_changed",
-                "old_pid": pid,
-                "old_runtime_id": health.get("runtime_id"),
-                "runtime_id": RUNTIME_ID,
-                "stop_result": stop_result,
-                "start_result": start_result,
-            }
+                return already_running_result(paths, settings, pid, health)
+            return restart_background(paths, settings, verbose_proxy, pid, health)
         return {"status": "error", "reason": "running_unhealthy_or_mismatched", "pid": pid}
 
     return start_background(paths, settings, verbose_proxy)
@@ -947,7 +979,8 @@ def command_autostart(args: argparse.Namespace) -> int:
     except Exception as exc:
         result = {"status": "error", "error": str(exc)}
 
-    append_autostart_event(paths, result)
+    if should_log_autostart_event(result, args.quiet):
+        append_autostart_event(paths, result)
     if not args.quiet:
         print(json_line(result))
     return 0

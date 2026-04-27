@@ -37,15 +37,17 @@ $statusJson = python -m codex_fast_proxy status
 $status = $statusJson | ConvertFrom-Json
 if ($status.config_matches -eq $true) {
     python -m codex_fast_proxy install --start
+    python -m codex_fast_proxy status
 } else {
     python -m codex_fast_proxy doctor
 }
 ```
 
-Report the final JSON result. If the skill was newly linked or changed, explicitly tell the user:
+Report the install JSON and the final status JSON when the proxy was already enabled; use the final
+status JSON as the current state. If the skill was newly linked or changed, explicitly tell the user:
 
 ```text
 请重启 Codex App 并回到这个对话，或新开 CLI 实例，让它重新扫描 ~/.agents/skills；然后再说“启用 Codex Fast proxy”。
 ```
 
-If `install --start` ran during update, it refreshes `~/.codex/hooks.json` and enables Codex `SessionStart` autostart for future App/CLI starts. If a proxy process was already running before the update, do not claim that the current response has hot-reloaded. Use `status` to report the current running state. If `status.needs_restart` is `true`, tell the user to restart Codex App or open a new CLI process; the `SessionStart` hook will restart the stale proxy runtime automatically before the next provider request when config still points to the local proxy.
+If `install --start` ran during update, it refreshes `~/.codex/hooks.json` and enables Codex `SessionStart` autostart for future App/CLI starts. It also compares the running proxy runtime with the installed code; if the proxy is healthy but stale, it restarts the proxy before returning. Use the final `status` output to report `runtime_matches` and `needs_restart`. If `status.needs_restart` is still `true`, tell the user to restart Codex App or open a new CLI process; the `SessionStart` hook will retry the stale runtime restart when config still points to the local proxy. Codex may fire `SessionStart` for each new or resumed session; `autostart --quiet` does not log normal no-op checks.

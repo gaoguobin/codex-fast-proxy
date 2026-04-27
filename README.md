@@ -85,14 +85,14 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 
 The update flow pulls the installed repository, reinstalls the editable Python package, refreshes
 the skill junction if needed, and runs `doctor`. If the proxy is already enabled, the update flow
-also refreshes the `SessionStart` hook by running `install --start` after confirming the current
-config still points to the proxy.
+runs `install --start` after confirming the current config still points to the proxy. That command
+compares the running proxy runtime with the installed code and restarts a stale proxy before it
+returns, so the local dashboard and future requests use the updated code.
 
-Restart Codex App, or open a new Codex CLI process, after an update that changes skill files.
-Running proxy processes do not hot-reload code during the current response. On the next
-`SessionStart`, the hook compares the running proxy runtime with the installed code and restarts a
-stale proxy automatically when Codex config still points to the local proxy. Use `status` to inspect
-`runtime_matches` and `needs_restart`.
+Restart Codex App, or open a new Codex CLI process, after an update that changes skill files. The
+installed `SessionStart` hook keeps the same runtime check as a backup. Codex fires `SessionStart`
+per new or resumed session; in quiet mode normal no-op checks are not logged, while start, restart,
+and error events are still recorded. Use `status` to inspect `runtime_matches` and `needs_restart`.
 
 ## Uninstall
 
@@ -144,8 +144,9 @@ Default paths:
 
 - `install --start` starts the local proxy first, health-checks it, then switches Codex config.
 - Enable also sets `features.codex_hooks = true` and adds one user-level `SessionStart` hook. The
-  hook calls `codex-fast-proxy autostart --quiet`, starts the proxy only when Codex config still
-  points to the recorded local proxy, and otherwise exits quietly.
+  hook calls `codex-fast-proxy autostart --quiet`, starts or refreshes the proxy only when Codex
+  config still points to the recorded local proxy, and otherwise exits quietly. Codex may run this
+  hook for each new or resumed session; normal no-op checks do not write autostart log entries.
 - Plain `install` refuses to switch config without a running proxy.
 - If startup or config switching fails, the manager restores the backed-up config.
 - Running Codex processes do not hot-switch provider config. Restart Codex App and return to the
@@ -234,10 +235,13 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 ```
 
 更新会拉取 GitHub 仓库、重新安装 editable Python 包、补齐 skill junction，并运行 `doctor`。
-如果当前已经启用了代理，更新流程还会刷新 `SessionStart` hook。更新 skill 文件后需要重启
-Codex App，或新开 CLI 实例；当前回复中的 proxy 进程不会热加载代码。后续 `SessionStart`
-hook 会比较运行中 proxy 的代码指纹和已安装代码，如果发现旧运行时且 config 仍指向本地 proxy，
-会自动重启代理。
+如果当前已经启用了代理，更新流程会运行 `install --start`：它会比较运行中 proxy 的代码指纹和
+已安装代码，如果发现旧运行时且 config 仍指向本地 proxy，会在命令返回前重启代理。因此本地
+dashboard 和后续请求会直接使用新代码。
+
+更新 skill 文件后仍需要重启 Codex App，或新开 CLI 实例，让 Codex 重新扫描 skill。已安装的
+`SessionStart` hook 会作为兜底继续做 runtime 检查。Codex 可能在每个新建或恢复的会话触发这个
+hook；quiet 模式下正常 no-op 不写 autostart 日志，只记录启动、重启和错误。
 
 ### 卸载
 
@@ -265,8 +269,8 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - 日志脱敏，不记录 API key、Cookie、请求体、prompt 或响应内容。
 - 浏览器打开 `http://127.0.0.1:8787/v1` 时显示只读本地状态页；API 请求仍按原逻辑转发。
 - provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
-- 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 启动或恢复会话时，如果配置仍指向本地
-  proxy，会自动启动代理。用户手动改回直连时 hook 会静默跳过。
+- 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 新建或恢复会话时，如果配置仍指向本地
+  proxy，会自动启动或刷新代理。用户手动改回直连时 hook 会静默跳过，正常 no-op 不写日志。
 
 ### 回滚保护
 

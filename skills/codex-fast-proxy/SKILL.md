@@ -31,11 +31,12 @@ python -m codex_fast_proxy uninstall
 - Installing the repo or skill must not change Codex provider config.
 - Enable with `install --start`; it starts the local proxy before switching Codex config.
 - Enable also installs one user-level Codex `SessionStart` hook in `~/.codex/hooks.json` and sets
-  `features.codex_hooks = true`; the hook starts the proxy on future Codex startup/resume only when
-  the recorded provider still points to the local proxy.
-- After an enabled update, a running proxy may still use old code during the current response.
-  On the next `SessionStart`, the hook compares the running proxy runtime with the installed code
-  and restarts stale proxy runtime automatically when config still points to the local proxy.
+  `features.codex_hooks = true`; the hook starts or refreshes the proxy on future Codex sessions
+  only when the recorded provider still points to the local proxy.
+- After an enabled update, `install --start` compares the running proxy runtime with the installed
+  code and restarts stale proxy runtime before returning when config still points to the local proxy.
+  The `SessionStart` hook keeps the same runtime check as a backup. Codex may fire this hook for
+  each new or resumed session; `autostart --quiet` does not log normal no-op checks.
 - Do not run plain `install` to enable the proxy; the manager rejects config switching without `--start`.
 - If proxy startup or config switching fails, the manager restores the backed-up config before returning.
 - Running Codex processes do not hot-switch provider config. After enable, restart Codex App and resume the same conversation if desired, or open a new CLI process.
@@ -77,7 +78,7 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - `install --start` backs up `~/.codex/config.toml`.
 - The selected provider's original `base_url` becomes `upstream_base`.
 - The selected provider's `base_url` becomes `http://127.0.0.1:8787/v1`.
-- A `SessionStart` hook calls `python -m codex_fast_proxy autostart --quiet` on future Codex starts.
+- A `SessionStart` hook calls `python -m codex_fast_proxy autostart --quiet` on future Codex sessions.
 - The proxy only injects `service_tier="priority"` into `POST /v1/responses` when that field is absent.
 - `uninstall` restores the full backup when the current config still matches the installed state.
 - If the config changed but the selected provider still points to the local proxy, `uninstall` restores only that provider's `base_url` to `upstream_base` and preserves other config changes.

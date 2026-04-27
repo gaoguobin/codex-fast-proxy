@@ -799,7 +799,7 @@ class ManagerConfigTests(unittest.TestCase):
         original_current_process = manager.current_process
         original_proxy_health = manager.proxy_health
         original_stop_process = manager.stop_process
-        original_start_background = manager.start_background
+        original_launch_background = manager.launch_background
         calls: list[str] = []
 
         def fake_stop_process(paths, force=False):
@@ -807,7 +807,7 @@ class ManagerConfigTests(unittest.TestCase):
             self.assertFalse(force)
             return {"status": "stopped", "pid": 9999}
 
-        def fake_start_background(paths, settings, verbose_proxy):
+        def fake_launch_background(paths, settings, verbose_proxy):
             calls.append("start")
             return {"status": "started", "pid": 1234, "base_url": settings.base_url}
 
@@ -821,18 +821,103 @@ class ManagerConfigTests(unittest.TestCase):
             "runtime_id": "old-runtime",
         }
         manager.stop_process = fake_stop_process
-        manager.start_background = fake_start_background
+        manager.launch_background = fake_launch_background
         try:
             result = autostart_proxy(paths, verbose_proxy=False)
         finally:
             manager.current_process = original_current_process
             manager.proxy_health = original_proxy_health
             manager.stop_process = original_stop_process
-            manager.start_background = original_start_background
+            manager.launch_background = original_launch_background
 
         self.assertEqual(result["status"], "restarted")
         self.assertEqual(result["reason"], "runtime_changed")
         self.assertEqual(calls, ["stop", "start"])
+
+    def test_start_restarts_when_running_runtime_is_stale(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+
+        original_current_process = manager.current_process
+        original_proxy_health = manager.proxy_health
+        original_stop_process = manager.stop_process
+        original_launch_background = manager.launch_background
+        calls: list[str] = []
+
+        def fake_stop_process(paths, force=False):
+            calls.append("stop")
+            self.assertFalse(force)
+            return {"status": "stopped", "pid": 9999}
+
+        def fake_launch_background(paths, settings, verbose_proxy):
+            calls.append("start")
+            return {"status": "started", "pid": 1234, "base_url": settings.base_url}
+
+        manager.current_process = lambda _paths: (9999, True)
+        manager.proxy_health = lambda _settings: {
+            "ok": True,
+            "pid": 9999,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": "priority",
+            "runtime_id": "old-runtime",
+        }
+        manager.stop_process = fake_stop_process
+        manager.launch_background = fake_launch_background
+        try:
+            result = manager.start_background(paths, settings, verbose_proxy=False)
+        finally:
+            manager.current_process = original_current_process
+            manager.proxy_health = original_proxy_health
+            manager.stop_process = original_stop_process
+            manager.launch_background = original_launch_background
+
+        self.assertEqual(result["status"], "restarted")
+        self.assertEqual(result["reason"], "runtime_changed")
+        self.assertEqual(calls, ["stop", "start"])
+
+    def test_quiet_autostart_does_not_log_noop_events(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
+        args = argparse.Namespace(codex_home=str(codex_home), quiet=True, verbose_proxy=False)
+        original_autostart_proxy = manager.autostart_proxy
+
+        manager.autostart_proxy = lambda _paths, _verbose_proxy: {"status": "already_running", "pid": 1234}
+        try:
+            self.assertEqual(manager.command_autostart(args), 0)
+            self.assertFalse(event_path.exists())
+
+            manager.autostart_proxy = lambda _paths, _verbose_proxy: {"status": "skipped", "reason": "config_not_proxy"}
+            self.assertEqual(manager.command_autostart(args), 0)
+            self.assertFalse(event_path.exists())
+        finally:
+            manager.autostart_proxy = original_autostart_proxy
+
+    def test_quiet_autostart_logs_runtime_changes(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
+        args = argparse.Namespace(codex_home=str(codex_home), quiet=True, verbose_proxy=False)
+        original_autostart_proxy = manager.autostart_proxy
+
+        manager.autostart_proxy = lambda _paths, _verbose_proxy: {"status": "restarted", "reason": "runtime_changed"}
+        try:
+            self.assertEqual(manager.command_autostart(args), 0)
+        finally:
+            manager.autostart_proxy = original_autostart_proxy
+
+        self.assertTrue(event_path.exists())
+        self.assertIn('"status":"restarted"', event_path.read_text(encoding="utf-8"))
 
     def test_uninstall_defer_stop_restores_config_and_keeps_proxy_for_restart(self) -> None:
         codex_home = self.temp_dir / ".codex"
