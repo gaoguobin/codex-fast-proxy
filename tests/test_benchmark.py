@@ -127,6 +127,14 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_priority_accepted_uses_status_not_response_echo(self) -> None:
         self.assertTrue(priority_accepted(summarize_samples([{"tier": "priority", "status": 200}], "priority")))
+        self.assertTrue(
+            priority_accepted(
+                summarize_samples(
+                    [{"tier": "priority", "status": 200}, {"tier": "priority", "status": None}],
+                    "priority",
+                )
+            )
+        )
         self.assertFalse(priority_accepted(summarize_samples([{"tier": "priority", "status": 400}], "priority")))
         self.assertFalse(priority_accepted(summarize_samples([{"tier": "priority", "status": None}], "priority")))
 

@@ -1261,7 +1261,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark = subparsers.add_parser("benchmark", help="Run an opt-in default vs priority latency benchmark.")
     add_shared_options(benchmark)
     benchmark.add_argument("--pairs", type=int, default=3)
-    benchmark.add_argument("--timeout", type=float, default=120.0)
+    benchmark.add_argument("--timeout", type=float, default=300.0)
     benchmark.add_argument("--model")
     benchmark.add_argument("--reasoning-effort")
     benchmark.add_argument("--profile", default="full")

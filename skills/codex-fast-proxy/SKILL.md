@@ -56,6 +56,9 @@ python -m codex_fast_proxy uninstall
   proof of provider Fast support; those only prove the proxy sent a successful request. If automatic
   auth discovery cannot find a key in env/provider config/`~/.codex/auth.json`, ask the user for the
   API key environment variable name and rerun with `--api-key-env`.
+- The default benchmark timeout is 300 seconds per sample. If `full` benchmark reports
+  `TimeoutExpired`, rerun with a larger explicit timeout such as `--timeout 600` before drawing a
+  stability conclusion.
 - `status` and `doctor` include a local health check and runtime check; treat `healthy=false` as a
   reason to stop and diagnose before continuing. If `status.needs_restart=true` after update, tell
   the user to restart Codex App or open a new CLI process so the startup hook can restart stale runtime.
@@ -91,7 +94,9 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
   `observed_priority_effective=true` as proof that this measured workload benefited. Report
   `benchmark_mode` and do not present Codex CLI/app-server benchmark results as an App-specific
   guarantee. For App-specific verification, use recent dashboard/proxy traffic after the user sends
-  an App message. Do not claim a guaranteed speedup from a single run.
+  an App message. `priority_accepted=true` means at least one priority sample succeeded; always
+  report the displayed `ok/count` sample counts with it. Do not claim a guaranteed speedup from a
+  single run.
 - If install or update changed the skill files, tell the user to restart Codex.
 
 ## Expected behavior

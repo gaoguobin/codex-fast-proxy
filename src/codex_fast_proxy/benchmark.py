@@ -724,7 +724,7 @@ def priority_accepted(priority_summary: dict[str, Any]) -> bool | None:
     count = priority_summary["count"]
     if count == 0:
         return None
-    return priority_summary["ok"] == count
+    return priority_summary["ok"] > 0
 
 
 def observed_priority_effective(priority_summary: dict[str, Any], total_speedup: float | None) -> bool | None:
