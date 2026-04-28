@@ -56,8 +56,8 @@ python -m codex_fast_proxy uninstall
   proof of provider Fast support; those only prove the proxy sent a successful request. If automatic
   auth discovery cannot find a key in env/provider config/`~/.codex/auth.json`, ask the user for the
   API key environment variable name and rerun with `--api-key-env`.
-- The default benchmark timeout is 300 seconds per sample. If `full` benchmark reports
-  `TimeoutExpired`, rerun with a larger explicit timeout such as `--timeout 600` before drawing a
+- The default benchmark timeout is 600 seconds per sample. If `full` benchmark reports
+  `TimeoutExpired`, rerun with a larger explicit timeout such as `--timeout 900` before drawing a
   stability conclusion.
 - `status` and `doctor` include a local health check and runtime check; treat `healthy=false` as a
   reason to stop and diagnose before continuing. If `status.needs_restart=true` after update, tell

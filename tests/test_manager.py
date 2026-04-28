@@ -81,6 +81,11 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(paths.app_home, codex_home / "codex-fast-proxy-state")
         self.assertNotEqual(paths.app_home, codex_home / "codex-fast-proxy")
 
+    def test_benchmark_default_timeout_allows_long_codex_runs(self) -> None:
+        args = manager.build_parser().parse_args(["benchmark"])
+
+        self.assertEqual(args.timeout, 600.0)
+
     def install_args(self, codex_home: Path, *, start: bool = True, prepare_only: bool = False) -> argparse.Namespace:
         return argparse.Namespace(
             codex_home=str(codex_home),
