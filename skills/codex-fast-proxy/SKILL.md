@@ -104,7 +104,8 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - `install --start` backs up `~/.codex/config.toml`.
 - The selected provider's original `base_url` becomes `upstream_base`.
 - The selected provider's `base_url` becomes `http://127.0.0.1:8787/v1`.
-- A `SessionStart` hook calls `python -m codex_fast_proxy autostart --quiet` on future Codex sessions.
+- A `SessionStart` hook calls the current Python executable with
+  `-m codex_fast_proxy autostart --quiet` on future Codex sessions.
 - The proxy only injects `service_tier="priority"` into `POST /v1/responses` when that field is absent.
 - `benchmark` compares synthetic Codex-style requests with no `service_tier` against
   `service_tier="priority"`. The default `codex-cli` mode is intended to measure real Codex

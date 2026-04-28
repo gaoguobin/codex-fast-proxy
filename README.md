@@ -193,9 +193,10 @@ Default paths:
 
 - `install --start` starts the local proxy first, health-checks it, then switches Codex config.
 - Enable also sets `features.codex_hooks = true` and adds one user-level `SessionStart` hook. The
-  hook calls `codex-fast-proxy autostart --quiet`, starts or refreshes the proxy only when Codex
-  config still points to the recorded local proxy, and otherwise exits quietly. Codex may run this
-  hook for each new or resumed session; normal no-op checks do not write autostart log entries.
+  hook uses the current Python executable to run `codex_fast_proxy autostart --quiet`, starts or
+  refreshes the proxy only when Codex config still points to the recorded local proxy, and otherwise
+  exits quietly. Codex may run this hook for each new or resumed session; normal no-op checks do not
+  write autostart log entries.
 - Plain `install` refuses to switch config without a running proxy.
 - If startup or config switching fails, the manager restores the backed-up config.
 - Running Codex processes do not hot-switch provider config. Restart Codex App and return to the
@@ -366,8 +367,9 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - dashboard 只读取最近一次 benchmark 的脱敏摘要，不提供会消耗 quota 的启动按钮。
 - 浏览器打开 `http://127.0.0.1:8787/v1` 时显示只读本地状态页；API 请求仍按原逻辑转发。
 - provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
-- 启用后写入 Codex `SessionStart` hook；后续 Codex App/CLI 新建或恢复会话时，如果配置仍指向本地
-  proxy，会自动启动或刷新代理。用户手动改回直连时 hook 会静默跳过，正常 no-op 不写日志。
+- 启用后写入 Codex `SessionStart` hook；hook 使用当前 Python 可执行文件运行 autostart。后续 Codex
+  App/CLI 新建或恢复会话时，如果配置仍指向本地 proxy，会自动启动或刷新代理。用户手动改回直连时
+  hook 会静默跳过，正常 no-op 不写日志。
 
 ### 回滚保护
 

@@ -356,7 +356,7 @@ def restore_hook_feature_flag(config_path: Path, backup_path: str | None, hook_r
 
 def command_for_hook(paths: ProxyPaths) -> str:
     args = [
-        "python",
+        sys.executable,
         "-m",
         "codex_fast_proxy",
         "autostart",
@@ -920,6 +920,7 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
             stderr=stderr,
             stdin=subprocess.DEVNULL,
             creationflags=creation_flags,
+            start_new_session=(os.name != "nt"),
         )
 
     try:
