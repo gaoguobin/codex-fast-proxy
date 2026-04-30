@@ -19,6 +19,7 @@ from codex_fast_proxy.manager import (  # noqa: E402
     autostart_proxy,
     choose_provider,
     command_install,
+    command_set_upstream,
     command_stop,
     command_uninstall,
     ConfigError,
@@ -360,6 +361,129 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(provider_base_url(load_toml_config(repaired_backup), "acme"), "https://api.acme.test/v1")
         config = load_toml_config(config_path)
         self.assertEqual(provider_base_url(config, "acme"), "https://api.acme.test/v1")
+
+    def test_set_upstream_updates_runtime_state_and_uninstall_baseline(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+
+        original_current_process = manager.current_process
+        original_proxy_health = manager.proxy_health
+        original_start_background = manager.start_background
+        original_stop_process = manager.stop_process
+        calls: list[str] = []
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            calls.append(f"start:{settings.upstream_base}")
+            return {"status": "started", "pid": 1234, "base_url": settings.base_url}
+
+        def fake_stop_process(paths, force=False):
+            calls.append("stop")
+            return {"status": "stopped", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+
+            manager.current_process = lambda _paths: (1234, True)
+            manager.proxy_health = lambda _settings: {
+                "ok": True,
+                "pid": 1234,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+                "runtime_id": manager.RUNTIME_ID,
+            }
+            manager.stop_process = fake_stop_process
+            set_args = argparse.Namespace(
+                codex_home=str(codex_home),
+                upstream_base="https://api.new.test/v1",
+                restart=False,
+                verbose_proxy=False,
+            )
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(command_set_upstream(set_args), 0)
+            result = json.loads(output.getvalue())
+            settings_after = json.loads(paths.settings_path.read_text(encoding="utf-8"))
+            manifest_after = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+            backup_path = Path(manifest_after["backup_path"])
+            config_after_update = load_toml_config(config_path)
+
+            with contextlib.redirect_stdout(io.StringIO()) as status_output:
+                self.assertEqual(manager.command_status(argparse.Namespace(codex_home=str(codex_home), provider=None)), 0)
+            status_after_update = json.loads(status_output.getvalue())
+
+            calls_after_update = list(calls)
+            calls.clear()
+            uninstall_args = argparse.Namespace(codex_home=str(codex_home), force=False, keep_state=False, defer_stop=False)
+            manager.current_process = lambda _paths: (None, False)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_uninstall(uninstall_args), 0)
+        finally:
+            manager.current_process = original_current_process
+            manager.proxy_health = original_proxy_health
+            manager.start_background = original_start_background
+            manager.stop_process = original_stop_process
+
+        config = load_toml_config(config_path)
+        self.assertEqual(calls_after_update, ["start:https://api.acme.test/v1"])
+        self.assertEqual(calls, ["stop"])
+        self.assertEqual(result["status"], "upstream_updated")
+        self.assertEqual(result["previous_upstream_base"], "https://api.acme.test/v1")
+        self.assertEqual(result["upstream_base"], "https://api.new.test/v1")
+        self.assertTrue(result["restart_required"])
+        self.assertEqual(result["start_result"]["status"], "deferred")
+        self.assertTrue(status_after_update["pending_restart"])
+        self.assertTrue(status_after_update["needs_restart"])
+        self.assertEqual(settings_after["upstream_base"], "https://api.new.test/v1")
+        self.assertEqual(manifest_after["settings"]["upstream_base"], "https://api.new.test/v1")
+        self.assertEqual(provider_base_url(load_toml_config(backup_path), "acme"), "https://api.new.test/v1")
+        self.assertEqual(provider_base_url(config_after_update, "acme"), "http://127.0.0.1:18787/v1")
+        self.assertFalse(paths.settings_path.exists())
+        self.assertEqual(provider_base_url(config, "acme"), "https://api.new.test/v1")
+
+    def test_set_upstream_refuses_when_config_no_longer_points_to_proxy(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://manual.example/v1"\n',
+            encoding="utf-8",
+        )
+        write_settings = {
+            "provider": "acme",
+            "host": "127.0.0.1",
+            "port": 18787,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": "priority",
+            "base_url": "http://127.0.0.1:18787/v1",
+        }
+        paths.settings_path.write_text(json.dumps(write_settings), encoding="utf-8")
+        set_args = argparse.Namespace(
+            codex_home=str(codex_home),
+            upstream_base="https://api.new.test/v1",
+            restart=False,
+            verbose_proxy=False,
+        )
+
+        with self.assertRaises(ConfigError):
+            command_set_upstream(set_args)
+
+        settings = json.loads(paths.settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(settings["upstream_base"], "https://api.acme.test/v1")
 
     def test_install_start_and_uninstall_restore_before_stop(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -707,6 +831,51 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result, {"status": "stopped", "pid": 9999})
         self.assertEqual(terminated, [9999])
 
+    def test_stop_process_allows_same_proxy_with_pending_settings_change(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.settings_path.write_text(
+            json.dumps({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.new.test/v1",
+                "service_tier": "priority",
+                "base_url": "http://127.0.0.1:18787/v1",
+            }),
+            encoding="utf-8",
+        )
+
+        original_current_process = manager.current_process
+        original_proxy_health = manager.proxy_health
+        original_is_process_running = manager.is_process_running
+        original_terminate_process = manager.terminate_process
+        terminated: list[int] = []
+
+        manager.current_process = lambda _paths: (9999, True)
+        manager.proxy_health = lambda _settings: {
+            "ok": True,
+            "pid": 9999,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.old.test/v1",
+            "service_tier": "priority",
+            "runtime_id": manager.RUNTIME_ID,
+        }
+        manager.is_process_running = lambda _pid: False
+        manager.terminate_process = terminated.append
+        try:
+            result = stop_process(paths)
+        finally:
+            manager.current_process = original_current_process
+            manager.proxy_health = original_proxy_health
+            manager.is_process_running = original_is_process_running
+            manager.terminate_process = original_terminate_process
+
+        self.assertEqual(result, {"status": "stopped", "pid": 9999})
+        self.assertEqual(terminated, [9999])
+
     def test_autostart_skips_when_config_no_longer_points_to_proxy(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
@@ -890,6 +1059,69 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["status"], "restarted")
         self.assertEqual(result["reason"], "runtime_changed")
         self.assertEqual(calls, ["stop", "start"])
+
+    def test_start_restarts_when_running_settings_changed(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        paths.settings_path.write_text(
+            json.dumps({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.new.test/v1",
+                "service_tier": "priority",
+                "base_url": "http://127.0.0.1:18787/v1",
+            }),
+            encoding="utf-8",
+        )
+
+        original_current_process = manager.current_process
+        original_proxy_health = manager.proxy_health
+        original_stop_process = manager.stop_process
+        original_launch_background = manager.launch_background
+        calls: list[str] = []
+
+        def fake_stop_process(paths, force=False):
+            calls.append(f"stop:{force}")
+            self.assertTrue(force)
+            return {"status": "stopped", "pid": 9999}
+
+        def fake_launch_background(paths, settings, verbose_proxy):
+            calls.append("start")
+            return {"status": "started", "pid": 1234, "base_url": settings.base_url}
+
+        manager.current_process = lambda _paths: (9999, True)
+        manager.proxy_health = lambda _settings: {
+            "ok": True,
+            "pid": 9999,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.old.test/v1",
+            "service_tier": "priority",
+            "runtime_id": manager.RUNTIME_ID,
+        }
+        manager.stop_process = fake_stop_process
+        manager.launch_background = fake_launch_background
+        try:
+            result = manager.start_background(paths, settings, verbose_proxy=False)
+        finally:
+            manager.current_process = original_current_process
+            manager.proxy_health = original_proxy_health
+            manager.stop_process = original_stop_process
+            manager.launch_background = original_launch_background
+
+        self.assertEqual(result["status"], "restarted")
+        self.assertEqual(result["reason"], "settings_changed")
+        self.assertEqual(calls, ["stop:True", "start"])
 
     def test_launch_background_detaches_process_on_posix(self) -> None:
         codex_home = self.temp_dir / ".codex"

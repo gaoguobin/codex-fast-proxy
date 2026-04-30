@@ -17,6 +17,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 try:
     import tomllib
@@ -202,6 +203,13 @@ def read_settings(paths: ProxyPaths) -> ProxySettings:
 
 def write_settings(paths: ProxyPaths, settings: ProxySettings) -> None:
     write_json(paths.settings_path, {**asdict(settings), "base_url": settings.base_url})
+
+
+def validate_upstream_base(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ConfigError(f"Invalid upstream base URL: {value}")
+    return value
 
 
 def read_toml_lines(path: Path) -> tuple[list[str], str]:
@@ -595,6 +603,19 @@ def health_matches_runtime(health: dict[str, Any] | None) -> bool:
     return bool(health and health.get("runtime_id") == RUNTIME_ID)
 
 
+def health_matches_proxy_identity(health: dict[str, Any] | None, settings: ProxySettings, pid: int | None) -> bool:
+    return bool(
+        health
+        and health.get("ok") is True
+        and health.get("pid") == pid
+        and health.get("proxy_base") == settings.proxy_base
+    )
+
+
+def settings_restart_pending(health: dict[str, Any] | None, settings: ProxySettings | None, pid: int | None) -> bool:
+    return bool(settings and health_matches_proxy_identity(health, settings, pid) and not health_matches_settings(health, settings))
+
+
 def wait_for_proxy_health(settings: ProxySettings, process: subprocess.Popen[Any], timeout: float = 5.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_health = None
@@ -632,7 +653,9 @@ def stop_process(paths: ProxyPaths, force: bool = False) -> dict[str, Any]:
             raise ConfigError(f"Refusing to stop process {pid} without proxy settings. Use --force if needed.")
         settings = settings_from_dict(settings_data)
         health = proxy_health(settings)
-        if not health_matches_settings(health, settings) or health.get("pid") != pid:
+        matches_settings = bool(health and health_matches_settings(health, settings) and health.get("pid") == pid)
+        matches_identity = health_matches_proxy_identity(health, settings, pid)
+        if not (matches_settings or matches_identity):
             raise ConfigError(f"Refusing to stop process {pid} because health check does not match the pid file.")
 
     terminate_process(pid)
@@ -721,6 +744,31 @@ def choose_config_backup(paths: ProxyPaths, provider: str, settings: ProxySettin
     return backup_path
 
 
+def write_install_manifest(
+    paths: ProxyPaths,
+    provider: str,
+    backup_path: Path,
+    config_hash_before: str | None,
+    config_hash_after: str | None,
+    hook_result: dict[str, Any] | None,
+    settings: ProxySettings,
+) -> dict[str, Any]:
+    manifest = {
+        "version": __version__,
+        "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "provider": provider,
+        "config_path": str(paths.config_path),
+        "hooks_path": str(paths.hooks_path),
+        "backup_path": str(backup_path),
+        "config_hash_before": config_hash_before,
+        "config_hash_after": config_hash_after,
+        "hook": hook_result,
+        "settings": {**asdict(settings), "base_url": settings.base_url},
+    }
+    write_json(paths.manifest_path, manifest)
+    return manifest
+
+
 def command_install(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     config = load_toml_config(paths.config_path)
@@ -734,7 +782,7 @@ def command_install(args: argparse.Namespace) -> int:
         upstream_base="",
         service_tier=args.service_tier,
     )
-    upstream_base = resolve_upstream_base(config, paths, provider, args.upstream_base, settings.base_url)
+    upstream_base = validate_upstream_base(resolve_upstream_base(config, paths, provider, args.upstream_base, settings.base_url))
     settings = ProxySettings(
         provider=provider,
         host=settings.host,
@@ -783,19 +831,7 @@ def command_install(args: argparse.Namespace) -> int:
         hook_result = install_startup_hook(paths)
         config_hash_after = sha256_file(paths.config_path)
 
-        manifest = {
-            "version": __version__,
-            "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "provider": provider,
-            "config_path": str(paths.config_path),
-            "hooks_path": str(paths.hooks_path),
-            "backup_path": str(backup_path),
-            "config_hash_before": config_hash_before,
-            "config_hash_after": config_hash_after,
-            "hook": hook_result,
-            "settings": {**asdict(settings), "base_url": settings.base_url},
-        }
-        write_json(paths.manifest_path, manifest)
+        write_install_manifest(paths, provider, backup_path, config_hash_before, config_hash_after, hook_result, settings)
     except Exception:
         if start_result and start_result.get("status") == "started":
             stop_process(paths)
@@ -821,6 +857,104 @@ def command_install(args: argparse.Namespace) -> int:
         "switch_order": "proxy_started_before_config_switch",
         "current_session_effect": ENABLE_SESSION_EFFECT,
         "start_result": start_result,
+    }))
+    return 0
+
+
+def command_set_upstream(args: argparse.Namespace) -> int:
+    paths = paths_for(args.codex_home)
+    old_settings = read_settings(paths)
+    new_settings = ProxySettings(
+        provider=old_settings.provider,
+        host=old_settings.host,
+        port=old_settings.port,
+        proxy_base=old_settings.proxy_base,
+        upstream_base=validate_upstream_base(args.upstream_base),
+        service_tier=old_settings.service_tier,
+    )
+    config = load_toml_config(paths.config_path)
+    config_base_url = provider_base_url(config, old_settings.provider)
+    if config_base_url != old_settings.base_url:
+        raise ConfigError(
+            f"Refusing to update upstream because provider {old_settings.provider!r} no longer points to the local proxy. "
+            "Review config.toml, then run install --start if you want to enable the proxy again."
+        )
+
+    paths.backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = choose_config_backup(paths, old_settings.provider, new_settings, config)
+    config_hash_before = sha256_file(backup_path)
+    config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
+    hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
+    settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
+    restart_required = False
+    start_result = None
+    hook_result = None
+
+    try:
+        _pid, running = current_process(paths)
+
+        write_settings(paths, new_settings)
+        if running and not args.restart:
+            restart_required = True
+            start_result = {
+                "status": "deferred",
+                "reason": "running_proxy_left_untouched",
+                "pid": _pid,
+                "next_action": "restart Codex App, open a new CLI process, or run start to apply the new upstream",
+            }
+        else:
+            start_result = start_background(paths, new_settings, args.verbose_proxy)
+        set_provider_base_url(paths.config_path, new_settings.provider, new_settings.base_url)
+        set_feature_flag(paths.config_path, "codex_hooks", True)
+        hook_result = install_startup_hook(paths)
+        config_hash_after = sha256_file(paths.config_path)
+        write_install_manifest(
+            paths,
+            new_settings.provider,
+            backup_path,
+            config_hash_before,
+            config_hash_after,
+            hook_result,
+            new_settings,
+        )
+    except Exception:
+        if start_result and start_result.get("status") in {"started", "restarted"}:
+            stop_process(paths, force=True)
+        if hooks_bytes_before is None:
+            paths.hooks_path.unlink(missing_ok=True)
+        else:
+            paths.hooks_path.write_bytes(hooks_bytes_before)
+        if config_bytes_before is None:
+            paths.config_path.unlink(missing_ok=True)
+        else:
+            paths.config_path.write_bytes(config_bytes_before)
+        if settings_bytes_before is None:
+            paths.settings_path.unlink(missing_ok=True)
+        else:
+            paths.settings_path.write_bytes(settings_bytes_before)
+        if start_result and start_result.get("status") in {"started", "restarted"}:
+            try:
+                start_background(paths, old_settings, args.verbose_proxy)
+            except Exception:
+                pass
+        raise
+
+    print(json_line({
+        "status": "upstream_updated",
+        "provider": new_settings.provider,
+        "base_url": new_settings.base_url,
+        "previous_upstream_base": old_settings.upstream_base,
+        "upstream_base": new_settings.upstream_base,
+        "backup_path": str(backup_path),
+        "config_matches": True,
+        "restart_required": restart_required,
+        "start_result": start_result,
+        "startup_hook": hook_result,
+        "current_session_effect": (
+            "Existing Codex processes keep their current proxy connection. If restart_required is true, restart Codex App, "
+            "open a new CLI process, or run start later to apply the new upstream. Also restart Codex if you changed API key, "
+            "model, or other Codex config."
+        ),
     }))
     return 0
 
@@ -851,12 +985,15 @@ def restart_background(
     verbose_proxy: bool,
     pid: int,
     health: dict[str, Any],
+    *,
+    reason: str = "runtime_changed",
+    force_stop: bool = False,
 ) -> dict[str, Any]:
-    stop_result = stop_process(paths)
+    stop_result = stop_process(paths, force=force_stop)
     start_result = launch_background(paths, settings, verbose_proxy)
     return {
         "status": "restarted",
-        "reason": "runtime_changed",
+        "reason": reason,
         "old_pid": pid,
         "old_runtime_id": health.get("runtime_id"),
         "runtime_id": RUNTIME_ID,
@@ -877,6 +1014,16 @@ def start_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: 
             if health_matches_runtime(health):
                 return already_running_result(paths, settings, pid, health)
             return restart_background(paths, settings, verbose_proxy, pid, health)
+        if health_matches_proxy_identity(health, settings, pid):
+            return restart_background(
+                paths,
+                settings,
+                verbose_proxy,
+                pid,
+                health,
+                reason="settings_changed",
+                force_stop=True,
+            )
         raise ConfigError(f"Existing proxy process {pid} is running with different or unhealthy settings. Stop it first.")
     paths.pid_path.unlink(missing_ok=True)
 
@@ -968,15 +1115,6 @@ def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
     if config_base_url != settings.base_url:
         return {"status": "skipped", "reason": "config_not_proxy", "provider": settings.provider}
 
-    pid, running = current_process(paths)
-    if running:
-        health = proxy_health(settings)
-        if health_matches_settings(health, settings):
-            if health_matches_runtime(health):
-                return already_running_result(paths, settings, pid, health)
-            return restart_background(paths, settings, verbose_proxy, pid, health)
-        return {"status": "error", "reason": "running_unhealthy_or_mismatched", "pid": pid}
-
     return start_background(paths, settings, verbose_proxy)
 
 
@@ -1021,7 +1159,8 @@ def command_status(args: argparse.Namespace) -> int:
     config_base_url = provider_base_url(config, provider) if provider else None
     health = proxy_health(settings) if settings and running else None
     healthy = health_matches_settings(health, settings) if settings and running else False
-    runtime_matches = health_matches_runtime(health) if healthy else None
+    pending_restart = settings_restart_pending(health, settings, pid) if settings and running else False
+    runtime_matches = health_matches_runtime(health) if healthy or pending_restart else None
 
     print(json_line({
         "status": "running" if running else "stopped",
@@ -1029,7 +1168,8 @@ def command_status(args: argparse.Namespace) -> int:
         "healthy": healthy,
         "runtime_id": RUNTIME_ID,
         "runtime_matches": runtime_matches,
-        "needs_restart": bool(healthy and not runtime_matches),
+        "needs_restart": bool(pending_restart or (healthy and not runtime_matches)),
+        "pending_restart": pending_restart,
         "provider": provider,
         "base_url": settings.base_url if settings else None,
         "upstream_base": settings.upstream_base if settings else None,
@@ -1054,7 +1194,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     pid, running = current_process(paths)
     health = proxy_health(settings) if settings and running else None
     healthy = health_matches_settings(health, settings) if settings and running else False
-    runtime_matches = health_matches_runtime(health) if healthy else None
+    pending_restart = settings_restart_pending(health, settings, pid) if settings and running else False
+    runtime_matches = health_matches_runtime(health) if healthy or pending_restart else None
     hooks_enabled = config_feature_enabled(config, "codex_hooks")
 
     checks = [
@@ -1068,7 +1209,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
             {"name": "proxy_settings", "ok": True, "detail": str(paths.settings_path)},
             {"name": "config_points_to_proxy", "ok": upstream_base == settings.base_url, "detail": upstream_base},
             {"name": "upstream_saved", "ok": bool(settings.upstream_base), "detail": settings.upstream_base},
-            {"name": "proxy_health", "ok": not running or healthy, "detail": health},
+            {"name": "proxy_health", "ok": not running or healthy or pending_restart, "detail": health},
+            {"name": "proxy_pending_restart", "ok": True, "detail": pending_restart},
             {"name": "proxy_runtime", "ok": not healthy or runtime_matches, "detail": health.get("runtime_id") if health else None},
             {"name": "codex_hooks_enabled", "ok": hooks_enabled, "detail": hooks_enabled},
             {"name": "startup_hook", "ok": has_startup_hook(paths), "detail": str(paths.hooks_path)},
@@ -1242,6 +1384,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_shared_options(start)
     start.add_argument("--verbose-proxy", action="store_true")
 
+    set_upstream = subparsers.add_parser("set-upstream", help="Update the saved upstream URL while keeping Codex on the local proxy.")
+    add_shared_options(set_upstream)
+    set_upstream.add_argument("--upstream-base", required=True)
+    set_upstream.add_argument("--restart", action="store_true")
+    set_upstream.add_argument("--verbose-proxy", action="store_true")
+
     autostart = subparsers.add_parser("autostart", help="Start proxy from a Codex SessionStart hook if enabled.")
     add_shared_options(autostart)
     autostart.add_argument("--quiet", action="store_true")
@@ -1305,6 +1453,7 @@ def main(argv: list[str] | None = None) -> int:
 
     commands = {
         "install": command_install,
+        "set-upstream": command_set_upstream,
         "start": command_start,
         "autostart": command_autostart,
         "stop": command_stop,

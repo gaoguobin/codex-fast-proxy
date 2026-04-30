@@ -6,7 +6,7 @@ Local Fast proxy for Codex App and Codex CLI. It lets Codex use providers that
 support `service_tier="priority"` even when the official Codex App does not send
 that field.
 
-[中文说明](#中文说明) · [Install](#install) · [Update](#update) · [Uninstall](#uninstall) · [Safety](#safety-model) · [Sponsor](#sponsor)
+[中文说明](#中文说明) · [Install](#install) · [Change Upstream](#change-upstream) · [Update](#update) · [Uninstall](#uninstall) · [Safety](#safety-model) · [Sponsor](#sponsor)
 
 ## What It Does
 
@@ -123,6 +123,29 @@ provider accepted the wire parameter, and `observed_priority_effective=true` mea
 workload was materially faster. `provider_confirmed_priority=true` is extra response metadata when a
 provider exposes it, but many providers do not echo that field.
 
+## Change Upstream
+
+After the proxy is enabled, the active provider's `base_url` in `~/.codex/config.toml` is owned by
+the local proxy. If you only change API keys, model, reasoning, or other Codex settings, edit
+`config.toml` as usual. If you want to change the provider URL, update the saved upstream instead:
+
+```powershell
+python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
+```
+
+Or ask Codex:
+
+```text
+把 Codex Fast proxy 的上游切到 https://api.example.com/v1
+```
+
+`set-upstream` refuses to run if the recorded provider no longer points to the local proxy. When it
+succeeds, it keeps Codex config pointed at the local proxy and updates the uninstall baseline so a
+later uninstall restores to the new upstream URL. If the proxy is already running, the default is
+safe for the current conversation: it records the new upstream and leaves the current process alone.
+Restart Codex App, open a new CLI process, or run `python -m codex_fast_proxy start` later to apply
+the new upstream. Use `--restart` only when interrupting current proxy-backed sessions is acceptable.
+
 ## Update
 
 Paste this into Codex:
@@ -170,6 +193,7 @@ Agents should run the manager as the source of truth:
 ```powershell
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
+python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
 python -m codex_fast_proxy status
 python -m codex_fast_proxy benchmark
 python -m codex_fast_proxy autostart --quiet
@@ -199,6 +223,10 @@ Default paths:
   write autostart log entries.
 - Plain `install` refuses to switch config without a running proxy.
 - If startup or config switching fails, the manager restores the backed-up config.
+- `set-upstream` changes only the saved upstream URL for the recorded provider. It does not edit API
+  keys, model, reasoning, tools, or prompts, and it refuses to run if config no longer points to the
+  local proxy. By default it does not restart a running proxy, so the current response is not cut off;
+  the next Codex startup hook or manual `start` applies the new upstream.
 - Running Codex processes do not hot-switch provider config. Restart Codex App and return to the
   same conversation, or open a new CLI process.
 - `stop` refuses to stop while Codex config still points to the proxy unless `--force` is explicit.
@@ -322,6 +350,27 @@ Codex CLI/app-server 流量作为可重复的 A/B 路径，并在结果里标出
 接受了这个 wire 参数，`observed_priority_effective=true` 表示完整任务实测明显变快。
 `provider_confirmed_priority=true` 只是供应商响应里额外回显的证据，很多供应商不会返回这个字段。
 
+### 更换上游 URL
+
+启用 proxy 后，当前 provider 的 `base_url` 会由本地 proxy 接管。如果只是改 API key、model、
+reasoning 或其它 Codex 配置，仍然可以按原来的方式改 `config.toml`。如果要更换供应商 URL，不要
+直接改这个 `base_url`，而是更新 proxy 保存的 upstream：
+
+```powershell
+python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
+```
+
+也可以直接对 Codex 说：
+
+```text
+把 Codex Fast proxy 的上游切到 https://api.example.com/v1
+```
+
+`set-upstream` 只在当前 provider 仍指向本地 proxy 时执行；成功后会更新卸载恢复基线，后续卸载会
+恢复到新的 upstream URL。如果 proxy 已经在运行，默认不会立刻重启，避免打断当前对话；重启
+Codex App、新开 CLI，或之后运行 `python -m codex_fast_proxy start` 会应用新的 upstream。只有在
+接受打断当前 proxy 会话时才使用 `--restart`。
+
 ### 更新
 
 把这句话贴给 Codex：
@@ -367,6 +416,8 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 - dashboard 只读取最近一次 benchmark 的脱敏摘要，不提供会消耗 quota 的启动按钮。
 - 浏览器打开 `http://127.0.0.1:8787/v1` 时显示只读本地状态页；API 请求仍按原逻辑转发。
 - provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
+- 更换供应商 URL 时使用 `set-upstream` 更新 proxy 保存的 upstream；key/model 等其它配置仍由用户
+  直接维护 `config.toml`。默认延期重启运行中的 proxy，避免打断当前响应。
 - 启用后写入 Codex `SessionStart` hook；hook 使用当前 Python 可执行文件运行 autostart。后续 Codex
   App/CLI 新建或恢复会话时，如果配置仍指向本地 proxy，会自动启动或刷新代理。用户手动改回直连时
   hook 会静默跳过，正常 no-op 不写日志。

@@ -1,6 +1,6 @@
 ---
 name: codex-fast-proxy
-description: Installs, enables, checks, benchmarks, stops, or uninstalls Codex App Fast proxy. Use when the user asks for Codex App Fast, priority service_tier, PackyAPI Fast, provider acceleration, Fast/Priority A/B benchmark, or says phrases like "启用 Codex Fast proxy", "让 Codex App 使用 Fast", "跑 Fast proxy benchmark", "验证供应商是否支持 Fast", "查看 Fast proxy 状态", or "停止 Codex Fast proxy".
+description: Installs, enables, checks, benchmarks, changes upstream URL, stops, or uninstalls Codex App Fast proxy. Use when the user asks for Codex App Fast, priority service_tier, PackyAPI Fast, provider acceleration, Fast/Priority A/B benchmark, or says phrases like "启用 Codex Fast proxy", "让 Codex App 使用 Fast", "跑 Fast proxy benchmark", "验证供应商是否支持 Fast", "把 Codex Fast proxy 的上游切到", "查看 Fast proxy 状态", or "停止 Codex Fast proxy".
 ---
 
 Use this skill when the user wants Codex to manage the local Fast proxy for Codex App.
@@ -11,6 +11,7 @@ Use this skill when the user wants Codex to manage the local Fast proxy for Code
 - App Fast requests such as `让 Codex App 使用 Fast`
 - Provider-specific requests such as `PackyAPI 开 Fast`
 - Benchmark requests such as `跑 Fast proxy benchmark`, `验证供应商是否支持 Fast`, `Fast 模式有没有变快`
+- Upstream URL changes such as `把 Codex Fast proxy 的上游切到 https://api.example.com/v1`
 - Maintenance requests such as `查看 Fast proxy 状态`, `停止 Fast proxy`, `卸载 Fast proxy`
 
 ## How to execute
@@ -20,6 +21,7 @@ Run the manager as the source of truth:
 ```powershell
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
+python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
 python -m codex_fast_proxy status
 python -m codex_fast_proxy benchmark
 python -m codex_fast_proxy autostart --quiet
@@ -41,6 +43,14 @@ python -m codex_fast_proxy uninstall
   each new or resumed session; `autostart --quiet` does not log normal no-op checks.
 - Do not run plain `install` to enable the proxy; the manager rejects config switching without `--start`.
 - If proxy startup or config switching fails, the manager restores the backed-up config before returning.
+- Use `set-upstream --upstream-base <url>` when the user wants to change the provider URL while the
+  proxy is already enabled. It must keep Codex config pointed at the local proxy, update the saved
+  upstream and uninstall baseline, and refuse to run if config no longer points to the recorded proxy.
+  Do not pass `--restart` unless the user explicitly accepts that restarting the proxy can interrupt
+  current proxy-backed Codex sessions. Without `--restart`, tell the user to restart Codex App, open a
+  new CLI process, or run `start` later to apply the new upstream.
+- Do not edit the active provider `base_url` directly while the proxy is enabled. API key, model,
+  reasoning, and other Codex config fields can still be edited directly by the user or agent.
 - Running Codex processes do not hot-switch provider config. After enable, restart Codex App and resume the same conversation if desired, or open a new CLI process.
 - If the current process is already using the proxy, stopping the proxy can interrupt the conversation. Disable with `uninstall --defer-stop`, tell the user to restart Codex App or open a new CLI process, then run uninstall again to finish cleanup.
 - Uninstall removes only the `codex-fast-proxy` hook and must preserve unrelated hooks.
@@ -82,6 +92,9 @@ Use `--provider <name>` only when the user names a provider or when `doctor` rep
 
 Use `--upstream-base <url>` only when Codex config does not contain a usable provider `base_url` or the user explicitly wants a different upstream.
 
+For upstream URL changes after enable, prefer `set-upstream --upstream-base <url>` over rerunning
+`install --start --upstream-base <url>`.
+
 ## Result handling
 
 - Treat the JSON output as the source of truth.
@@ -104,6 +117,10 @@ Use `--upstream-base <url>` only when Codex config does not contain a usable pro
 - `install --start` backs up `~/.codex/config.toml`.
 - The selected provider's original `base_url` becomes `upstream_base`.
 - The selected provider's `base_url` becomes `http://127.0.0.1:8787/v1`.
+- `set-upstream` updates the saved `upstream_base` and uninstall recovery baseline without changing
+  model, reasoning, tools, input, or API key settings. It applies immediately only when the proxy is
+  not running or the user explicitly accepted `--restart`; otherwise it defers restarting a running
+  proxy to avoid cutting off the current response.
 - A `SessionStart` hook calls the current Python executable with
   `-m codex_fast_proxy autostart --quiet` on future Codex sessions.
 - The proxy only injects `service_tier="priority"` into `POST /v1/responses` when that field is absent.
