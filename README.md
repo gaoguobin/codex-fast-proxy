@@ -2,24 +2,39 @@
 
 [![CI](https://github.com/gaoguobin/codex-fast-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/gaoguobin/codex-fast-proxy/actions/workflows/ci.yml)
 
-Local Fast proxy for Codex App and Codex CLI. It lets Codex use providers that
-support `service_tier="priority"` even when the official Codex App does not send
-that field.
+Use third-party OpenAI-compatible API providers with Codex App while keeping the
+Fast / priority request path enabled.
 
-[中文说明](#中文说明) · [Install](#install) · [Change Upstream](#change-upstream) · [Update](#update) · [Uninstall](#uninstall) · [Safety](#safety-model) · [Sponsor](#sponsor)
+Codex CLI already has a Fast path, but Codex App requests may arrive at
+`POST /v1/responses` without the wire-level `service_tier` field. This local
+proxy fills only that missing field, keeps streaming untouched, and gives users
+a read-only dashboard to verify real traffic and benchmark whether their
+provider actually benefits from the priority lane.
 
-## What It Does
+[Chinese](#chinese) · [Install](#install) · [Dashboard](#dashboard) · [Benchmark](#benchmark) · [Change Upstream](#change-upstream) · [Update](#update) · [Uninstall](#uninstall) · [Safety](#safety-model) · [Sponsor](#sponsor)
 
-- Injects `service_tier="priority"` only into `POST /v1/responses` requests when the field is absent.
-- Leaves `model`, `reasoning`, `tools`, `input`, and all existing request fields unchanged.
-- Preserves SSE streaming responses without parsing or rewriting `event:` / `data:` frames.
-- Reads the active Codex provider from `~/.codex/config.toml` and saves the original `base_url` as the upstream.
-- Backs up Codex config, restores safely, and avoids overwriting user edits during uninstall.
-- Installs a Codex `SessionStart` hook after enable, so future Codex App/CLI startups restart the
-  proxy before the first provider request when config still points to the proxy.
-- Serves a read-only local status page for browser visits to the proxy root or base URL.
-- Writes redacted JSONL logs without headers, API keys, cookies, request bodies, or prompts.
-- Ships with a Codex skill so users can ask Codex to install, enable, check, update, or uninstall it.
+![Codex Fast Proxy dashboard](docs/assets/dashboard.png)
+
+## Why
+
+This project is for Codex App users who already use a third-party API provider
+or relay service and want the same Fast / priority behavior they can get from
+Codex CLI. It is designed to be installed and operated by Codex itself: paste
+the install prompt, restart once for skill discovery, then ask Codex to enable
+the proxy.
+
+## Highlights
+
+| Capability | What it means |
+| --- | --- |
+| Narrow injection | Adds `service_tier="priority"` only to `POST /v1/responses` when the field is absent. |
+| Streaming safe | Preserves SSE responses without parsing or rewriting `event:` / `data:` frames. |
+| Request safe | Leaves `model`, `reasoning`, `tools`, `input`, and all existing request fields unchanged. |
+| Provider agnostic | Reads the active Codex provider from `~/.codex/config.toml` and stores the original upstream URL. |
+| Visual verification | Serves a local read-only dashboard with status, recent redacted requests, and benchmark summary. |
+| Real benchmark | Runs opt-in A/B tests against real Codex-style requests to show whether priority is accepted and faster. |
+| Startup hook | Installs a Codex `SessionStart` hook so future Codex App/CLI sessions can restart the proxy automatically. |
+| Safe rollback | Backs up Codex config, restores conservatively, and avoids overwriting user edits during uninstall. |
 
 ## Compatibility
 
@@ -44,7 +59,7 @@ After installation, restart Codex App and return to the same conversation, or op
 process. Then ask:
 
 ```text
-启用 Codex Fast proxy
+Enable Codex Fast proxy
 ```
 
 After enabling, restart Codex App again, or open a new Codex CLI process, so the running Codex
@@ -56,7 +71,7 @@ to restart the proxy automatically when the recorded provider still points to th
 Ask Codex:
 
 ```text
-查看 Codex Fast proxy 状态
+Show Codex Fast proxy status
 ```
 
 Or run:
@@ -75,12 +90,26 @@ You can also open `http://127.0.0.1:8787/v1` in a browser. Browser-style HTML re
 read-only dashboard with local proxy status and recent redacted events; API requests continue to be
 forwarded normally.
 
+## Dashboard
+
+The local dashboard is available at the configured proxy base URL, usually
+`http://127.0.0.1:8787/v1`. It is intentionally read-only and uses only redacted
+runtime metadata:
+
+- Current local proxy status, upstream URL, injected tier, and recent success count.
+- Recent `/v1/responses` traffic with local time, status, latency, injection state, and stream flag.
+- Latest saved benchmark result, including observed speedup and sample counts when the user has run one.
+- Quick manager commands and privacy notes for agents operating inside Codex.
+
+The dashboard does not expose request bodies, prompts, headers, API keys, tool
+arguments, or response contents.
+
 ## Benchmark
 
 Ask Codex:
 
 ```text
-跑一下 Codex Fast proxy A/B benchmark
+Run the Codex Fast proxy A/B benchmark
 ```
 
 Or run:
@@ -136,7 +165,7 @@ python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/
 Or ask Codex:
 
 ```text
-把 Codex Fast proxy 的上游切到 https://api.example.com/v1
+Set Codex Fast proxy upstream to https://api.example.com/v1
 ```
 
 `set-upstream` refuses to run if the recorded provider no longer points to the local proxy. When it
@@ -268,11 +297,17 @@ python -m codex_fast_proxy serve `
   --service-tier priority
 ```
 
+<a id="chinese"></a>
+
 ## 中文说明
 
 `codex-fast-proxy` 是一个本地 Fast 代理，面向 Codex App 和 Codex CLI。它解决的核心问题是：
 Codex App 发送 `POST /v1/responses` 时可能没有 `service_tier` 字段，而部分上游 provider
 需要 `service_tier="priority"` 才会进入 Fast / priority 通道。
+
+它适合已经在 Codex App 中使用第三方 OpenAI-compatible API provider / 中转站的用户。安装后仍然
+由 Codex 读取自己的 provider 配置，proxy 只补缺失的 Fast 参数，并通过本地只读 dashboard 展示
+状态、最近请求和 benchmark 结果，方便确认 App 是否真的走到了 priority 通道。
 
 ### 快速安装
 
@@ -307,6 +342,10 @@ python -m codex_fast_proxy status
 健康状态应包含 `healthy: true`、`config_matches: true`、`startup_hook: true`。App 发出消息后，
 日志里应出现 `/v1/responses`，并显示 `service_tier_before="<absent>"`、
 `service_tier_after="priority"`、`service_tier_injected=true`、`response_content_type="text/event-stream"`。
+
+也可以在浏览器打开 `http://127.0.0.1:8787/v1` 查看本地只读 dashboard。它会显示 proxy 状态、
+当前 upstream、最近脱敏请求、是否注入 priority、SSE 状态，以及最近一次 benchmark 摘要；不会展示
+prompt、请求体、API key、headers、tool arguments 或响应内容。
 
 ### Benchmark
 
