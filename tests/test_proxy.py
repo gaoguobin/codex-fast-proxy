@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import threading
 import unittest
 import uuid
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +22,7 @@ from codex_fast_proxy.dashboard import (  # noqa: E402
     safe_url_display,
 )
 from codex_fast_proxy.proxy import (  # noqa: E402
+    FastProxyHandler,
     copy_request_headers,
     dashboard_requested,
     parse_args,
@@ -48,6 +51,26 @@ class FakeLineResponse:
 
     def read(self, _size: int) -> bytes:
         raise AssertionError("SSE should use line-buffered reads")
+
+
+class FakeConnection:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def request(self, _method: str, _path: str, body: bytes, headers: dict[str, str]) -> None:
+        self.body = body
+        self.headers = headers
+
+    def getresponse(self) -> Any:
+        return SimpleNamespace(
+            status=200,
+            getheader=lambda name, default=None: "text/event-stream"
+            if name.lower() == "content-type"
+            else default,
+        )
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class ProxyPatchTests(unittest.TestCase):
@@ -138,6 +161,55 @@ class ProxyPatchTests(unittest.TestCase):
         stream_response_body(response, writer, chunked=False, line_buffered=True)
 
         self.assertEqual(writer.getvalue(), b"event: response.output_text.delta\ndata: {\"x\":1}\n\n")
+
+    def test_client_disconnect_during_stream_is_logged_without_bad_gateway(self) -> None:
+        temp_root = ROOT / ".test_tmp"
+        temp_root.mkdir(exist_ok=True)
+        temp_dir = temp_root / f"client-disconnect-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            log_path = temp_dir / "fast_proxy.jsonl"
+            body = json.dumps({"model": "gpt-test", "stream": True}).encode("utf-8")
+            connection = FakeConnection()
+            handler = FastProxyHandler.__new__(FastProxyHandler)
+            handler.command = "POST"
+            handler.path = "/v1/responses"
+            handler.headers = {
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            }
+            handler.rfile = BytesIO(body)
+            handler.server = SimpleNamespace(
+                proxy_base="/v1",
+                upstream_base_path="/v1",
+                upstream_netloc="api.example.test",
+                service_tier="priority",
+                log_path=log_path,
+                log_lock=threading.Lock(),
+                verbose=False,
+                open_connection=lambda: connection,
+            )
+
+            def raise_client_disconnect(_response: Any) -> None:
+                raise ConnectionAbortedError("client closed SSE")
+
+            def fail_bad_gateway() -> None:
+                raise AssertionError("client disconnect should not be converted to a 502 response")
+
+            handler.forward_response = raise_client_disconnect
+            handler.respond_bad_gateway = fail_bad_gateway
+
+            FastProxyHandler.proxy(handler)
+            event = json.loads(log_path.read_text(encoding="utf-8"))
+        finally:
+            shutil.rmtree(temp_dir)
+
+        self.assertTrue(connection.closed)
+        self.assertEqual(event["status"], 200)
+        self.assertEqual(event["error_type"], "client_disconnected")
+        self.assertEqual(event["service_tier_before"], "<absent>")
+        self.assertEqual(event["service_tier_after"], "priority")
+        self.assertTrue(event["service_tier_injected"])
 
     def test_foreground_proxy_default_log_dir_uses_runtime_state_dir(self) -> None:
         args = parse_args(["--upstream-base", "https://api.example.test/v1"])

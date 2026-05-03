@@ -35,6 +35,7 @@ HOP_BY_HOP_HEADERS = {
 BODY_METHODS = {"POST", "PUT", "PATCH"}
 RESPONSES_PATH = "/v1/responses"
 HEALTH_PATH = "/__codex_fast_proxy/health"
+CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
 
 
 def source_fingerprint(paths: Iterable[Path]) -> str:
@@ -274,7 +275,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
                 self.forward_response(response)
             finally:
                 connection.close()
-        except BrokenPipeError:
+        except CLIENT_DISCONNECT_ERRORS:
             error_type = "client_disconnected"
         except Exception as exc:
             error_type = type(exc).__name__
