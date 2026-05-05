@@ -277,6 +277,55 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("Bearer should-not-render", html)
         self.assertNotIn("prompt should-not-render", html)
 
+    def test_dashboard_status_badge_exposes_redacted_event_detail(self) -> None:
+        temp_root = ROOT / ".test_tmp"
+        temp_root.mkdir(exist_ok=True)
+        temp_dir = temp_root / f"dashboard-detail-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            log_path = temp_dir / "fast_proxy.jsonl"
+            log_path.write_text(
+                json.dumps({
+                    "ts": "2026-05-05T06:10:39.890+00:00",
+                    "request_id": "req-demo",
+                    "method": "POST",
+                    "path": "/v1/responses",
+                    "status": 502,
+                    "duration_ms": 24501.2,
+                    "eligible": True,
+                    "service_tier_before": "<absent>",
+                    "service_tier_after": "priority",
+                    "service_tier_injected": True,
+                    "stream": True,
+                    "response_content_type": None,
+                    "error_type": "client_disconnected",
+                    "Authorization": "Bearer should-not-render",
+                    "input": "prompt should-not-render",
+                })
+                + "\n",
+                encoding="utf-8",
+            )
+            server = SimpleNamespace(
+                log_path=log_path,
+                server_address=("127.0.0.1", 8787),
+                proxy_base="/v1",
+                upstream_base="https://api.example.test/v1",
+                service_tier="priority",
+            )
+
+            html = render_dashboard(server)
+        finally:
+            shutil.rmtree(temp_dir)
+
+        self.assertIn("Needs attention", html)
+        self.assertIn("request_id: req-demo", html)
+        self.assertIn("status: 502", html)
+        self.assertIn("duration_ms: 24501.2", html)
+        self.assertIn("error_type: client_disconnected", html)
+        self.assertIn("service_tier_before: &lt;absent&gt;", html)
+        self.assertNotIn("Bearer should-not-render", html)
+        self.assertNotIn("prompt should-not-render", html)
+
     def test_dashboard_renders_saved_benchmark_result(self) -> None:
         temp_root = ROOT / ".test_tmp"
         temp_root.mkdir(exist_ok=True)

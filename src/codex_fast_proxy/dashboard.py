@@ -12,6 +12,22 @@ from urllib.parse import urlsplit, urlunsplit
 DASHBOARD_PATH = "/__codex_fast_proxy/dashboard"
 DASHBOARD_EVENT_LIMIT = 8
 BENCHMARK_FILENAME = "fast_proxy.benchmark.json"
+EVENT_DETAIL_FIELDS = (
+    "ts",
+    "request_id",
+    "method",
+    "path",
+    "status",
+    "duration_ms",
+    "eligible",
+    "service_tier_before",
+    "service_tier_after",
+    "service_tier_injected",
+    "stream",
+    "json_error",
+    "response_content_type",
+    "error_type",
+)
 
 
 def safe_url_display(url: str) -> str:
@@ -512,7 +528,7 @@ def render_dashboard(server: Any) -> str:
           <h2>Recent requests</h2>
           <p>pid {html_value(os.getpid())} / injected {injected_count}</p>
         </div>
-        {render_status_badge(last_status)}
+        {render_status_badge(last_status, event_detail(latest_event))}
       </div>
       <div class="table-wrap">
         <table>
@@ -600,17 +616,30 @@ def render_injection_state(event: dict[str, Any] | None) -> str:
     return "yes" if event.get("service_tier_injected") else "no"
 
 
-def render_status_badge(status: Any) -> str:
+def event_detail(event: dict[str, Any] | None) -> str | None:
+    if not event:
+        return None
+
+    lines = []
+    for field in EVENT_DETAIL_FIELDS:
+        value = event.get(field)
+        if value is not None:
+            lines.append(f"{field}: {value}")
+    return "\n".join(lines) if lines else None
+
+
+def render_status_badge(status: Any, detail: str | None = None) -> str:
+    title = f' title="{html_value(detail, "")}"' if detail else ""
     if status is None:
-        return '<span class="badge"><span class="dot warn" aria-hidden="true"></span>No events</span>'
+        return f'<span class="badge"{title}><span class="dot warn" aria-hidden="true"></span>No events</span>'
     try:
         status_code = int(status)
     except (TypeError, ValueError):
-        return f'<span class="badge"><span class="dot warn" aria-hidden="true"></span>{html_value(status)}</span>'
+        return f'<span class="badge"{title}><span class="dot warn" aria-hidden="true"></span>{html_value(status)}</span>'
 
     dot_class = "bad" if status_code >= 400 else ""
     label = "Needs attention" if status_code >= 400 else "Healthy"
-    return f'<span class="badge"><span class="dot {dot_class}" aria-hidden="true"></span>{label}</span>'
+    return f'<span class="badge"{title}><span class="dot {dot_class}" aria-hidden="true"></span>{label}</span>'
 
 
 def benchmark_fast_label(benchmark: dict[str, Any]) -> str:
@@ -726,7 +755,7 @@ def render_event_row(event: dict[str, Any]) -> str:
         "<tr>"
         f"<td>{render_time_value(event.get('ts'))}</td>"
         f"<td class=\"path\" title=\"{html_value(event.get('path'), '')}\">{html_value(event.get('method'))} {html_value(event.get('path'))}</td>"
-        f"<td>{render_status_badge(status)}</td>"
+        f"<td>{render_status_badge(status, event_detail(event))}</td>"
         f"<td>{html_value(format_duration(event.get('duration_ms')))}</td>"
         f"<td>{render_tier_change(event)}</td>"
         f"<td>{render_boolean_badge(injected)}</td>"
