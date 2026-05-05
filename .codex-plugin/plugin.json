@@ -1,0 +1,49 @@
+{
+  "name": "codex-fast-proxy",
+  "version": "0.1.0",
+  "description": "Codex App Fast/Priority proxy for third-party OpenAI-compatible Responses API providers.",
+  "author": {
+    "name": "gaoguobin",
+    "url": "https://github.com/gaoguobin"
+  },
+  "homepage": "https://github.com/gaoguobin/codex-fast-proxy#readme",
+  "repository": "https://github.com/gaoguobin/codex-fast-proxy",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "codex",
+    "openai-codex",
+    "codex-skill",
+    "skills",
+    "ai-agents",
+    "responses-api",
+    "fast-mode",
+    "service-tier",
+    "openai-compatible-api"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Fast Proxy",
+    "shortDescription": "Fast/Priority proxy for Codex App with third-party APIs.",
+    "longDescription": "Manage a local, safety-bounded proxy and Agent Skill so Codex App users on third-party OpenAI-compatible API providers can enable, verify, benchmark, update, and uninstall the Fast/Priority path.",
+    "developerName": "gaoguobin",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Local workflow",
+      "Proxy management",
+      "Benchmark"
+    ],
+    "websiteURL": "https://github.com/gaoguobin/codex-fast-proxy",
+    "privacyPolicyURL": "https://github.com/gaoguobin/codex-fast-proxy#safety-model",
+    "termsOfServiceURL": "https://github.com/gaoguobin/codex-fast-proxy/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Enable Codex Fast proxy.",
+      "Show Codex Fast proxy status.",
+      "Run Codex Fast proxy benchmark."
+    ],
+    "brandColor": "#10A37F",
+    "screenshots": [
+      "./docs/assets/dashboard.png"
+    ]
+  }
+}

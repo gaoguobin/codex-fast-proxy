@@ -5,17 +5,35 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "codex-fast-proxy"
 version = "0.1.0"
-description = "Local Codex App proxy that injects service_tier=priority for Responses API calls."
+description = "Codex App Fast/Priority proxy for third-party OpenAI-compatible Responses API providers."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 license = { text = "MIT" }
+keywords = [
+    "agent-skills",
+    "codex",
+    "openai-codex",
+    "codex-skill",
+    "skills",
+    "ai-agents",
+    "responses-api",
+    "fast-mode",
+    "service-tier",
+    "openai-compatible-api",
+]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gaoguobin/codex-fast-proxy#readme"
+Repository = "https://github.com/gaoguobin/codex-fast-proxy"
+Issues = "https://github.com/gaoguobin/codex-fast-proxy/issues"
+Documentation = "https://github.com/gaoguobin/codex-fast-proxy#readme"
 
 [project.scripts]
 codex-fast-proxy = "codex_fast_proxy.manager:main"

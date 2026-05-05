@@ -1,6 +1,6 @@
 ---
 name: codex-fast-proxy
-description: Installs, enables, checks, benchmarks, changes upstream URL, stops, or uninstalls Codex App Fast proxy. Use when the user asks for Codex App Fast, priority service_tier, PackyAPI Fast, provider acceleration, Fast/Priority A/B benchmark, or says phrases like "启用 Codex Fast proxy", "让 Codex App 使用 Fast", "跑 Fast proxy benchmark", "验证供应商是否支持 Fast", "把 Codex Fast proxy 的上游切到", "查看 Fast proxy 状态", or "停止 Codex Fast proxy".
+description: Codex App Fast proxy for third-party OpenAI-compatible APIs. Enables, checks, benchmarks, changes upstream, stops, or uninstalls a local Responses API proxy that injects priority service_tier.
 ---
 
 Use this skill when the user wants Codex to manage the local Fast proxy for Codex App.
