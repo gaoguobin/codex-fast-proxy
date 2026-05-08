@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy.dashboard import (  # noqa: E402
+    dashboard_diagnosis,
     read_benchmark_result,
     read_recent_events,
     render_dashboard,
@@ -26,6 +27,7 @@ from codex_fast_proxy.proxy import (  # noqa: E402
     copy_request_headers,
     dashboard_requested,
     parse_args,
+    runtime_details,
     service_tier_patch,
     stream_response_body,
     upstream_request_path,
@@ -101,18 +103,38 @@ class ProxyPatchTests(unittest.TestCase):
 
     def test_preserves_existing_service_tier(self) -> None:
         payload = {"model": "gpt-5.4", "stream": True, "service_tier": "auto"}
+        raw_body = json.dumps(payload, indent=2).encode("utf-8")
         body, event = service_tier_patch(
             "POST",
             "/v1/responses",
-            json.dumps(payload).encode("utf-8"),
+            raw_body,
             "application/json",
             "priority",
         )
 
+        self.assertEqual(body, raw_body)
         self.assertEqual(json.loads(body)["service_tier"], "auto")
         self.assertFalse(event["injected"])
         self.assertEqual(event["service_tier_before"], "auto")
         self.assertEqual(event["service_tier_after"], "auto")
+
+    def test_preserve_policy_does_not_inject_missing_service_tier(self) -> None:
+        payload = {"model": "gpt-5.4", "stream": True}
+        raw_body = json.dumps(payload, indent=2).encode("utf-8")
+        body, event = service_tier_patch(
+            "POST",
+            "/v1/responses",
+            raw_body,
+            "application/json",
+            "priority",
+            "preserve",
+        )
+
+        self.assertEqual(body, raw_body)
+        self.assertNotIn("service_tier", json.loads(body))
+        self.assertFalse(event["injected"])
+        self.assertEqual(event["service_tier_before"], "<absent>")
+        self.assertEqual(event["service_tier_after"], "<absent>")
 
     def test_leaves_non_responses_paths_untouched(self) -> None:
         body = b'{"model":"gpt-5.4"}'
@@ -135,6 +157,13 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(upstream_request_path("/local/responses", "/local", "/v1"), "/v1/responses")
         self.assertEqual(upstream_request_path("/v1/models", "/v1", "/v1"), "/v1/models")
 
+    def test_runtime_details_exposes_source_without_secrets(self) -> None:
+        details = runtime_details()
+
+        self.assertEqual(details["python_executable"], sys.executable)
+        self.assertIn("proxy.py", details["module_file"])
+        self.assertIn(details["source_layout"], {"source_checkout", "installed_package"})
+
     def test_request_headers_drop_hop_by_hop_and_update_length(self) -> None:
         headers = FakeHeaders(
             {
@@ -153,6 +182,24 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(copied["Host"], "www.packyapi.com")
         self.assertEqual(copied["Content-Length"], "42")
         self.assertNotIn("Connection", copied)
+
+    def test_upstream_auth_override_replaces_auth_and_drops_cookie(self) -> None:
+        headers = FakeHeaders(
+            {
+                "authorization": "Bearer chatgpt-token",
+                "Authorization": "Bearer other-token",
+                "Cookie": "session=secret",
+                "Accept": "application/json",
+            }
+        )
+
+        copied = copy_request_headers(headers, "api.example.test", None, "provider-key")
+
+        self.assertEqual(copied["Authorization"], "Bearer provider-key")
+        self.assertEqual(copied["Accept"], "application/json")
+        self.assertEqual(copied["Host"], "api.example.test")
+        self.assertNotIn("authorization", copied)
+        self.assertNotIn("Cookie", copied)
 
     def test_sse_payload_bytes_are_forwarded_without_event_rewrite(self) -> None:
         response = FakeLineResponse([b"event: response.output_text.delta\n", b"data: {\"x\":1}\n", b"\n"])
@@ -245,6 +292,14 @@ class DashboardTests(unittest.TestCase):
             ["/v1/responses"],
         )
 
+    def test_dashboard_diagnosis_prioritizes_response_streaming_state(self) -> None:
+        self.assertEqual(dashboard_diagnosis(None)["title"], "Waiting for traffic")
+        self.assertEqual(dashboard_diagnosis({"status": 502, "eligible": True})["title"], "Needs attention")
+        self.assertEqual(
+            dashboard_diagnosis({"status": 200, "eligible": True, "response_content_type": "text/event-stream"})["title"],
+            "Ready",
+        )
+
     def test_dashboard_uses_only_redacted_event_fields(self) -> None:
         log_path = ROOT / "tests" / "fixtures" / "fast_proxy_dashboard.jsonl"
         server = SimpleNamespace(
@@ -253,12 +308,15 @@ class DashboardTests(unittest.TestCase):
             proxy_base="/v1",
             upstream_base="https://token@api.example.test/v1?secret=1",
             service_tier="priority",
+            upstream_api_key_env="ACME_API_KEY",
         )
 
         html = render_dashboard(server)
 
         self.assertIn("Codex Fast Proxy", html)
         self.assertIn("https://api.example.test/v1", html)
+        self.assertIn("Check streaming", html)
+        self.assertIn("Provider env override: ACME_API_KEY", html)
         self.assertIn("/v1/responses", html)
         self.assertIn("<details open>", html)
         self.assertIn("<summary>Commands</summary>", html)
@@ -276,6 +334,20 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("secret=1", html)
         self.assertNotIn("Bearer should-not-render", html)
         self.assertNotIn("prompt should-not-render", html)
+
+    def test_dashboard_shows_preserved_provider_auth_without_secret(self) -> None:
+        log_path = ROOT / "tests" / "fixtures" / "fast_proxy_dashboard.jsonl"
+        server = SimpleNamespace(
+            log_path=log_path,
+            server_address=("127.0.0.1", 8787),
+            proxy_base="/v1",
+            upstream_base="https://api.example.test/v1",
+            service_tier="priority",
+        )
+
+        html = render_dashboard(server)
+
+        self.assertIn("Codex provider header", html)
 
     def test_dashboard_status_badge_exposes_redacted_event_detail(self) -> None:
         temp_root = ROOT / ".test_tmp"
@@ -325,6 +397,109 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("service_tier_before: &lt;absent&gt;", html)
         self.assertNotIn("Bearer should-not-render", html)
         self.assertNotIn("prompt should-not-render", html)
+
+    def test_dashboard_groups_models_as_provider_metadata(self) -> None:
+        temp_root = ROOT / ".test_tmp"
+        temp_root.mkdir(exist_ok=True)
+        temp_dir = temp_root / f"dashboard-models-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            log_path = temp_dir / "fast_proxy.jsonl"
+            log_path.write_text(
+                json.dumps({
+                    "ts": "2026-05-05T06:10:39.890+00:00",
+                    "method": "POST",
+                    "path": "/v1/responses",
+                    "status": 200,
+                    "duration_ms": 1000,
+                    "eligible": True,
+                    "service_tier_before": "priority",
+                    "service_tier_after": "priority",
+                    "service_tier_injected": False,
+                    "stream": True,
+                    "response_content_type": "text/event-stream",
+                })
+                + "\n"
+                + json.dumps({
+                    "ts": "2026-05-05T06:10:41.000+00:00",
+                    "method": "GET",
+                    "path": "/v1/models",
+                    "status": 503,
+                    "duration_ms": 20,
+                    "eligible": False,
+                })
+                + "\n",
+                encoding="utf-8",
+            )
+            server = SimpleNamespace(
+                log_path=log_path,
+                server_address=("127.0.0.1", 8787),
+                proxy_base="/v1",
+                upstream_base="https://api.example.test/v1",
+                service_tier="priority",
+            )
+
+            html = render_dashboard(server)
+        finally:
+            shutil.rmtree(temp_dir)
+
+        self.assertIn("<h2>Ready</h2>", html)
+        self.assertIn("Recent Responses API traffic is streaming through the local proxy.", html)
+        self.assertIn("Provider metadata", html)
+        self.assertIn("GET /v1/models", html)
+        self.assertIn("1/1", html)
+
+    def test_dashboard_models_do_not_crowd_out_response_events(self) -> None:
+        temp_root = ROOT / ".test_tmp"
+        temp_root.mkdir(exist_ok=True)
+        temp_dir = temp_root / f"dashboard-model-crowding-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            log_path = temp_dir / "fast_proxy.jsonl"
+            response = {
+                "ts": "2026-05-05T06:10:00.000+00:00",
+                "method": "POST",
+                "path": "/v1/responses",
+                "status": 200,
+                "duration_ms": 1000,
+                "eligible": True,
+                "service_tier_before": "priority",
+                "service_tier_after": "priority",
+                "service_tier_injected": False,
+                "stream": True,
+                "response_content_type": "text/event-stream",
+            }
+            metadata = [
+                {
+                    "ts": f"2026-05-05T06:10:{index + 1:02d}.000+00:00",
+                    "method": "GET",
+                    "path": "/v1/models",
+                    "status": 200,
+                    "duration_ms": index,
+                    "eligible": False,
+                }
+                for index in range(12)
+            ]
+            log_path.write_text(
+                "\n".join(json.dumps(event) for event in [response, *metadata]) + "\n",
+                encoding="utf-8",
+            )
+            server = SimpleNamespace(
+                log_path=log_path,
+                server_address=("127.0.0.1", 8787),
+                proxy_base="/v1",
+                upstream_base="https://api.example.test/v1",
+                service_tier="priority",
+            )
+
+            html = render_dashboard(server)
+        finally:
+            shutil.rmtree(temp_dir)
+
+        self.assertIn("<h2>Ready</h2>", html)
+        self.assertIn("POST /v1/responses", html)
+        self.assertIn("Provider metadata", html)
+        self.assertEqual(html.count('title="/v1/models">GET /v1/models'), 4)
 
     def test_dashboard_renders_saved_benchmark_result(self) -> None:
         temp_root = ROOT / ".test_tmp"

@@ -1,7 +1,7 @@
 {
   "name": "codex-fast-proxy",
   "version": "0.1.0",
-  "description": "Codex App Fast/Priority proxy for third-party OpenAI-compatible Responses API providers.",
+  "description": "Codex App proxy for third-party OpenAI-compatible Responses API providers with Fast/Priority controls.",
   "author": {
     "name": "gaoguobin",
     "url": "https://github.com/gaoguobin"
@@ -24,8 +24,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Codex Fast Proxy",
-    "shortDescription": "Fast/Priority proxy for Codex App with third-party APIs.",
-    "longDescription": "Manage a local, safety-bounded proxy and Agent Skill so Codex App users on third-party OpenAI-compatible API providers can enable, verify, benchmark, update, and uninstall the Fast/Priority path.",
+    "shortDescription": "Third-party API proxy for Codex App with Fast/Priority controls.",
+    "longDescription": "Manage a local, safety-bounded proxy and Agent Skill so Codex App users on third-party OpenAI-compatible API providers can preserve the App Fast toggle, optionally force global Fast/Priority, split upstream auth for ChatGPT login, verify traffic, benchmark, update, and uninstall.",
     "developerName": "gaoguobin",
     "category": "Developer Tools",
     "capabilities": [

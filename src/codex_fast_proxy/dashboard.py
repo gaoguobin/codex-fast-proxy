@@ -11,6 +11,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 DASHBOARD_PATH = "/__codex_fast_proxy/dashboard"
 DASHBOARD_EVENT_LIMIT = 8
+DASHBOARD_EVENT_SCAN_LIMIT = 64
+DASHBOARD_METADATA_LIMIT = 4
 BENCHMARK_FILENAME = "fast_proxy.benchmark.json"
 EVENT_DETAIL_FIELDS = (
     "ts",
@@ -23,6 +25,8 @@ EVENT_DETAIL_FIELDS = (
     "service_tier_before",
     "service_tier_after",
     "service_tier_injected",
+    "service_tier_policy",
+    "service_tier_effective_policy",
     "stream",
     "json_error",
     "response_content_type",
@@ -75,23 +79,91 @@ def html_value(value: Any, default: str = "n/a") -> str:
     return escape(str(value), quote=True)
 
 
+def status_code(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_response_event(event: dict[str, Any]) -> bool:
+    return event.get("eligible") is True
+
+
+def is_provider_metadata_event(event: dict[str, Any]) -> bool:
+    return event.get("method") == "GET" and event.get("path") == "/v1/models"
+
+
+def dashboard_diagnosis(last_response: dict[str, Any] | None) -> dict[str, str]:
+    if not last_response:
+        return {
+            "level": "attention",
+            "title": "Waiting for traffic",
+            "message": "Send a Codex message to verify Responses API streaming.",
+            "dot": "warn",
+            "chip": "No responses",
+        }
+
+    status = status_code(last_response.get("status"))
+    if status is not None and status >= 400:
+        return {
+            "level": "attention",
+            "title": "Needs attention",
+            "message": "Latest Responses API request returned an upstream or proxy error.",
+            "dot": "warn",
+            "chip": "Check recent event",
+        }
+
+    if last_response.get("stream") is True or last_response.get("response_content_type") == "text/event-stream":
+        return {
+            "level": "ready",
+            "title": "Ready",
+            "message": "Recent Responses API traffic is streaming through the local proxy.",
+            "dot": "",
+            "chip": "SSE passthrough",
+        }
+
+    return {
+        "level": "attention",
+        "title": "Check streaming",
+        "message": "Recent Responses API traffic succeeded, but streaming metadata is unclear.",
+        "dot": "warn",
+        "chip": "Stream unclear",
+    }
+
+
 def render_dashboard(server: Any) -> str:
-    events = read_recent_events(server.log_path)
+    events = read_recent_events(server.log_path, limit=DASHBOARD_EVENT_SCAN_LIMIT)
     benchmark = read_benchmark_result(server.log_path)
-    last_response = next((event for event in reversed(events) if event.get("eligible")), None)
-    latest_event = events[-1] if events else None
-    success_count = sum(1 for event in events if int(event.get("status") or 0) < 400)
-    injected_count = sum(1 for event in events if event.get("service_tier_injected"))
+    response_events = [event for event in events if is_response_event(event)][-DASHBOARD_EVENT_LIMIT:]
+    metadata_events = [event for event in events if is_provider_metadata_event(event)][-DASHBOARD_METADATA_LIMIT:]
+    last_response = response_events[-1] if response_events else None
+    success_count = sum(
+        1
+        for event in response_events
+        if (code := status_code(event.get("status"))) is not None and code < 400
+    )
+    injected_count = sum(1 for event in response_events if event.get("service_tier_injected"))
 
     local_base = f"http://{server.server_address[0]}:{server.server_address[1]}{server.proxy_base}"
     upstream_base = safe_url_display(server.upstream_base)
+    service_tier_policy = getattr(server, "service_tier_policy", "preserve")
+    service_tier_effective_policy = getattr(server, "service_tier_effective_policy", service_tier_policy)
+    service_tier = getattr(server, "service_tier", "priority")
+    if service_tier_policy == "auto":
+        policy_label = "App controlled" if service_tier_effective_policy == "preserve" else f"Auto {service_tier}"
+    elif service_tier_policy == "preserve":
+        policy_label = "Preserve only"
+    else:
+        policy_label = f"Global {service_tier}"
     last_injection = render_injection_state(last_response)
-    last_status = latest_event.get("status") if latest_event else None
-    last_duration = latest_event.get("duration_ms") if latest_event else None
+    last_status = last_response.get("status") if last_response else None
+    last_duration = last_response.get("duration_ms") if last_response else None
+    diagnosis = dashboard_diagnosis(last_response)
 
-    event_rows = "\n".join(render_event_row(event) for event in reversed(events))
+    event_rows = "\n".join(render_event_row(event) for event in reversed(response_events))
     if not event_rows:
-        event_rows = '<tr><td class="empty" colspan="7">No request events yet.</td></tr>'
+        event_rows = '<tr><td class="empty" colspan="7">No response events yet.</td></tr>'
 
     return f"""<!doctype html>
 <html lang="en">
@@ -260,6 +332,12 @@ def render_dashboard(server: Any) -> str:
       margin-top: 9px;
       font-size: 14px;
       font-weight: 560;
+      overflow-wrap: anywhere;
+    }}
+    .node-note {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
       overflow-wrap: anywhere;
     }}
     .connector {{
@@ -479,10 +557,10 @@ def render_dashboard(server: Any) -> str:
       <div class="panel status-panel">
         <div class="headline">
           <div>
-            <p class="subtle">Read-only local status</p>
-            <h2>Proxy is running</h2>
+            <p class="subtle">{html_value(diagnosis["message"])}</p>
+            <h2>{html_value(diagnosis["title"])}</h2>
           </div>
-          <div class="status-chip"><span class="dot" aria-hidden="true"></span>SSE passthrough</div>
+          <div class="status-chip"><span class="dot {html_value(diagnosis["dot"])}" aria-hidden="true"></span>{html_value(diagnosis["chip"])}</div>
         </div>
         <div class="route" aria-label="Request route">
           <div class="node">
@@ -493,6 +571,7 @@ def render_dashboard(server: Any) -> str:
           <div class="node">
             <div class="node-label">Local proxy</div>
             <div class="node-value">{html_value(local_base)}</div>
+            <div class="node-note">{html_value(auth_label(server))}</div>
           </div>
           <div class="connector" aria-hidden="true"></div>
           <div class="node">
@@ -504,8 +583,8 @@ def render_dashboard(server: Any) -> str:
 
       <div class="panel side-panel" aria-label="Summary metrics">
         <div class="metric">
-          <div class="metric-label">Tier</div>
-          <div class="metric-value">{html_value(server.service_tier)}</div>
+          <div class="metric-label">Fast policy</div>
+          <div class="metric-value">{html_value(policy_label)}</div>
         </div>
         <div class="metric">
           <div class="metric-label">Last inject</div>
@@ -513,7 +592,7 @@ def render_dashboard(server: Any) -> str:
         </div>
         <div class="metric">
           <div class="metric-label">Recent ok</div>
-          <div class="metric-value">{success_count}/{len(events)}</div>
+          <div class="metric-value">{success_count}/{len(response_events)}</div>
         </div>
         <div class="metric">
           <div class="metric-label">Last latency</div>
@@ -528,7 +607,7 @@ def render_dashboard(server: Any) -> str:
           <h2>Recent requests</h2>
           <p>pid {html_value(os.getpid())} / injected {injected_count}</p>
         </div>
-        {render_status_badge(last_status, event_detail(latest_event))}
+        {render_status_badge(last_status, event_detail(last_response))}
       </div>
       <div class="table-wrap">
         <table>
@@ -550,6 +629,8 @@ def render_dashboard(server: Any) -> str:
       </div>
     </section>
 
+    {render_metadata_section(metadata_events)}
+
     {render_benchmark_section(benchmark)}
 
     <section class="details-grid" aria-label="More information">
@@ -557,8 +638,10 @@ def render_dashboard(server: Any) -> str:
         <summary>Commands</summary>
         <div class="detail-body">
           <code>python -m codex_fast_proxy status</code>
+          <code>python -m codex_fast_proxy start</code>
+          <code>python -m codex_fast_proxy verify-upstream --upstream-base &lt;url&gt;</code>
+          <code>python -m codex_fast_proxy set-upstream --clear-upstream-api-key-env</code>
           <code>python -m codex_fast_proxy benchmark</code>
-          <code>python -m codex_fast_proxy install --start</code>
           <code>python -m codex_fast_proxy uninstall --defer-stop</code>
         </div>
       </details>
@@ -616,6 +699,13 @@ def render_injection_state(event: dict[str, Any] | None) -> str:
     return "yes" if event.get("service_tier_injected") else "no"
 
 
+def auth_label(server: Any) -> str:
+    env_name = getattr(server, "upstream_api_key_env", None)
+    if isinstance(env_name, str) and env_name:
+        return f"Provider env override: {env_name}"
+    return "Codex provider header"
+
+
 def event_detail(event: dict[str, Any] | None) -> str | None:
     if not event:
         return None
@@ -632,13 +722,12 @@ def render_status_badge(status: Any, detail: str | None = None) -> str:
     title = f' title="{html_value(detail, "")}"' if detail else ""
     if status is None:
         return f'<span class="badge"{title}><span class="dot warn" aria-hidden="true"></span>No events</span>'
-    try:
-        status_code = int(status)
-    except (TypeError, ValueError):
+    code = status_code(status)
+    if code is None:
         return f'<span class="badge"{title}><span class="dot warn" aria-hidden="true"></span>{html_value(status)}</span>'
 
-    dot_class = "bad" if status_code >= 400 else ""
-    label = "Needs attention" if status_code >= 400 else "Healthy"
+    dot_class = "bad" if code >= 400 else ""
+    label = "Needs attention" if code >= 400 else "Healthy"
     return f'<span class="badge"{title}><span class="dot {dot_class}" aria-hidden="true"></span>{label}</span>'
 
 
@@ -745,6 +834,51 @@ def render_benchmark_section(benchmark: dict[str, Any] | None) -> str:
       </p>
     </section>
 """
+
+
+def render_metadata_section(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return ""
+    last_event = events[-1]
+    rows = "\n".join(render_metadata_row(event) for event in reversed(events))
+    return f"""
+    <section class="panel section" aria-label="Provider metadata checks">
+      <div class="section-head">
+        <div>
+          <h2>Provider metadata</h2>
+          <p>GET /v1/models checks; no prompt or response input.</p>
+        </div>
+        {render_status_badge(last_event.get("status"), event_detail(last_event))}
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Route</th>
+              <th>Status</th>
+              <th>Latency</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows}
+          </tbody>
+        </table>
+      </div>
+    </section>
+"""
+
+
+def render_metadata_row(event: dict[str, Any]) -> str:
+    status = event.get("status")
+    return (
+        "<tr>"
+        f"<td>{render_time_value(event.get('ts'))}</td>"
+        f"<td class=\"path\" title=\"{html_value(event.get('path'), '')}\">{html_value(event.get('method'))} {html_value(event.get('path'))}</td>"
+        f"<td>{render_status_badge(status, event_detail(event))}</td>"
+        f"<td>{html_value(format_duration(event.get('duration_ms')))}</td>"
+        "</tr>"
+    )
 
 
 def render_event_row(event: dict[str, Any]) -> str:

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "codex-fast-proxy"
 version = "0.1.0"
-description = "Codex App Fast/Priority proxy for third-party OpenAI-compatible Responses API providers."
+description = "Codex App proxy for third-party OpenAI-compatible Responses API providers with Fast/Priority controls."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []

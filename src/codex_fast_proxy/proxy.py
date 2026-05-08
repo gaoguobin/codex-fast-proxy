@@ -18,6 +18,7 @@ from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit
 
 from . import __version__
+from .auth import resolve_env
 from .dashboard import DASHBOARD_PATH, render_dashboard
 
 
@@ -36,6 +37,8 @@ BODY_METHODS = {"POST", "PUT", "PATCH"}
 RESPONSES_PATH = "/v1/responses"
 HEALTH_PATH = "/__codex_fast_proxy/health"
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
+SERVICE_TIER_POLICIES = {"auto", "inject_missing", "preserve"}
+EFFECTIVE_SERVICE_TIER_POLICIES = {"inject_missing", "preserve"}
 
 
 def source_fingerprint(paths: Iterable[Path]) -> str:
@@ -49,6 +52,23 @@ def source_fingerprint(paths: Iterable[Path]) -> str:
 
 
 RUNTIME_ID = source_fingerprint([Path(__file__), Path(render_dashboard.__code__.co_filename)])
+
+
+def runtime_details() -> dict[str, str]:
+    module_file = Path(__file__).resolve()
+    source_layout = (
+        "source_checkout"
+        if len(module_file.parents) > 1 and module_file.parents[1].name == "src"
+        else "installed_package"
+    )
+    source_root = module_file.parents[2] if source_layout == "source_checkout" else module_file.parent
+    return {
+        "runtime_id": RUNTIME_ID,
+        "python_executable": sys.executable,
+        "module_file": str(module_file),
+        "source_root": str(source_root),
+        "source_layout": source_layout,
+    }
 
 
 def utc_now() -> str:
@@ -100,12 +120,24 @@ def dashboard_requested(method: str, raw_path: str, accept_header: str, proxy_ba
     return path in {"/", normalized_path(proxy_base), DASHBOARD_PATH}
 
 
-def copy_request_headers(headers: Any, upstream_host: str, body_length: int | None) -> dict[str, str]:
+def copy_request_headers(
+    headers: Any,
+    upstream_host: str,
+    body_length: int | None,
+    upstream_api_key: str | None = None,
+) -> dict[str, str]:
     copied = {
         name: value
         for name, value in headers.items()
         if name.lower() not in HOP_BY_HOP_HEADERS | {"host", "content-length"}
     }
+    if upstream_api_key is not None:
+        copied = {
+            name: value
+            for name, value in copied.items()
+            if name.lower() not in {"authorization", "cookie"}
+        }
+        copied["Authorization"] = f"Bearer {upstream_api_key}"
     copied["Host"] = upstream_host
     if body_length is not None:
         copied["Content-Length"] = str(body_length)
@@ -130,6 +162,7 @@ def service_tier_patch(
     body: bytes,
     content_type: str,
     service_tier: str,
+    service_tier_policy: str = "inject_missing",
 ) -> tuple[bytes, dict[str, Any]]:
     event = {
         "eligible": False,
@@ -160,11 +193,13 @@ def service_tier_patch(
     event["stream"] = payload.get("stream")
     event["service_tier_before"] = payload.get("service_tier", "<absent>")
 
-    if "service_tier" not in payload:
+    if service_tier_policy == "inject_missing" and "service_tier" not in payload:
         payload["service_tier"] = service_tier
         event["injected"] = True
 
-    event["service_tier_after"] = payload.get("service_tier")
+    event["service_tier_after"] = payload.get("service_tier", "<absent>")
+    if not event["injected"]:
+        return body, event
     return compact_json(payload).encode("utf-8"), event
 
 
@@ -249,6 +284,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             request_body,
             self.headers.get("Content-Type", ""),
             self.server.service_tier,
+            getattr(self.server, "service_tier_effective_policy", "inject_missing"),
         )
 
         upstream_path = upstream_request_path(
@@ -260,6 +296,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             self.headers,
             self.server.upstream_netloc,
             len(request_body) if request_body or self.command.upper() in BODY_METHODS else None,
+            getattr(self.server, "upstream_api_key", None),
         )
 
         status = 502
@@ -290,8 +327,13 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "proxy_base": self.server.proxy_base,
             "upstream_base": self.server.upstream_base,
             "service_tier": self.server.service_tier,
+            "service_tier_policy": getattr(self.server, "service_tier_policy", "inject_missing"),
+            "service_tier_effective_policy": getattr(self.server, "service_tier_effective_policy", "inject_missing"),
+            "upstream_auth": "override_configured" if getattr(self.server, "upstream_api_key_env", None) else "preserved",
+            "upstream_api_key_env": getattr(self.server, "upstream_api_key_env", None),
             "version": __version__,
             "runtime_id": RUNTIME_ID,
+            "runtime": runtime_details(),
         }
         encoded = compact_json(payload).encode("utf-8")
         self.send_response(200)
@@ -375,6 +417,8 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "service_tier_before": patch_event["service_tier_before"],
             "service_tier_after": patch_event["service_tier_after"],
             "service_tier_injected": patch_event["injected"],
+            "service_tier_policy": getattr(self.server, "service_tier_policy", "inject_missing"),
+            "service_tier_effective_policy": getattr(self.server, "service_tier_effective_policy", "inject_missing"),
             "stream": patch_event["stream"],
             "json_error": patch_event["json_error"],
             "response_content_type": response_content_type,
@@ -405,11 +449,24 @@ class FastProxyServer(ThreadingHTTPServer):
         upstream_base: str,
         proxy_base: str,
         service_tier: str,
+        service_tier_policy: str,
+        service_tier_effective_policy: str | None,
+        upstream_api_key_env: str | None,
         verbose: bool,
     ) -> None:
         parsed = urlsplit(upstream_base)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"Invalid upstream base URL: {upstream_base}")
+        if service_tier_policy not in SERVICE_TIER_POLICIES:
+            raise ValueError(f"Invalid service tier policy: {service_tier_policy}")
+        effective_policy = service_tier_effective_policy or (
+            "preserve" if service_tier_policy == "auto" else service_tier_policy
+        )
+        if effective_policy not in EFFECTIVE_SERVICE_TIER_POLICIES:
+            raise ValueError(f"Invalid effective service tier policy: {effective_policy}")
+        upstream_api_key = resolve_env(upstream_api_key_env) if upstream_api_key_env else None
+        if upstream_api_key_env and not upstream_api_key:
+            raise ValueError(f"Upstream API key environment variable is not available: {upstream_api_key_env}")
 
         super().__init__(address, FastProxyHandler)
         self.log_path = log_path
@@ -422,6 +479,10 @@ class FastProxyServer(ThreadingHTTPServer):
         self.upstream_base_path = parsed.path.rstrip("/") or "/"
         self.proxy_base = normalized_path(proxy_base)
         self.service_tier = service_tier
+        self.service_tier_policy = service_tier_policy
+        self.service_tier_effective_policy = effective_policy
+        self.upstream_api_key_env = upstream_api_key_env
+        self.upstream_api_key = upstream_api_key
         self.verbose = verbose
 
     def open_connection(self) -> http.client.HTTPConnection:
@@ -444,6 +505,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--proxy-base", default="/v1")
     parser.add_argument("--upstream-base", required=True)
     parser.add_argument("--service-tier", default="priority")
+    parser.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES), default="auto")
+    parser.add_argument("--service-tier-effective-policy", choices=sorted(EFFECTIVE_SERVICE_TIER_POLICIES))
+    parser.add_argument("--upstream-api-key-env")
     parser.add_argument("--log-dir", default=str(Path.home() / ".codex" / "codex-fast-proxy-state" / "state"))
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
@@ -462,6 +526,9 @@ def main(argv: list[str] | None = None) -> int:
         args.upstream_base,
         args.proxy_base,
         args.service_tier,
+        args.service_tier_policy,
+        args.service_tier_effective_policy,
+        args.upstream_api_key_env,
         args.verbose,
     )
     pid_path.write_text(str(os.getpid()), encoding="utf-8")

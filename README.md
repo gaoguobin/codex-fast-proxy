@@ -2,61 +2,152 @@
 
 [![CI](https://github.com/gaoguobin/codex-fast-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/gaoguobin/codex-fast-proxy/actions/workflows/ci.yml)
 
-Use third-party OpenAI-compatible API providers with Codex App while keeping the
-Fast / priority request path enabled.
+Codex App Fast/Priority proxy for third-party OpenAI-compatible APIs.
 
-Codex CLI already has a Fast path, but Codex App requests may arrive at
-`POST /v1/responses` without the wire-level `service_tier` field. This local
-proxy fills only that missing field, keeps streaming untouched, and gives users
-a read-only dashboard to verify real traffic and benchmark whether their
-provider actually benefits from the priority lane.
+This project is for Codex App users who already use a third-party API provider or relay service.
+It lets Codex App route model requests through a local proxy, keep streaming intact, preserve the
+App's own Fast control when available, and optionally inject `service_tier="priority"` when Codex
+does not send a tier.
 
-[Chinese](#chinese) · [Agent Skill](#agent-skill-and-discovery) · [Install](#install) · [Dashboard](#dashboard) · [Benchmark](#benchmark) · [Change Upstream](#change-upstream) · [Update](#update) · [Uninstall](#uninstall) · [Safety](#safety-model) · [Sponsor](#sponsor)
+[Chinese Guide](docs/README.zh-CN.md) · [Quick Start](#quick-start) · [Common Workflows](#common-workflows) · [Dashboard](#dashboard) · [Safety](#safety) · [Advanced Usage](docs/advanced-usage.md) · [Sponsor](#sponsor)
 
 ![Codex Fast Proxy dashboard](docs/assets/dashboard.png)
 
 ## Why
 
-This project is for Codex App users who already use a third-party API provider
-or relay service and want the same Fast / priority behavior they can get from
-Codex CLI. It is designed to be installed and operated by Codex itself: paste
-the install prompt, restart once for skill discovery, then ask Codex to enable
-the proxy.
+Codex CLI can already use Fast mode. The main use case here is Codex App + third-party API
+providers, where users may still want the richer App experience: plugin marketplace, GitHub/Apps
+connectors, manual Fast controls, status hints, voice input, and a local dashboard.
 
-## Highlights
+## What It Does
 
-| Capability | What it means |
+- Routes Codex provider traffic from `http://127.0.0.1:8787/v1` to your saved upstream provider.
+- Only patches `POST /v1/responses`, and only when the configured Fast policy allows it.
+- Leaves `model`, `reasoning`, `tools`, `input`, request bodies, and SSE frames unchanged.
+- Supports an optional auth split for ChatGPT-login users: provider API requests can use a separate
+  environment variable while ChatGPT plugin/GitHub/App connector traffic remains untouched.
+- Installs a Codex `SessionStart` hook so future Codex sessions can start a missing proxy.
+- Provides a read-only local dashboard with redacted status, recent traffic, and benchmark summary.
+
+## Quick Start
+
+Paste this into Codex:
+
+```text
+Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
+```
+
+Then restart Codex App, return to the same conversation, and say:
+
+```text
+Enable Codex Fast proxy
+```
+
+After enable, restart Codex App again or open a new Codex CLI process so Codex reloads its provider
+config. Future sessions use the installed startup hook.
+
+Install is intentionally file-only: it clones the repo, installs the Python package, and links the
+skill. It does not switch your provider, start the proxy, or install hooks until you explicitly
+enable it.
+
+## Common Workflows
+
+Most users should operate this through natural language in Codex:
+
+| Goal | Say this to Codex |
 | --- | --- |
-| Narrow injection | Adds `service_tier="priority"` only to `POST /v1/responses` when the field is absent. |
-| Streaming safe | Preserves SSE responses without parsing or rewriting `event:` / `data:` frames. |
-| Request safe | Leaves `model`, `reasoning`, `tools`, `input`, and all existing request fields unchanged. |
-| Provider agnostic | Reads the active Codex provider from `~/.codex/config.toml` and stores the original upstream URL. |
-| Visual verification | Serves a local read-only dashboard with status, recent redacted requests, and benchmark summary. |
-| Real benchmark | Runs opt-in A/B tests against real Codex-style requests to show whether priority is accepted and faster. |
-| Startup hook | Installs a Codex `SessionStart` hook so future Codex App/CLI sessions can restart the proxy automatically. |
-| Safe rollback | Backs up Codex config, restores conservatively, and avoids overwriting user edits during uninstall. |
+| Install from GitHub | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md` |
+| Enable proxy | `Enable Codex Fast proxy` |
+| Check status | `Show Codex Fast proxy status` |
+| Open dashboard | Open `http://127.0.0.1:8787/v1` |
+| Prepare ChatGPT login | `Prepare Codex Fast proxy for ChatGPT account login` |
+| Run A/B benchmark | `Run the Codex Fast proxy A/B benchmark` |
+| Change upstream URL | `Set Codex Fast proxy upstream to https://api.example.com/v1` |
+| Check for updates | `Check Codex Fast proxy updates` |
+| Update | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md` |
+| Uninstall | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UNINSTALL.md` |
 
-## Compatibility
+Advanced command-line usage lives in [docs/advanced-usage.md](docs/advanced-usage.md).
 
-- Windows-first, tested with the official Codex App and Codex CLI on Windows.
-- Python 3.11+.
-- Any OpenAI-compatible Responses API provider can be used as the upstream, as long as it accepts
-  `service_tier="priority"`.
-- PackyAPI Fast / priority has been verified end to end.
+## After Enable
 
-## Agent Skill and Discovery
+A healthy enabled setup should report:
+
+- `healthy=true`
+- `config_matches=true`
+- `startup_hook=true`
+- `runtime_matches=true`
+- `needs_restart=false`
+- `base_url=http://127.0.0.1:8787/v1`
+
+In API-key mode, the default `auto` policy can inject global priority when Codex omits
+`service_tier`. In ChatGPT-login or unclear states, the default behavior is conservative and
+preserves Codex's own Fast choice.
+
+## ChatGPT Login
+
+ChatGPT login is optional. Use it only if you want the full Codex App UI, such as plugin
+marketplace, GitHub/Apps/connectors, manual Fast controls, status hints, or voice input.
+
+Before switching Codex App to ChatGPT login, ask Codex to prepare provider auth:
+
+```text
+Prepare Codex Fast proxy for ChatGPT account login
+```
+
+The manager will migrate or record the third-party provider key as an environment variable without
+printing the key. If it reports `needs_restart=true`, do not log in yet. First restart Codex App or
+let Codex run:
+
+```powershell
+python -m codex_fast_proxy start
+```
+
+If ChatGPT login on Windows fails with `OSError: [WinError 10013] ... socket ...`, retry after
+running these commands in an Administrator PowerShell:
+
+```powershell
+net stop winnat
+netsh interface ipv4 show excludedportrange protocol=tcp
+net start winnat
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
+## Dashboard
+
+Open:
+
+```text
+http://127.0.0.1:8787/v1
+```
+
+The dashboard is read-only. It shows local proxy status, upstream URL, Fast policy, auth mode,
+recent `/v1/responses` traffic, metadata checks, and the latest benchmark summary if one exists.
+It does not show prompts, request bodies, response content, API keys, cookies, or headers.
+
+## Safety
+
+- The proxy handles provider API requests only; it does not intercept ChatGPT plugin marketplace,
+  GitHub, Apps, connectors, or ChatGPT cookies.
+- Service-tier changes are limited to `POST /v1/responses`.
+- SSE streaming responses are passed through unchanged.
+- Logs are redacted and contain only operational metadata such as path, status, latency, stream flag,
+  and whether `service_tier` was injected.
+- Uninstall is two-phase when needed: restore config first, keep the proxy alive for the current
+  session, then clean up after Codex restarts.
+- If ChatGPT login is active and uninstall would restore direct upstream, uninstall stops before
+  changing config and asks for explicit confirmation. Keep the proxy enabled, switch back to
+  API-key/third-party auth before uninstalling, or explicitly accept that direct third-party
+  providers may reject ChatGPT auth with 401.
+
+## Agent Skill And Discovery
 
 This repository includes an Agent Skill for Codex:
 
 - Skill name: `codex-fast-proxy`
 - Skill path: `skills/codex-fast-proxy/SKILL.md`
-- Primary use case: let Codex App users on third-party OpenAI-compatible API providers enable,
-  verify, benchmark, update, and uninstall the Fast / Priority path.
-- Safety boundary: the proxy only handles `POST /v1/responses`, injects
-  `service_tier="priority"` only when that field is absent, and leaves `model`, `reasoning`,
-  `tools`, `input`, request bodies, and streaming SSE frames otherwise unchanged.
-- Benchmark: run `python -m codex_fast_proxy benchmark` or ask Codex to run the A/B benchmark.
-  The dashboard shows the latest saved redacted benchmark summary.
+- Primary use case: install, enable, verify, benchmark, update, change upstream, prepare ChatGPT
+  login compatibility, and uninstall this proxy.
 
 Tools that index public GitHub repositories for Agent Skills can discover the skill at the path
 above. This project does not claim to be listed on SkillsMP or any other marketplace, and it is not
@@ -64,474 +155,16 @@ an official OpenAI plugin or official marketplace project.
 
 ## Plugin Readiness
 
-Codex documentation describes Skills as the reusable workflow authoring format and Plugins as the
-installable distribution unit for reusable skills and apps. This repository now includes
-`.codex-plugin/plugin.json` metadata that points to `./skills/` so future Codex plugin tooling can
-identify the bundled skill.
-
-Current supported installation is still the Codex-managed flow in [Install](#install). The plugin
-metadata is preparatory discovery/packaging metadata only; it does not install hooks, change
-provider config, start the proxy, or imply an official marketplace listing.
-
-## Install
-
-Paste this into Codex:
-
-```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
-```
-
-The install flow clones this repository to `~/.codex/codex-fast-proxy`, installs the Python package
-in editable user mode, and links the bundled skill into `~/.agents/skills`.
-
-After installation, restart Codex App and return to the same conversation, or open a new Codex CLI
-process. Then ask:
-
-```text
-Enable Codex Fast proxy
-```
-
-After enabling, restart Codex App again, or open a new Codex CLI process, so the running Codex
-process reloads `~/.codex/config.toml`. Future Codex starts use the installed `SessionStart` hook
-to restart the proxy automatically when the recorded provider still points to the local proxy.
-
-## Verify
-
-Ask Codex:
-
-```text
-Show Codex Fast proxy status
-```
-
-Or run:
-
-```powershell
-python -m codex_fast_proxy status
-```
-
-A healthy enabled setup should report `healthy: true`, `config_matches: true`, and
-`startup_hook: true`. After sending a Codex App message, the redacted log should contain a
-`POST /v1/responses` entry with `service_tier_before="<absent>"`,
-`service_tier_after="priority"`, `service_tier_injected=true`, and
-`response_content_type="text/event-stream"`.
-
-You can also open `http://127.0.0.1:8787/v1` in a browser. Browser-style HTML requests show a
-read-only dashboard with local proxy status and recent redacted events; API requests continue to be
-forwarded normally.
-
-## Dashboard
-
-The local dashboard is available at the configured proxy base URL, usually
-`http://127.0.0.1:8787/v1`. It is intentionally read-only and uses only redacted
-runtime metadata:
-
-- Current local proxy status, upstream URL, injected tier, and recent success count.
-- Recent `/v1/responses` traffic with local time, status, latency, injection state, and stream flag.
-- Latest saved benchmark result, including observed speedup and sample counts when the user has run one.
-- Quick manager commands and privacy notes for agents operating inside Codex.
-
-The dashboard does not expose request bodies, prompts, headers, API keys, tool
-arguments, or response contents.
-
-## Benchmark
-
-Ask Codex:
-
-```text
-Run the Codex Fast proxy A/B benchmark
-```
-
-Or run:
-
-```powershell
-python -m codex_fast_proxy benchmark
-```
-
-The benchmark is opt-in because it sends a full synthetic Codex workload to the provider and can
-consume noticeable tokens and quota. By default it runs in `codex-cli` mode: the tool starts a local
-forwarding capture proxy, launches real `codex exec` requests, compares three interleaved default vs
-priority pairs, and records the upstream `/v1/responses` latency without storing response content.
-This uses the same kind of request envelope Codex actually sends, including the official Fast config
-mapping where `service_tier="fast"` becomes wire-level `service_tier="priority"`. It reports median
-first-event latency, first-output latency, total latency, observed speedup, whether priority requests
-were accepted, and whether the observed total latency shows an effective priority lane. If the
-provider config does not define an API key environment field, the benchmark also checks common
-environment variables and `~/.codex/auth.json`; rerun with `--api-key-env NAME` only when automatic
-discovery cannot find the key. The dashboard shows a read-only summary of the latest saved benchmark
-result.
-
-The default per-sample wall timeout is 600 seconds. If a full benchmark still reports timed-out
-samples, rerun with a larger value such as `python -m codex_fast_proxy benchmark --timeout 900`.
-`priority_accepted=true` means at least one priority request succeeded; always read it together with
-the displayed sample counts.
-
-Codex App is a desktop client, not a headless benchmark runner. The automated benchmark therefore
-uses Codex CLI/app-server traffic as the repeatable A/B path and labels the result with
-`benchmark_mode`. For App-specific verification, enable the proxy and check recent dashboard traffic:
-App requests should appear as `POST /v1/responses` with `stream=true`, `service_tier` originally
-absent, and the proxy-injected value set to `priority`.
-
-For a cheap connectivity check only, use `python -m codex_fast_proxy benchmark --profile smoke`.
-If Codex CLI is unavailable, use `python -m codex_fast_proxy benchmark --mode direct`; direct mode is
-less representative than the default capture-based benchmark.
-
-Normal proxy logs with `service_tier_injected=true` and HTTP 200 prove only that the proxy sent a
-successful injected request. Benchmark results are stronger: `priority_accepted=true` means the
-provider accepted the wire parameter, and `observed_priority_effective=true` means the measured full
-workload was materially faster. `provider_confirmed_priority=true` is extra response metadata when a
-provider exposes it, but many providers do not echo that field.
-
-## Change Upstream
-
-After the proxy is enabled, the active provider's `base_url` in `~/.codex/config.toml` is owned by
-the local proxy. If you only change API keys, model, reasoning, or other Codex settings, edit
-`config.toml` as usual. If you want to change the provider URL, update the saved upstream instead:
-
-```powershell
-python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
-```
-
-Or ask Codex:
-
-```text
-Set Codex Fast proxy upstream to https://api.example.com/v1
-```
-
-`set-upstream` refuses to run if the recorded provider no longer points to the local proxy. When it
-succeeds, it keeps Codex config pointed at the local proxy and updates the uninstall baseline so a
-later uninstall restores to the new upstream URL. If the proxy is already running, the default is
-safe for the current conversation: it records the new upstream and leaves the current process alone.
-Restart Codex App, open a new CLI process, or run `python -m codex_fast_proxy start` later to apply
-the new upstream. Use `--restart` only when interrupting current proxy-backed sessions is acceptable.
-
-## Update
-
-Paste this into Codex:
-
-```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md
-```
-
-The update flow pulls the installed repository, reinstalls the editable Python package, refreshes
-the skill junction if needed, and runs `doctor`. If the proxy is already enabled, the update flow
-runs `install --start` after confirming the current config still points to the proxy. That command
-compares the running proxy runtime with the installed code and restarts a stale proxy before it
-returns, so the local dashboard and future requests use the updated code.
-
-Restart Codex App, or open a new Codex CLI process, after an update that changes skill files. The
-installed `SessionStart` hook keeps the same runtime check as a backup. Codex fires `SessionStart`
-per new or resumed session; in quiet mode normal no-op checks are not logged, while start, restart,
-and error events are still recorded. Use `status` to inspect `runtime_matches` and `needs_restart`.
-
-## Uninstall
-
-Paste this into Codex:
-
-```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UNINSTALL.md
-```
-
-Uninstall is intentionally two-phase when the current Codex process may still be using the proxy:
-
-1. The first run restores Codex config to the upstream provider and removes the startup hook, but
-   leaves the proxy process running so the current response can finish.
-2. Restart Codex App, return to the same conversation if desired, or open a new Codex CLI process.
-3. Run the same uninstall prompt again. The second run stops the remaining proxy process, removes
-   runtime state, uninstalls the Python package, removes the skill junction, and deletes
-   `~/.codex/codex-fast-proxy`.
-
-If uninstall reports `config_restore="skipped_config_changed"`, Codex config no longer points to
-the recorded local proxy. Review `~/.codex/config.toml` before using `--force`; the manager avoids
-overwriting user edits in that state.
-
-## Common Commands
-
-Agents should run the manager as the source of truth:
-
-```powershell
-python -m codex_fast_proxy doctor
-python -m codex_fast_proxy install --start
-python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
-python -m codex_fast_proxy status
-python -m codex_fast_proxy benchmark
-python -m codex_fast_proxy autostart --quiet
-python -m codex_fast_proxy stop --force
-python -m codex_fast_proxy uninstall --defer-stop
-python -m codex_fast_proxy uninstall
-```
-
-Default paths:
-
-| Item | Path |
-| --- | --- |
-| Local proxy base URL | `http://127.0.0.1:8787/v1` |
-| Repository install | `~/.codex/codex-fast-proxy` |
-| Runtime state | `~/.codex/codex-fast-proxy-state` |
-| Startup hook | `~/.codex/hooks.json` |
-| Logs | `~/.codex/codex-fast-proxy-state/state/fast_proxy.jsonl` |
-| Config backups | `~/.codex/backups/codex-fast-proxy` |
-
-## Safety Model
-
-- `install --start` starts the local proxy first, health-checks it, then switches Codex config.
-- Enable also sets `features.codex_hooks = true` and adds one user-level `SessionStart` hook. The
-  hook uses the current Python executable to run `codex_fast_proxy autostart --quiet`, starts or
-  refreshes the proxy only when Codex config still points to the recorded local proxy, and otherwise
-  exits quietly. Codex may run this hook for each new or resumed session; normal no-op checks do not
-  write autostart log entries.
-- Plain `install` refuses to switch config without a running proxy.
-- If startup or config switching fails, the manager restores the backed-up config.
-- `set-upstream` changes only the saved upstream URL for the recorded provider. It does not edit API
-  keys, model, reasoning, tools, or prompts, and it refuses to run if config no longer points to the
-  local proxy. By default it does not restart a running proxy, so the current response is not cut off;
-  the next Codex startup hook or manual `start` applies the new upstream.
-- Running Codex processes do not hot-switch provider config. Restart Codex App and return to the
-  same conversation, or open a new CLI process.
-- `stop` refuses to stop while Codex config still points to the proxy unless `--force` is explicit.
-- `uninstall --defer-stop` restores config first and leaves the proxy running so a proxy-backed
-  current process can finish its response.
-- `uninstall` removes only the `codex-fast-proxy` hook from `~/.codex/hooks.json` and preserves
-  unrelated user hooks.
-- If users edited `~/.codex/config.toml` after enabling the proxy, uninstall preserves those edits
-  when possible: if the recorded provider still points to the local proxy, only that provider's
-  `base_url` is restored to the saved upstream. If the provider no longer points to the recorded
-  proxy, uninstall stops and asks for user confirmation instead of overwriting config.
-
-## Privacy
-
-The proxy never logs authorization headers, cookies, request bodies, prompts, tool arguments, or
-response contents. Logs include only operational metadata such as path, status, duration, stream
-flag, and whether `service_tier` was injected.
-
-Benchmark sends a fixed synthetic prompt only. It stores redacted metrics such as status, latency,
-and response `service_tier`; it does not store the API key or response content. The dashboard reads
-only this saved redacted summary.
-
-## Development
-
-```powershell
-python -m pip install --user -e .
-python -m codex_fast_proxy doctor
-python -m unittest discover -s tests -p "test_*.py"
-```
-
-Run the proxy in the foreground:
-
-```powershell
-python -m codex_fast_proxy serve `
-  --host 127.0.0.1 `
-  --port 8787 `
-  --proxy-base /v1 `
-  --upstream-base https://api.example.com/v1 `
-  --service-tier priority
-```
-
-<a id="chinese"></a>
-
-## 中文说明
-
-`codex-fast-proxy` 是一个本地 Fast 代理，面向 Codex App 和 Codex CLI。它解决的核心问题是：
-Codex App 发送 `POST /v1/responses` 时可能没有 `service_tier` 字段，而部分上游 provider
-需要 `service_tier="priority"` 才会进入 Fast / priority 通道。
-
-它适合已经在 Codex App 中使用第三方 OpenAI-compatible API provider / 中转站的用户。安装后仍然
-由 Codex 读取自己的 provider 配置，proxy 只补缺失的 Fast 参数，并通过本地只读 dashboard 展示
-状态、最近请求和 benchmark 结果，方便确认 App 是否真的走到了 priority 通道。
-
-### Agent Skill 和可发现性
-
-这个仓库包含一个 Codex Agent Skill：
-
-- Skill 名称：`codex-fast-proxy`
-- Skill 路径：`skills/codex-fast-proxy/SKILL.md`
-- 用途：让使用第三方 OpenAI-compatible API provider / 中转站的 Codex App 用户，也能启用、检查、
-  benchmark、更新和卸载 Fast / Priority 路径。
-- 安全边界：proxy 只处理 `POST /v1/responses`，只在缺失 `service_tier` 时注入
-  `service_tier="priority"`，不改 `model`、`reasoning`、`tools`、`input`，也不改 SSE 流。
-- Benchmark：运行 `python -m codex_fast_proxy benchmark`，或直接让 Codex 跑 A/B benchmark。
-  dashboard 会只读展示最近一次已保存的脱敏 benchmark 摘要。
-
-会索引公开 GitHub 仓库中 Agent Skills 的工具，可以通过上面的路径发现这个 skill。本项目不声称
-已经被 SkillsMP 或其它 marketplace 收录，也不声称是 OpenAI 官方 plugin 或官方 marketplace 项目。
-
-### Plugin readiness
-
-Codex 官方文档把 Skill 定义为可复用 workflow 的 authoring format，把 Plugin 定义为可安装的分发单元。
-当前仓库已经包含 `.codex-plugin/plugin.json` 元数据，并指向 `./skills/`，方便后续按 Codex plugin
-分发格式整理。
-
-当前正式支持的安装方式仍然是下面的 Codex-managed 安装流程。这个 plugin metadata 只是为发现和后续
-打包做准备，不会安装 hook、不会改 provider config、不会启动 proxy，也不代表已经进入官方 marketplace。
-
-### 快速安装
-
-把这句话贴给 Codex：
-
-```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
-```
-
-安装完成后，重启 Codex App 并回到原对话，或新开 CLI 实例，然后说：
-
-```text
-启用 Codex Fast proxy
-```
-
-启用完成后，再重启 Codex App 或新开 CLI 实例，让 Codex 重新读取 provider config。
-
-### 状态检查
-
-对 Codex 说：
-
-```text
-查看 Codex Fast proxy 状态
-```
-
-或直接运行：
-
-```powershell
-python -m codex_fast_proxy status
-```
-
-健康状态应包含 `healthy: true`、`config_matches: true`、`startup_hook: true`。App 发出消息后，
-日志里应出现 `/v1/responses`，并显示 `service_tier_before="<absent>"`、
-`service_tier_after="priority"`、`service_tier_injected=true`、`response_content_type="text/event-stream"`。
-
-也可以在浏览器打开 `http://127.0.0.1:8787/v1` 查看本地只读 dashboard。它会显示 proxy 状态、
-当前 upstream、最近脱敏请求、是否注入 priority、SSE 状态，以及最近一次 benchmark 摘要；不会展示
-prompt、请求体、API key、headers、tool arguments 或响应内容。
-
-### Benchmark
-
-对 Codex 说：
-
-```text
-跑一下 Codex Fast proxy A/B benchmark
-```
-
-或直接运行：
-
-```powershell
-python -m codex_fast_proxy benchmark
-```
-
-Benchmark 是手动触发的，因为它会向 provider 发送完整的 Codex 合成任务，可能消耗明显的 token 和
-quota。默认使用 `codex-cli` 模式：工具会启动一个本地转发抓包代理，拉起真实 `codex exec` 请求，
-跑 3 组交错的 default vs priority，并记录 upstream `/v1/responses` 耗时，但不保存响应内容。这个
-模式使用 Codex 实际会发送的请求外壳，也会覆盖官方 Fast 配置映射：`service_tier="fast"` 在 wire
-body 中会变成 `service_tier="priority"`。结果会输出首个事件、首个输出、完整耗时的 median latency、
-观测到的 speedup、priority 请求是否被接受，以及完整任务耗时是否体现出有效 priority 通道。dashboard
-会只读展示最近一次已保存的 benchmark 摘要。如果 provider 配置里没有 API key 环境变量字段，
-benchmark 还会检查常见环境变量和 `~/.codex/auth.json`；只有自动发现失败时才需要用
-`--api-key-env NAME` 指定。
-
-默认每个样本的 wall timeout 是 600 秒。如果 full benchmark 仍然出现 timeout，可以用更大的值重跑，
-例如 `python -m codex_fast_proxy benchmark --timeout 900`。`priority_accepted=true` 表示至少有一个
-priority 请求成功；需要和界面里的样本成功数一起看。
-
-Codex App 是桌面客户端，不是适合无头自动化的 benchmark runner。因此自动 benchmark 使用
-Codex CLI/app-server 流量作为可重复的 A/B 路径，并在结果里标出 `benchmark_mode`。如果要验证 App
-侧是否真的走代理，启用 proxy 后看 dashboard 的近期流量：应能看到 `POST /v1/responses`、
-`stream=true`、原始 `service_tier` 缺失，并由 proxy 注入为 `priority`。
-
-如果只想做低成本连通检查，可以运行 `python -m codex_fast_proxy benchmark --profile smoke`。
-如果没有 Codex CLI，可以运行 `python -m codex_fast_proxy benchmark --mode direct`；direct 模式不如
-默认抓包模式贴近真实 Codex 使用。
-
-普通代理日志里的 `service_tier_injected=true` 和 HTTP 200 只能证明代理成功发出了注入后的请求，
-不能证明供应商真的走了 Fast/Priority 通道。Benchmark 里的 `priority_accepted=true` 表示供应商
-接受了这个 wire 参数，`observed_priority_effective=true` 表示完整任务实测明显变快。
-`provider_confirmed_priority=true` 只是供应商响应里额外回显的证据，很多供应商不会返回这个字段。
-
-### 更换上游 URL
-
-启用 proxy 后，当前 provider 的 `base_url` 会由本地 proxy 接管。如果只是改 API key、model、
-reasoning 或其它 Codex 配置，仍然可以按原来的方式改 `config.toml`。如果要更换供应商 URL，不要
-直接改这个 `base_url`，而是更新 proxy 保存的 upstream：
-
-```powershell
-python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
-```
-
-也可以直接对 Codex 说：
-
-```text
-把 Codex Fast proxy 的上游切到 https://api.example.com/v1
-```
-
-`set-upstream` 只在当前 provider 仍指向本地 proxy 时执行；成功后会更新卸载恢复基线，后续卸载会
-恢复到新的 upstream URL。如果 proxy 已经在运行，默认不会立刻重启，避免打断当前对话；重启
-Codex App、新开 CLI，或之后运行 `python -m codex_fast_proxy start` 会应用新的 upstream。只有在
-接受打断当前 proxy 会话时才使用 `--restart`。
-
-### 更新
-
-把这句话贴给 Codex：
-
-```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md
-```
-
-更新会拉取 GitHub 仓库、重新安装 editable Python 包、补齐 skill junction，并运行 `doctor`。
-如果当前已经启用了代理，更新流程会运行 `install --start`：它会比较运行中 proxy 的代码指纹和
-已安装代码，如果发现旧运行时且 config 仍指向本地 proxy，会在命令返回前重启代理。因此本地
-dashboard 和后续请求会直接使用新代码。
-
-更新 skill 文件后仍需要重启 Codex App，或新开 CLI 实例，让 Codex 重新扫描 skill。已安装的
-`SessionStart` hook 会作为兜底继续做 runtime 检查。Codex 可能在每个新建或恢复的会话触发这个
-hook；quiet 模式下正常 no-op 不写 autostart 日志，只记录启动、重启和错误。
-
-### 卸载
-
-把这句话贴给 Codex：
-
-```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UNINSTALL.md
-```
-
-如果当前 Codex 进程可能还在走 proxy，卸载是两阶段：
-
-1. 第一次执行会先把 config 恢复直连，并移除 startup hook，但暂时保留 proxy 进程，避免打断当前会话。
-2. 重启 Codex App 并回到原对话，或新开 CLI 实例。
-3. 第二次执行同一个卸载入口，会停止残留 proxy、卸载 pip 包、删除 skill junction、删除 repo 和 state。
-
-如果返回 `config_restore="skipped_config_changed"`，说明当前 provider 已经不指向记录的本地 proxy。
-这时工具会保守停止，避免覆盖用户手动改过的配置；确认后再考虑 `--force`。
-
-### 行为边界
-
-- 只修改 `POST /v1/responses`。
-- 只在缺失 `service_tier` 时补 `priority`，已有值不覆盖。
-- 不改 `model`、`reasoning`、`tools`、`input`。
-- SSE 流式响应原样透传。
-- 日志脱敏，不记录 API key、Cookie、请求体、prompt 或响应内容。
-- Benchmark 只发送固定合成 prompt，只保存 status、latency、response `service_tier` 等脱敏指标。
-- dashboard 只读取最近一次 benchmark 的脱敏摘要，不提供会消耗 quota 的启动按钮。
-- 浏览器打开 `http://127.0.0.1:8787/v1` 时显示只读本地状态页；API 请求仍按原逻辑转发。
-- provider 通用：自动读取当前 active provider 的原始 `base_url` 作为 upstream。
-- 更换供应商 URL 时使用 `set-upstream` 更新 proxy 保存的 upstream；key/model 等其它配置仍由用户
-  直接维护 `config.toml`。默认延期重启运行中的 proxy，避免打断当前响应。
-- 启用后写入 Codex `SessionStart` hook；hook 使用当前 Python 可执行文件运行 autostart。后续 Codex
-  App/CLI 新建或恢复会话时，如果配置仍指向本地 proxy，会自动启动或刷新代理。用户手动改回直连时
-  hook 会静默跳过，正常 no-op 不写日志。
-
-### 回滚保护
-
-卸载会优先保护用户配置：
-
-- config 没变：还原安装前备份。
-- config 改过，但 provider 仍指向本地 proxy：只把该 provider 的 `base_url` 改回 upstream，其它改动保留。
-- provider 已经不指向记录的 proxy：停止自动回滚，要求用户确认，避免覆盖用户配置。
-
-卸载只移除 `codex-fast-proxy` 自己写入的 hook，保留用户已有的其它 Codex hooks。
+The repository includes `.codex-plugin/plugin.json` metadata pointing to `./skills/` for future
+Codex plugin distribution workflows. The supported installation path today is still the
+Codex-managed install prompt above. Plugin metadata does not install hooks, change provider config,
+start the proxy, or imply official marketplace listing.
 
 ## Sponsor
 
 If `codex-fast-proxy` saves you time, consider [sponsoring the author](https://gaoguobin.github.io/sponsor)
-to help cover API token and maintenance costs.
-
-如果这个工具帮你节省了时间，可以通过 [赞赏作者](https://gaoguobin.github.io/sponsor) 支持后续维护和 API token 成本。
+or supporting the project from the GitHub Sponsors button.
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT

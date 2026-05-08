@@ -75,7 +75,7 @@ Lifecycle operating rules:
 - Backup config before switching base_url.
 - Restore direct upstream before stopping a proxy that a live process may still use.
 - Preserve unrelated hooks during install, update, and uninstall.
-- Restart stale runtime after update only when the provider still points to the proxy.
+- Refresh stale runtime after update only from an explicit manager command, not from quiet autostart.
 - Keep startup hooks quiet on normal no-op checks.
 - Ask before destructive cleanup when config has drifted.
 - Report exact next steps when Codex must be restarted.
@@ -162,7 +162,8 @@ Lifecycle constraints:
 - A file-only install must not switch Codex to the proxy.
 - Enabling starts the proxy before changing provider config.
 - Startup hooks should be quiet during no-op checks.
-- A stale running proxy should be refreshed after update when the provider still points to the proxy.
+- A stale running proxy should be refreshed by explicit update/start commands when the provider still
+  points to the proxy.
 - Running Codex processes do not hot-switch provider config.
 - Disabling should restore direct upstream first and defer stopping the proxy when needed.
 - Cleanup should remove only the package, state, hook, and skill junction owned by this tool.
@@ -181,7 +182,7 @@ Review rubric:
 - Identify whether the proxy changes only the intended request path.
 - Identify whether rollback can lose user config changes.
 - Identify whether hooks are installed in a provider-gated way.
-- Identify whether update restarts stale runtime only when necessary.
+- Identify whether update restarts stale runtime only from explicit manager commands.
 - Identify whether status can distinguish config intent from live traffic.
 - Identify whether dashboard content avoids private prompt or response data.
 - Identify whether benchmark output can be explained to a user without overclaiming.
@@ -192,7 +193,7 @@ Operational examples:
 - The user asks Codex to enable Fast proxy; the manager starts the local server and switches base_url.
 - The current Codex process may keep its old provider config until restart.
 - A future session fires SessionStart and the hook quietly confirms the proxy is already healthy.
-- If the user updates the repo, manager commands use the new code and stale runtime is restarted.
+- If the user updates the repo, explicit manager commands use the new code and can restart stale runtime.
 - If the user uninstalls, config is restored before the proxy is stopped to avoid breaking a live session.
 - If the user manually edits config, uninstall should ask or preserve changes instead of restoring an old backup blindly.
 
@@ -293,16 +294,16 @@ def api_key_env_candidates(provider_config: dict[str, Any], requested: str | Non
 
 def discover_api_key(provider_config: dict[str, Any], requested: str | None, codex_home: Path) -> tuple[str, str]:
     candidates = api_key_env_candidates(provider_config, requested)
-    for env_name in candidates:
-        api_key = os.environ.get(env_name)
-        if api_key:
-            return f"env:{env_name}", api_key
-
     codex_auth = read_codex_auth(codex_home)
     for env_name in candidates:
         api_key = codex_auth.get(env_name)
         if api_key:
             return f"auth.json:{env_name}", api_key
+
+    for env_name in candidates:
+        api_key = os.environ.get(env_name)
+        if api_key:
+            return f"env:{env_name}", api_key
 
     if requested:
         raise ValueError(

@@ -17,7 +17,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 try:
     import tomllib
@@ -27,16 +27,34 @@ except ModuleNotFoundError:
 TOML_DECODE_ERROR = tomllib.TOMLDecodeError if tomllib else ValueError
 
 from . import __version__
-from .proxy import RUNTIME_ID, compact_json
+from .auth import (
+    LoginDiagnosis,
+    detect_login_mode,
+    environment_source,
+    read_auth_json,
+    read_secret_from_auth,
+    resolve_env,
+    write_windows_user_env,
+)
+from .proxy import RUNTIME_ID, compact_json, runtime_details
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 DEFAULT_PROXY_BASE = "/v1"
 DEFAULT_SERVICE_TIER = "priority"
+DEFAULT_SERVICE_TIER_POLICY = "auto"
+LEGACY_SERVICE_TIER_POLICY = "inject_missing"
+SERVICE_TIER_POLICIES = {"auto", "inject_missing", "preserve"}
+EFFECTIVE_SERVICE_TIER_POLICIES = {"inject_missing", "preserve"}
 HOOK_EVENT = "SessionStart"
+HOOK_EVENT_LABEL = "session_start"
 HOOK_MATCHER = "startup|resume"
 HOOK_TIMEOUT_SECONDS = 10
+HOOK_FEATURE_KEY = "hooks"
+LEGACY_HOOK_FEATURE_KEY = "codex_hooks"
+HOOK_FEATURE_KEYS = (HOOK_FEATURE_KEY, LEGACY_HOOK_FEATURE_KEY)
+ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENABLE_SESSION_EFFECT = (
     "Running Codex processes keep their current base_url. Restart Codex App, then resume the same conversation if desired, "
     "or open a new CLI process to use the proxy."
@@ -46,6 +64,21 @@ DEFER_STOP_SESSION_EFFECT = (
     "Restart Codex App, then resume the same conversation if desired, or open a new CLI process; then run uninstall again "
     "to stop the proxy and remove files."
 )
+DIRECT_UPSTREAM_RESTORE_STATUSES = {
+    "already_restored",
+    "already_restored_base_url",
+    "restored",
+    "restored_base_url",
+}
+CHATGPT_LOGIN_WINDOWS_TROUBLESHOOTING = {
+    "trigger": "ChatGPT login fails on Windows with OSError: [WinError 10013] socket access denied.",
+    "commands": [
+        "net stop winnat",
+        "netsh interface ipv4 show excludedportrange protocol=tcp",
+        "net start winnat",
+        "netsh interface ipv4 show excludedportrange protocol=tcp",
+    ],
+}
 
 
 @dataclass(frozen=True)
@@ -73,6 +106,8 @@ class ProxySettings:
     proxy_base: str
     upstream_base: str
     service_tier: str
+    service_tier_policy: str = DEFAULT_SERVICE_TIER_POLICY
+    upstream_api_key_env: str | None = None
 
     @property
     def base_url(self) -> str:
@@ -91,6 +126,389 @@ def read_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def upstream_api_key_source(paths: ProxyPaths, env_name: str | None) -> str | None:
+    return environment_source(paths.codex_home, env_name)
+
+
+def upstream_auth_status(paths: ProxyPaths, settings: ProxySettings | None) -> dict[str, Any]:
+    env_name = settings.upstream_api_key_env if settings else None
+    source = upstream_api_key_source(paths, env_name)
+    persistent_source = source in {"process_env", "windows_user_env"}
+    return {
+        "upstream_auth": "override_configured" if env_name else "preserved",
+        "upstream_api_key_env": env_name,
+        "upstream_api_key_available": bool(source) if env_name else None,
+        "upstream_api_key_source": source,
+        "upstream_api_key_persistent": persistent_source if env_name else None,
+    }
+
+
+def direct_upstream_auth_warning(
+    paths: ProxyPaths,
+    settings: ProxySettings | None,
+    restore_status: str,
+) -> dict[str, Any] | None:
+    if restore_status not in DIRECT_UPSTREAM_RESTORE_STATUSES:
+        return None
+    return direct_upstream_auth_risk(paths, settings)
+
+
+def direct_upstream_auth_risk(
+    paths: ProxyPaths,
+    settings: ProxySettings | None,
+) -> dict[str, Any] | None:
+    login = detect_login_mode(paths.codex_home)
+    if not login.chatgpt_auth:
+        return None
+    return {
+        "code": "chatgpt_auth_direct_upstream",
+        "severity": "high",
+        "message": (
+            "Codex config now points directly at the upstream provider, so the proxy auth override no longer "
+            "protects model requests. If Codex App remains signed in with ChatGPT, third-party provider "
+            "requests may receive ChatGPT auth and fail with 401."
+        ),
+        "next_user_action": (
+            "Before restarting Codex after uninstall, switch Codex App back to API-key/third-party provider "
+            "auth, or keep the proxy enabled if you want ChatGPT login UI with a third-party provider."
+        ),
+        "login_mode": login.login_mode,
+        "upstream_base": settings.upstream_base if settings else None,
+        "previous_upstream_auth": (
+            "override_configured" if settings and settings.upstream_api_key_env else "preserved"
+        ),
+        "upstream_api_key_env": settings.upstream_api_key_env if settings else None,
+    }
+
+
+def uninstall_needs_chatgpt_direct_confirmation(
+    paths: ProxyPaths,
+    manifest: dict[str, Any] | None,
+    settings: ProxySettings | None,
+    force: bool,
+) -> dict[str, Any] | None:
+    warning = direct_upstream_auth_risk(paths, settings)
+    if not warning or not manifest or not settings:
+        return None
+
+    config_path = Path(manifest["config_path"])
+    current_hash = sha256_file(config_path)
+    if current_hash == manifest.get("config_hash_before"):
+        return None
+    if current_hash == manifest.get("config_hash_after"):
+        return warning
+
+    config = load_toml_config(config_path)
+    config_base_url = provider_base_url(config, settings.provider)
+    if config_base_url == settings.base_url:
+        return warning
+    if force and config_base_url != settings.upstream_base:
+        return warning
+    return None
+
+
+def runtime_status(paths: ProxyPaths, health: dict[str, Any] | None) -> dict[str, Any]:
+    proxy_runtime = health.get("runtime") if isinstance(health, dict) else None
+    manager_runtime = {**runtime_details(), "manager_module_file": str(Path(__file__).resolve())}
+    return {
+        "manager": manager_runtime,
+        "proxy": proxy_runtime if isinstance(proxy_runtime, dict) else None,
+        "hook_command": command_for_hook(paths),
+    }
+
+
+def require_upstream_auth_available(paths: ProxyPaths, settings: ProxySettings) -> None:
+    if settings.upstream_api_key_env and not upstream_api_key_source(paths, settings.upstream_api_key_env):
+        raise ConfigError(
+            f"Upstream API key environment variable is not available: {settings.upstream_api_key_env}. "
+            "Set it locally first, then retry. The key value must not be pasted into chat."
+        )
+
+
+def is_success_status(value: Any) -> bool:
+    try:
+        status = int(value)
+    except (TypeError, ValueError):
+        return False
+    return 200 <= status < 400
+
+
+def resolve_verification_api_key(
+    paths: ProxyPaths,
+    provider_config: dict[str, Any],
+    settings: ProxySettings,
+) -> tuple[str, str]:
+    if settings.upstream_api_key_env:
+        value = resolve_env(settings.upstream_api_key_env) or read_secret_from_auth(
+            paths.codex_home,
+            settings.upstream_api_key_env,
+        )
+        if not value:
+            raise ConfigError(
+                f"Upstream API key environment variable is not available: {settings.upstream_api_key_env}."
+            )
+        source = upstream_api_key_source(paths, settings.upstream_api_key_env) or "unknown"
+        return f"{source}:{settings.upstream_api_key_env}", value
+
+    from .benchmark import discover_api_key
+
+    try:
+        return discover_api_key(provider_config, None, paths.codex_home)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
+def verify_upstream_responses(
+    paths: ProxyPaths,
+    config: dict[str, Any],
+    settings: ProxySettings,
+    timeout: float,
+) -> dict[str, Any]:
+    if timeout <= 0:
+        raise ConfigError("--verify-timeout must be greater than 0.")
+
+    from .benchmark import BenchmarkTarget, run_sample
+
+    model = config.get("model")
+    reasoning_effort = config.get("model_reasoning_effort")
+    if not isinstance(model, str) or not model:
+        raise ConfigError("Codex config has no model; rerun set-upstream with --no-verify or configure a model first.")
+    if reasoning_effort is not None and not isinstance(reasoning_effort, str):
+        raise ConfigError("Codex config model_reasoning_effort must be a string.")
+
+    provider_config = provider_config_for(config, settings.provider)
+    api_key_source, api_key = resolve_verification_api_key(paths, provider_config, settings)
+    login = detect_login_mode(paths.codex_home)
+    request_tier = "priority" if effective_service_tier_policy(settings, login) == "inject_missing" else "default"
+    target = BenchmarkTarget(
+        provider=settings.provider,
+        upstream_base=settings.upstream_base,
+        model=model,
+        profile="smoke",
+        service_tier=settings.service_tier,
+        api_key_source=api_key_source,
+        api_key=api_key,
+        reasoning_effort=reasoning_effort,
+    )
+
+    try:
+        sample = run_sample(target, request_tier, timeout)
+    except Exception as exc:
+        raise ConfigError(f"Responses API side-path verification failed: {redact_sensitive_text(str(exc))}") from exc
+
+    content_type = str(sample.get("response_content_type") or "")
+    if not is_success_status(sample.get("status")):
+        raise ConfigError(f"Responses API side-path verification returned HTTP {sample.get('status')}.")
+    if "text/event-stream" not in content_type.lower():
+        raise ConfigError(
+            f"Responses API side-path verification did not return SSE content: {content_type or '<missing>'}."
+        )
+
+    return {
+        "status": "verified",
+        "request": "POST /v1/responses",
+        "stream": True,
+        "profile": "smoke",
+        "provider": settings.provider,
+        "upstream_base": settings.upstream_base,
+        "model": model,
+        "service_tier_request": request_tier,
+        "response_status": sample.get("status"),
+        "response_content_type": sample.get("response_content_type"),
+        "first_event_ms": sample.get("first_event_ms"),
+        "total_ms": sample.get("total_ms"),
+        "response_service_tier": sample.get("response_service_tier"),
+        "api_key_source": api_key_source,
+    }
+
+
+def install_requires_verification(
+    existing_enabled: bool,
+    existing_settings: ProxySettings | None,
+    settings: ProxySettings,
+) -> bool:
+    if not existing_enabled or not existing_settings:
+        return True
+    return any(
+        (
+            existing_settings.upstream_base != settings.upstream_base,
+            existing_settings.service_tier != settings.service_tier,
+            existing_settings.service_tier_policy != settings.service_tier_policy,
+            existing_settings.upstream_api_key_env != settings.upstream_api_key_env,
+        )
+    )
+
+
+def verification_settings_from_args(
+    paths: ProxyPaths,
+    config: dict[str, Any],
+    args: argparse.Namespace,
+) -> ProxySettings:
+    settings_data = read_json(paths.settings_path)
+    existing_settings = settings_from_dict(settings_data) if settings_data else None
+    provider = args.provider or (existing_settings.provider if existing_settings else choose_provider(config, None))
+    if existing_settings and provider == existing_settings.provider:
+        base = existing_settings
+        upstream_base = validate_upstream_base(args.upstream_base) if args.upstream_base else base.upstream_base
+        service_tier = args.service_tier or base.service_tier
+        service_tier_policy = args.service_tier_policy or base.service_tier_policy
+        upstream_api_key_env = base.upstream_api_key_env
+    else:
+        upstream_value = args.upstream_base or provider_base_url(config, provider)
+        if not upstream_value:
+            raise ConfigError(f"Provider {provider!r} has no upstream base_url; pass --upstream-base.")
+        upstream_base = validate_upstream_base(upstream_value)
+        service_tier = args.service_tier or DEFAULT_SERVICE_TIER
+        service_tier_policy = args.service_tier_policy or DEFAULT_SERVICE_TIER_POLICY
+        upstream_api_key_env = None
+        base = ProxySettings(
+            provider=provider,
+            host=DEFAULT_HOST,
+            port=DEFAULT_PORT,
+            proxy_base=DEFAULT_PROXY_BASE,
+            upstream_base=upstream_base,
+            service_tier=service_tier,
+            service_tier_policy=service_tier_policy,
+            upstream_api_key_env=upstream_api_key_env,
+        )
+
+    if args.upstream_api_key_env and args.clear_upstream_api_key_env:
+        raise ConfigError("Use either --upstream-api-key-env or --clear-upstream-api-key-env, not both.")
+    if args.clear_upstream_api_key_env:
+        upstream_api_key_env = None
+    elif args.upstream_api_key_env:
+        upstream_api_key_env = validate_env_name(args.upstream_api_key_env)
+
+    if service_tier_policy not in SERVICE_TIER_POLICIES:
+        names = ", ".join(sorted(SERVICE_TIER_POLICIES))
+        raise ConfigError(f"Invalid service tier policy {service_tier_policy!r}. Available: {names}")
+
+    return ProxySettings(
+        provider=provider,
+        host=base.host,
+        port=base.port,
+        proxy_base=base.proxy_base,
+        upstream_base=upstream_base,
+        service_tier=service_tier,
+        service_tier_policy=service_tier_policy,
+        upstream_api_key_env=upstream_api_key_env,
+    )
+
+
+def validate_env_name(name: str) -> str:
+    value = name.strip()
+    if not ENV_NAME_PATTERN.fullmatch(value):
+        raise ConfigError(f"Invalid environment variable name: {name!r}")
+    return value
+
+
+def default_provider_env_name(provider: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", provider).strip("_").upper()
+    return f"{normalized or 'PROVIDER'}_API_KEY"
+
+
+def auth_api_key_names(codex_home: Path) -> list[str]:
+    try:
+        auth_data = read_auth_json(codex_home)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not auth_data:
+        return []
+    return sorted(
+        key
+        for key, value in auth_data.items()
+        if key.endswith("_API_KEY") and isinstance(value, str) and value
+    )
+
+
+def provider_auth_candidates(
+    provider: str,
+    provider_config: dict[str, Any],
+    requested_source: str | None,
+    codex_home: Path,
+) -> list[str]:
+    candidates: list[str] = []
+    if requested_source:
+        candidates.append(requested_source)
+    for key in ("api_key_env_var", "env_key", "api_key_env"):
+        value = provider_config.get(key)
+        if isinstance(value, str) and value:
+            candidates.append(value)
+    candidates.extend(["OPENAI_API_KEY", default_provider_env_name(provider)])
+    candidates.extend(auth_api_key_names(codex_home))
+
+    deduped: list[str] = []
+    for name in candidates:
+        try:
+            env_name = validate_env_name(name)
+        except ConfigError:
+            continue
+        if env_name not in deduped:
+            deduped.append(env_name)
+    return deduped
+
+
+def discover_provider_secret(paths: ProxyPaths, candidates: list[str]) -> tuple[str, str, str]:
+    for env_name in candidates:
+        value = read_secret_from_auth(paths.codex_home, env_name)
+        if value:
+            return "auth_json", env_name, value
+    for env_name in candidates:
+        value = resolve_env(env_name)
+        if value:
+            source = upstream_api_key_source(paths, env_name) or "environment"
+            return source, env_name, value
+    names = ", ".join(candidates) if candidates else "<none>"
+    raise ConfigError(f"No provider API key was found in auth.json or environment candidates: {names}.")
+
+
+def prepare_chatgpt_login(args: argparse.Namespace) -> dict[str, Any]:
+    paths = paths_for(args.codex_home)
+    config = load_toml_config(paths.config_path)
+    provider = choose_provider(config, args.provider)
+    provider_config = provider_config_for(config, provider)
+    target_env = validate_env_name(args.target_env or default_provider_env_name(provider))
+    source_auth_key = validate_env_name(args.source_auth_key) if args.source_auth_key else None
+    candidates = provider_auth_candidates(provider, provider_config, source_auth_key, paths.codex_home)
+    source_kind, source_name, secret = discover_provider_secret(paths, candidates)
+    target_value = resolve_env(target_env)
+    target_exists = bool(target_value)
+    target_matches_source = target_value == secret if target_value else False
+
+    if target_exists and not target_matches_source:
+        raise ConfigError(
+            f"Target environment variable {target_env} already exists with a different value. "
+            "Choose another --target-env or resolve it manually; key values were not printed."
+        )
+
+    applied = False
+    if args.apply and not target_matches_source:
+        try:
+            write_windows_user_env(target_env, secret)
+        except OSError as exc:
+            raise ConfigError(f"Failed to write Windows user environment variable {target_env}: {exc}") from exc
+        applied = True
+
+    status = "already_prepared" if target_matches_source else ("prepared" if applied else "dry_run")
+    return {
+        "status": status,
+        "provider": provider,
+        "source": f"{source_kind}:{source_name}",
+        "target_env": target_env,
+        "target_exists": target_exists,
+        "target_matches_source": target_matches_source,
+        "applied": applied,
+        "settings_changed": False,
+        "secret_printed": False,
+        "next_action": (
+            f"run set-upstream --upstream-api-key-env {target_env}"
+            if applied or target_matches_source
+            else f"rerun prepare-chatgpt-login --target-env {target_env} --apply after user approval"
+        ),
+        "restart_required": bool(applied),
+    }
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -184,6 +602,13 @@ def provider_config_for(config: dict[str, Any], provider: str) -> dict[str, Any]
 
 
 def settings_from_dict(value: dict[str, Any]) -> ProxySettings:
+    upstream_api_key_env = value.get("upstream_api_key_env")
+    service_tier_policy = value.get("service_tier_policy")
+    inferred_policy = "preserve" if upstream_api_key_env else LEGACY_SERVICE_TIER_POLICY
+    policy = str(service_tier_policy) if service_tier_policy else inferred_policy
+    if policy not in SERVICE_TIER_POLICIES:
+        names = ", ".join(sorted(SERVICE_TIER_POLICIES))
+        raise ConfigError(f"Invalid service tier policy {policy!r}. Available: {names}")
     return ProxySettings(
         provider=str(value["provider"]),
         host=str(value["host"]),
@@ -191,7 +616,210 @@ def settings_from_dict(value: dict[str, Any]) -> ProxySettings:
         proxy_base=normalized_base_path(str(value["proxy_base"])),
         upstream_base=str(value["upstream_base"]),
         service_tier=str(value["service_tier"]),
+        service_tier_policy=policy,
+        upstream_api_key_env=validate_env_name(str(upstream_api_key_env)) if upstream_api_key_env else None,
     )
+
+
+def effective_service_tier_policy(settings: ProxySettings, login: LoginDiagnosis) -> str:
+    if settings.service_tier_policy in EFFECTIVE_SERVICE_TIER_POLICIES:
+        return settings.service_tier_policy
+    if settings.service_tier_policy != "auto":
+        raise ConfigError(f"Invalid service tier policy: {settings.service_tier_policy}")
+    if login.login_mode == "api_key":
+        return "inject_missing"
+    return "preserve"
+
+
+def fast_behavior(settings: ProxySettings | None, login: LoginDiagnosis | None = None) -> str:
+    if not settings:
+        return "unknown"
+    if settings.service_tier_policy == "preserve":
+        return "preserve_only"
+    if settings.service_tier_policy == "inject_missing":
+        return "global_priority"
+    if settings.service_tier_policy == "auto":
+        if login and login.login_mode == "api_key":
+            return "auto_global_priority"
+        if login and login.login_mode in {"chatgpt", "mixed"}:
+            return "app_controlled"
+        return "unknown_conservative"
+    return "unknown"
+
+
+def status_diagnosis(
+    settings: ProxySettings | None,
+    *,
+    running: bool,
+    healthy: bool,
+    pending_restart: bool,
+    config_matches: bool,
+    runtime_matches: bool | None,
+    needs_restart: bool,
+    startup_hook_ready: bool,
+    login: LoginDiagnosis,
+    auth: dict[str, Any],
+    behavior: str,
+) -> dict[str, str]:
+    if not settings:
+        return {
+            "level": "attention",
+            "code": "not_enabled",
+            "message": "Proxy settings are not installed; run install before enabling the proxy.",
+        }
+    if not config_matches:
+        return {
+            "level": "attention",
+            "code": "config_not_proxy",
+            "message": "Codex config does not currently point to this proxy.",
+        }
+    if not running:
+        return {
+            "level": "risk",
+            "code": "proxy_stopped",
+            "message": "Codex config points to the proxy, but the proxy is not running.",
+        }
+    if login.chatgpt_auth and auth["upstream_auth"] == "preserved":
+        return {
+            "level": "risk",
+            "code": "chatgpt_auth_preserved",
+            "message": "ChatGPT auth is present and upstream auth is not split; provider requests may receive the wrong bearer token.",
+        }
+    if auth["upstream_auth"] == "override_configured" and not auth["upstream_api_key_available"]:
+        return {
+            "level": "risk",
+            "code": "upstream_auth_missing",
+            "message": "Upstream auth override is configured, but the provider key environment variable is unavailable.",
+        }
+    if login.chatgpt_auth and auth["upstream_auth"] == "override_configured" and not auth["upstream_api_key_persistent"]:
+        return {
+            "level": "attention",
+            "code": "upstream_auth_not_persistent",
+            "message": "Provider auth currently depends on an auth.json fallback; move it to a process or Windows user environment variable before relying on ChatGPT login.",
+        }
+    if pending_restart:
+        return {
+            "level": "attention",
+            "code": "settings_pending_restart",
+            "message": "Proxy settings changed, but the running proxy was left untouched to avoid interrupting current sessions.",
+        }
+    if not healthy:
+        return {
+            "level": "risk",
+            "code": "proxy_unhealthy",
+            "message": "The proxy process is present, but its health check does not match settings.",
+        }
+    if needs_restart or runtime_matches is False:
+        return {
+            "level": "attention",
+            "code": "runtime_stale",
+            "message": "The proxy is healthy, but the running process does not match the installed code; restart Codex App or the proxy when safe.",
+        }
+    if not startup_hook_ready:
+        return {
+            "level": "attention",
+            "code": "startup_hook_not_ready",
+            "message": "The proxy is running now, but the Codex startup hook is not installed, enabled, and trusted.",
+        }
+    if behavior == "unknown_conservative":
+        return {
+            "level": "attention",
+            "code": "fast_policy_unknown",
+            "message": "Fast policy is conservative because the current Codex login state is unclear.",
+        }
+    return {
+        "level": "ready",
+        "code": "ready",
+        "message": "Proxy config, runtime, hook, auth, and Fast policy are consistent.",
+    }
+
+
+def provider_auth_preparation(login: LoginDiagnosis, auth: dict[str, Any]) -> dict[str, str]:
+    if auth["upstream_auth"] == "override_configured" and auth["upstream_api_key_persistent"]:
+        return {
+            "status": "prepared",
+            "message": "Provider auth is split through a process or Windows user environment variable.",
+        }
+    if auth["upstream_auth"] == "override_configured" and auth["upstream_api_key_available"]:
+        return {
+            "status": "needs_persistent_env",
+            "message": "Provider auth works through a fallback, but should be moved to a persistent environment variable before ChatGPT login.",
+        }
+    if login.chatgpt_auth:
+        return {
+            "status": "not_prepared",
+            "message": "ChatGPT auth is present, but upstream provider auth is not split.",
+        }
+    return {
+        "status": "optional",
+        "message": "Run prepare-chatgpt-login before switching Codex App to ChatGPT login.",
+    }
+
+
+def chatgpt_login_hint(login: LoginDiagnosis, auth: dict[str, Any]) -> dict[str, str]:
+    if auth["upstream_auth"] == "override_configured" and auth["upstream_api_key_persistent"]:
+        return {
+            "status": "ready",
+            "message": (
+                "Optional: provider auth is prepared for ChatGPT login. You may keep API-key mode, or sign in "
+                "with ChatGPT to use richer Codex App UI features such as plugin marketplace, GitHub/Apps/"
+                "connectors, manual Fast controls, status hints, and voice input. If Windows login fails with "
+                "WinError 10013, use chatgpt_login_windows_troubleshooting."
+            ),
+            "next_user_action": (
+                "Optional: keep current mode, or sign in with ChatGPT if you want the full Codex App UI. "
+                "If Windows login fails with WinError 10013, use chatgpt_login_windows_troubleshooting."
+            ),
+        }
+    if auth["upstream_auth"] == "override_configured" and auth["upstream_api_key_available"]:
+        return {
+            "status": "needs_persistent_env",
+            "message": (
+                "Optional: provider auth works now, but move it to a process or Windows user environment "
+                "variable before relying on ChatGPT login."
+            ),
+            "next_user_action": "Move the provider key to a persistent environment variable before switching to ChatGPT login.",
+        }
+    if login.chatgpt_auth:
+        return {
+            "status": "needs_auth_split",
+            "message": (
+                "ChatGPT login is detected, but provider auth is not split. Prepare upstream provider auth "
+                "before relying on this setup for third-party model requests."
+            ),
+            "next_user_action": "Run prepare-chatgpt-login and set-upstream --upstream-api-key-env before relying on ChatGPT login.",
+        }
+    return {
+        "status": "optional_setup_available",
+        "message": (
+            "Optional: keep the current API-key mode for third-party API plus global Fast. If you want the "
+            "full Codex App UI, such as plugin marketplace, GitHub/Apps/connectors, manual Fast controls, "
+            "status hints, and voice input, run prepare-chatgpt-login before switching Codex App to ChatGPT login."
+        ),
+        "next_user_action": (
+            "Keep API-key mode, or run prepare-chatgpt-login before switching Codex App to ChatGPT login "
+            "for plugin marketplace, GitHub/Apps/connectors, manual Fast controls, status hints, and voice input."
+        ),
+    }
+
+
+def chatgpt_login_report(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    login: LoginDiagnosis | None = None,
+    auth: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    login = login or detect_login_mode(paths.codex_home)
+    auth = auth or upstream_auth_status(paths, settings)
+    hint = chatgpt_login_hint(login, auth)
+    report: dict[str, Any] = {
+        "provider_auth_preparation": provider_auth_preparation(login, auth),
+        "chatgpt_login_hint": hint,
+        "next_user_action": hint["next_user_action"],
+    }
+    if hint["status"] == "ready":
+        report["chatgpt_login_windows_troubleshooting"] = CHATGPT_LOGIN_WINDOWS_TROUBLESHOOTING
+    return report
 
 
 def read_settings(paths: ProxyPaths) -> ProxySettings:
@@ -206,10 +834,137 @@ def write_settings(paths: ProxyPaths, settings: ProxySettings) -> None:
 
 
 def validate_upstream_base(value: str) -> str:
-    parsed = urlsplit(value)
+    parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ConfigError(f"Invalid upstream base URL: {value}")
-    return value
+    if parsed.username or parsed.password:
+        raise ConfigError("Upstream base URL must not contain usernames, passwords, or tokens.")
+    if parsed.query or parsed.fragment:
+        raise ConfigError("Upstream base URL must not contain query strings or fragments.")
+    path = parsed.path.rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def safe_url_display(value: str) -> str:
+    parsed = urlsplit(value)
+    if not parsed.scheme or not parsed.netloc:
+        return value
+    netloc = parsed.netloc.rsplit("@", 1)[-1]
+    path = parsed.path.rstrip("/") or "/"
+    return urlunsplit((parsed.scheme, netloc, path, "", ""))
+
+
+def redact_url_secrets(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return safe_url_display(match.group(0))
+
+    return re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"<>]+", replace, text)
+
+
+def redact_sensitive_text(text: str) -> str:
+    redacted = redact_url_secrets(text)
+    redacted = re.sub(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,'\"<>]+", r"\1<redacted>", redacted)
+    return re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "<redacted-key>", redacted)
+
+
+def source_repo_root() -> Path:
+    path = Path(__file__).resolve()
+    if path.parents[1].name == "src":
+        return path.parents[2]
+    cwd = Path.cwd()
+    return cwd if (cwd / ".git").exists() else path.parents[1]
+
+
+def run_git(repo: Path, *args: str, timeout: float = 30.0) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise ConfigError(redact_url_secrets(detail) or f"git {' '.join(args)} failed")
+    return result.stdout.strip()
+
+
+def current_git_branch(repo: Path) -> str:
+    branch = run_git(repo, "branch", "--show-current")
+    return branch or "main"
+
+
+def remote_commit_for(repo: Path, remote: str, branch: str) -> str:
+    output = run_git(repo, "ls-remote", remote, f"refs/heads/{branch}", timeout=60.0)
+    line = output.splitlines()[0] if output else ""
+    commit = line.split()[0] if line else ""
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+        raise ConfigError(f"Remote branch not found: {remote}/{branch}")
+    return commit.lower()
+
+
+def commit_exists_locally(repo: Path, commit: str) -> bool:
+    try:
+        run_git(repo, "cat-file", "-e", f"{commit}^{{commit}}")
+    except ConfigError:
+        return False
+    return True
+
+
+def commit_is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        run_git(repo, "merge-base", "--is-ancestor", ancestor, descendant)
+    except ConfigError:
+        return False
+    return True
+
+
+def commit_relation(repo: Path, local_commit: str, remote_commit: str) -> str:
+    if local_commit == remote_commit:
+        return "same"
+    if not commit_exists_locally(repo, remote_commit):
+        return "remote_unknown"
+    if commit_is_ancestor(repo, remote_commit, local_commit):
+        return "local_ahead"
+    if commit_is_ancestor(repo, local_commit, remote_commit):
+        return "remote_ahead"
+    return "diverged"
+
+
+def check_update(repo: Path | None = None, branch: str | None = None, remote: str = "origin") -> dict[str, Any]:
+    repo = repo or source_repo_root()
+    run_git(repo, "rev-parse", "--is-inside-work-tree")
+    selected_branch = branch or current_git_branch(repo)
+    local_commit = run_git(repo, "rev-parse", "HEAD").lower()
+    local_changes = bool(run_git(repo, "status", "--porcelain"))
+    remote_url = safe_url_display(run_git(repo, "remote", "get-url", remote))
+    remote_commit = remote_commit_for(repo, remote, selected_branch)
+    relation = commit_relation(repo, local_commit, remote_commit)
+    update_available = relation in {"remote_ahead", "remote_unknown", "diverged"}
+    if update_available and local_changes:
+        next_action = "review local changes before following UPDATE.md"
+    elif relation == "local_ahead":
+        next_action = "none"
+    elif relation == "diverged":
+        next_action = "review local commits before following UPDATE.md"
+    elif update_available:
+        next_action = "follow UPDATE.md"
+    else:
+        next_action = "none"
+    return {
+        "status": "checked",
+        "read_only": True,
+        "repo": str(repo),
+        "remote": remote,
+        "remote_url": remote_url,
+        "branch": selected_branch,
+        "local_commit": local_commit,
+        "remote_commit": remote_commit,
+        "relation": relation,
+        "local_changes": local_changes,
+        "update_available": update_available,
+        "next_action": next_action,
+    }
 
 
 def read_toml_lines(path: Path) -> tuple[list[str], str]:
@@ -234,6 +989,10 @@ def toml_table_name(provider: str) -> str:
     if re.fullmatch(r"[A-Za-z0-9_-]+", provider):
         return f"model_providers.{provider}"
     return f"model_providers.{toml_string(provider)}"
+
+
+def hook_state_table_name(key: str) -> str:
+    return f"hooks.state.{toml_string(key)}"
 
 
 def is_toml_key(line: str, key: str) -> bool:
@@ -342,6 +1101,9 @@ def remove_feature_flag(config_path: Path, key: str) -> None:
     for index in range(table_index + 1, end_index):
         if is_toml_key(lines[index], key):
             del lines[index]
+            new_end_index = next_table_index(lines, table_index)
+            if not any(line.strip() and not line.strip().startswith("#") for line in lines[table_index + 1 : new_end_index]):
+                del lines[table_index:new_end_index]
             write_toml_lines(config_path, lines, newline)
             return
 
@@ -351,15 +1113,39 @@ def config_feature_enabled(config: dict[str, Any], key: str) -> bool:
     return isinstance(features, dict) and features.get(key) is True
 
 
+def config_feature_value(config: dict[str, Any], key: str) -> bool | None:
+    features = config.get("features", {})
+    if not isinstance(features, dict) or key not in features:
+        return None
+    value = features.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def hooks_feature_enabled(config: dict[str, Any]) -> bool:
+    return any(config_feature_enabled(config, key) for key in HOOK_FEATURE_KEYS)
+
+
+def set_hooks_feature_flag(config_path: Path) -> None:
+    for key in HOOK_FEATURE_KEYS:
+        set_feature_flag(config_path, key, True)
+
+
+def remove_hook_feature_flags(config_path: Path) -> None:
+    for key in HOOK_FEATURE_KEYS:
+        remove_feature_flag(config_path, key)
+
+
 def restore_hook_feature_flag(config_path: Path, backup_path: str | None, hook_result: dict[str, Any]) -> None:
     if hook_result.get("status") not in {"removed_file", "missing"}:
         return
 
     backup_config = load_toml_config(Path(backup_path)) if backup_path else {}
-    if config_feature_enabled(backup_config, "codex_hooks"):
-        set_feature_flag(config_path, "codex_hooks", True)
-    else:
-        remove_feature_flag(config_path, "codex_hooks")
+    for key in HOOK_FEATURE_KEYS:
+        value = config_feature_value(backup_config, key)
+        if value is None:
+            remove_feature_flag(config_path, key)
+        else:
+            set_feature_flag(config_path, key, value)
 
 
 def command_for_hook(paths: ProxyPaths) -> str:
@@ -394,6 +1180,157 @@ def is_fast_proxy_hook(value: Any) -> bool:
     )
 
 
+def hook_key(source_path: Path, event_label: str, group_index: int, handler_index: int) -> str:
+    return f"{source_path}:{event_label}:{group_index}:{handler_index}"
+
+
+def canonical_json_hash(value: dict[str, Any]) -> str:
+    serialized = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return f"sha256:{hashlib.sha256(serialized).hexdigest()}"
+
+
+def command_hook_hash(event_label: str, matcher: str | None, hook: dict[str, Any]) -> str:
+    handler = {
+        "type": "command",
+        "command": str(hook["command"]),
+        "timeout": int(hook.get("timeout") or 600),
+        "async": bool(hook.get("async", False)),
+    }
+    status_message = hook.get("statusMessage")
+    if status_message is not None:
+        handler["statusMessage"] = str(status_message)
+
+    identity: dict[str, Any] = {"event_name": event_label, "hooks": [handler]}
+    if matcher is not None:
+        identity["matcher"] = matcher
+    return canonical_json_hash(identity)
+
+
+def fast_proxy_hook_states(paths: ProxyPaths, hooks_data: dict[str, Any]) -> list[dict[str, str]]:
+    states = []
+    event_hooks = hooks_data.get("hooks", {}).get(HOOK_EVENT, [])
+    if not isinstance(event_hooks, list):
+        return states
+    for group_index, group in enumerate(event_hooks):
+        if not isinstance(group, dict):
+            continue
+        hooks = group.get("hooks")
+        if not isinstance(hooks, list):
+            continue
+        matcher = group.get("matcher")
+        matcher = matcher if isinstance(matcher, str) else None
+        for handler_index, hook in enumerate(hooks):
+            if not is_fast_proxy_hook(hook):
+                continue
+            states.append({
+                "key": hook_key(paths.hooks_path, HOOK_EVENT_LABEL, group_index, handler_index),
+                "trusted_hash": command_hook_hash(HOOK_EVENT_LABEL, matcher, hook),
+            })
+    return states
+
+
+def set_hook_state(config_path: Path, key: str, trusted_hash: str) -> None:
+    lines, newline = read_toml_lines(config_path)
+    table_name = hook_state_table_name(key)
+    table_index = find_table(lines, table_name)
+    replacements = {
+        "enabled": "enabled = true",
+        "trusted_hash": f"trusted_hash = {toml_string(trusted_hash)}",
+    }
+
+    if table_index is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"[{table_name}]")
+        lines.extend(replacements.values())
+        write_toml_lines(config_path, lines, newline)
+        return
+
+    end_index = next_table_index(lines, table_index)
+    seen: set[str] = set()
+    for index in range(table_index + 1, end_index):
+        for key_name, replacement in replacements.items():
+            if is_toml_key(lines[index], key_name):
+                indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+                lines[index] = indent + replacement
+                seen.add(key_name)
+                break
+
+    insert_at = end_index
+    for key_name, replacement in replacements.items():
+        if key_name not in seen:
+            lines.insert(insert_at, replacement)
+            insert_at += 1
+    write_toml_lines(config_path, lines, newline)
+
+
+def remove_hook_state(config_path: Path, key: str) -> None:
+    lines, newline = read_toml_lines(config_path)
+    table_index = find_table(lines, hook_state_table_name(key))
+    if table_index is None:
+        return
+    end_index = next_table_index(lines, table_index)
+    del lines[table_index:end_index]
+    while table_index < len(lines) and table_index > 0 and lines[table_index].strip() == "" and lines[table_index - 1].strip() == "":
+        del lines[table_index]
+    write_toml_lines(config_path, lines, newline)
+
+
+def trust_fast_proxy_hooks(paths: ProxyPaths, hooks_data: dict[str, Any]) -> list[dict[str, str]]:
+    states = fast_proxy_hook_states(paths, hooks_data)
+    for state in states:
+        set_hook_state(paths.config_path, state["key"], state["trusted_hash"])
+    return states
+
+
+def remove_fast_proxy_hook_states(paths: ProxyPaths, hooks_data: dict[str, Any]) -> list[str]:
+    keys = [state["key"] for state in fast_proxy_hook_states(paths, hooks_data)]
+    remove_hook_states_by_keys(paths.config_path, keys)
+    return keys
+
+
+def remove_hook_states_by_keys(config_path: Path, keys: list[str]) -> None:
+    for key in keys:
+        remove_hook_state(config_path, key)
+
+
+def fast_proxy_hook_trust_status(paths: ProxyPaths) -> dict[str, Any]:
+    try:
+        hooks_data = read_hooks(paths.hooks_path)
+    except (ConfigError, json.JSONDecodeError):
+        return {"installed": False, "feature_enabled": False, "trusted": False, "ready": False, "hooks": []}
+
+    config = load_toml_config(paths.config_path)
+    feature_enabled = hooks_feature_enabled(config)
+    hooks_root = config.get("hooks", {})
+    state_root = hooks_root.get("state", {}) if isinstance(hooks_root, dict) else {}
+    if not isinstance(state_root, dict):
+        state_root = {}
+
+    hooks = []
+    for state in fast_proxy_hook_states(paths, hooks_data):
+        configured = state_root.get(state["key"], {})
+        trusted_hash = configured.get("trusted_hash") if isinstance(configured, dict) else None
+        enabled = configured.get("enabled") if isinstance(configured, dict) else None
+        enabled = True if enabled is None else bool(enabled)
+        trust_status = "trusted" if trusted_hash == state["trusted_hash"] else ("modified" if trusted_hash else "untrusted")
+        hooks.append({
+            **state,
+            "enabled": enabled,
+            "trust_status": trust_status,
+            "trusted": enabled and trust_status == "trusted",
+        })
+
+    trusted = any(hook["trusted"] for hook in hooks)
+    return {
+        "installed": bool(hooks),
+        "feature_enabled": feature_enabled,
+        "trusted": trusted,
+        "ready": feature_enabled and trusted,
+        "hooks": hooks,
+    }
+
+
 def read_hooks(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"hooks": {}}
@@ -412,6 +1349,7 @@ def write_hooks(path: Path, value: dict[str, Any]) -> None:
 
 
 def install_startup_hook(paths: ProxyPaths) -> dict[str, Any]:
+    set_hooks_feature_flag(paths.config_path)
     data = read_hooks(paths.hooks_path)
     event_hooks = data["hooks"].setdefault(HOOK_EVENT, [])
     if not isinstance(event_hooks, list):
@@ -444,12 +1382,33 @@ def install_startup_hook(paths: ProxyPaths) -> dict[str, Any]:
     if found:
         if changed:
             write_hooks(paths.hooks_path, data)
-            return {"status": "updated", "path": str(paths.hooks_path), "command": handler["command"]}
-        return {"status": "already_installed", "path": str(paths.hooks_path), "command": handler["command"]}
+            trust_states = trust_fast_proxy_hooks(paths, data)
+            return {
+                "status": "updated",
+                "path": str(paths.hooks_path),
+                "command": handler["command"],
+                "trusted": bool(trust_states),
+                "trust_states": trust_states,
+            }
+        trust_states = trust_fast_proxy_hooks(paths, data)
+        return {
+            "status": "already_installed",
+            "path": str(paths.hooks_path),
+            "command": handler["command"],
+            "trusted": bool(trust_states),
+            "trust_states": trust_states,
+        }
 
     event_hooks.append({"matcher": HOOK_MATCHER, "hooks": [handler]})
     write_hooks(paths.hooks_path, data)
-    return {"status": "installed", "path": str(paths.hooks_path), "command": handler["command"]}
+    trust_states = trust_fast_proxy_hooks(paths, data)
+    return {
+        "status": "installed",
+        "path": str(paths.hooks_path),
+        "command": handler["command"],
+        "trusted": bool(trust_states),
+        "trust_states": trust_states,
+    }
 
 
 def remove_startup_hook(paths: ProxyPaths) -> dict[str, Any]:
@@ -457,6 +1416,7 @@ def remove_startup_hook(paths: ProxyPaths) -> dict[str, Any]:
         return {"status": "missing", "path": str(paths.hooks_path)}
 
     data = read_hooks(paths.hooks_path)
+    removed_state_keys = [state["key"] for state in fast_proxy_hook_states(paths, data)]
     event_hooks = data.get("hooks", {}).get(HOOK_EVENT, [])
     if not isinstance(event_hooks, list):
         raise ConfigError(f"Invalid {HOOK_EVENT} hooks in {paths.hooks_path}")
@@ -486,27 +1446,24 @@ def remove_startup_hook(paths: ProxyPaths) -> dict[str, Any]:
 
     if not hooks_root:
         paths.hooks_path.unlink(missing_ok=True)
-        return {"status": "removed_file", "path": str(paths.hooks_path), "removed": removed}
+        return {
+            "status": "removed_file",
+            "path": str(paths.hooks_path),
+            "removed": removed,
+            "removed_state_keys": removed_state_keys,
+        }
 
     write_hooks(paths.hooks_path, data)
-    return {"status": "updated", "path": str(paths.hooks_path), "removed": removed}
+    return {
+        "status": "updated",
+        "path": str(paths.hooks_path),
+        "removed": removed,
+        "removed_state_keys": removed_state_keys,
+    }
 
 
 def has_startup_hook(paths: ProxyPaths) -> bool:
-    if not paths.hooks_path.exists():
-        return False
-    try:
-        data = read_hooks(paths.hooks_path)
-    except (ConfigError, json.JSONDecodeError):
-        return False
-    event_hooks = data.get("hooks", {}).get(HOOK_EVENT, [])
-    if not isinstance(event_hooks, list):
-        return False
-    for group in event_hooks:
-        if isinstance(group, dict) and isinstance(group.get("hooks"), list):
-            if any(is_fast_proxy_hook(hook) for hook in group["hooks"]):
-                return True
-    return False
+    return bool(fast_proxy_hook_trust_status(paths)["ready"])
 
 
 def current_process(paths: ProxyPaths) -> tuple[int | None, bool]:
@@ -588,14 +1545,25 @@ def proxy_health(settings: ProxySettings, timeout: float = 0.5) -> dict[str, Any
         connection.close()
 
 
-def health_matches_settings(health: dict[str, Any] | None, settings: ProxySettings) -> bool:
+def health_matches_settings(
+    health: dict[str, Any] | None,
+    settings: ProxySettings,
+    service_tier_effective_policy: str | None = None,
+) -> bool:
     if not health:
         return False
+    health_effective_policy = health.get(
+        "service_tier_effective_policy",
+        health.get("service_tier_policy", LEGACY_SERVICE_TIER_POLICY),
+    )
     return (
         health.get("ok") is True
         and health.get("proxy_base") == settings.proxy_base
         and health.get("upstream_base") == settings.upstream_base
         and health.get("service_tier") == settings.service_tier
+        and health.get("service_tier_policy", LEGACY_SERVICE_TIER_POLICY) == settings.service_tier_policy
+        and (service_tier_effective_policy is None or health_effective_policy == service_tier_effective_policy)
+        and health.get("upstream_api_key_env") == settings.upstream_api_key_env
     )
 
 
@@ -612,18 +1580,48 @@ def health_matches_proxy_identity(health: dict[str, Any] | None, settings: Proxy
     )
 
 
-def settings_restart_pending(health: dict[str, Any] | None, settings: ProxySettings | None, pid: int | None) -> bool:
-    return bool(settings and health_matches_proxy_identity(health, settings, pid) and not health_matches_settings(health, settings))
+def settings_restart_pending(
+    health: dict[str, Any] | None,
+    settings: ProxySettings | None,
+    pid: int | None,
+    service_tier_effective_policy: str | None = None,
+) -> bool:
+    return bool(
+        settings
+        and health_matches_proxy_identity(health, settings, pid)
+        and not health_matches_settings(health, settings, service_tier_effective_policy)
+    )
 
 
-def wait_for_proxy_health(settings: ProxySettings, process: subprocess.Popen[Any], timeout: float = 5.0) -> dict[str, Any]:
+def proxy_runtime_state(paths: ProxyPaths, settings: ProxySettings | None) -> tuple[int | None, bool, dict[str, Any] | None, bool, bool, bool | None]:
+    pid, process_running = current_process(paths)
+    health = proxy_health(settings) if settings else None
+    health_pid = health.get("pid") if isinstance(health, dict) else None
+    if isinstance(health_pid, int):
+        pid = health_pid
+
+    login = detect_login_mode(paths.codex_home) if settings else None
+    effective_policy = effective_service_tier_policy(settings, login) if settings and login else None
+    healthy = health_matches_settings(health, settings, effective_policy) if settings else False
+    running = process_running or bool(healthy)
+    pending_restart = settings_restart_pending(health, settings, pid, effective_policy) if settings and running else False
+    runtime_matches = health_matches_runtime(health) if healthy or pending_restart else None
+    return pid, running, health, healthy, pending_restart, runtime_matches
+
+
+def wait_for_proxy_health(
+    settings: ProxySettings,
+    process: subprocess.Popen[Any],
+    timeout: float = 5.0,
+    service_tier_effective_policy: str | None = None,
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last_health = None
     while time.monotonic() < deadline:
         if process.poll() is not None:
             break
         last_health = proxy_health(settings)
-        if health_matches_settings(last_health, settings):
+        if health_matches_settings(last_health, settings, service_tier_effective_policy):
             return last_health
         time.sleep(0.1)
 
@@ -632,8 +1630,12 @@ def wait_for_proxy_health(settings: ProxySettings, process: subprocess.Popen[Any
     raise ConfigError(f"codex-fast-proxy health check failed or mismatched settings: {last_health}")
 
 
-def child_environment() -> dict[str, str]:
+def child_environment(paths: ProxyPaths, settings: ProxySettings) -> dict[str, str]:
     environment = os.environ.copy()
+    if settings.upstream_api_key_env and not environment.get(settings.upstream_api_key_env):
+        auth_value = read_secret_from_auth(paths.codex_home, settings.upstream_api_key_env)
+        if auth_value:
+            environment[settings.upstream_api_key_env] = auth_value
     package_parent = Path(__file__).resolve().parents[1]
     if package_parent.name == "src":
         existing = environment.get("PYTHONPATH")
@@ -714,7 +1716,7 @@ def create_synthetic_upstream_backup(paths: ProxyPaths, provider: str, settings:
     if paths.config_path.exists():
         shutil.copy2(paths.config_path, backup_path)
         set_provider_base_url(backup_path, provider, settings.upstream_base)
-        remove_feature_flag(backup_path, "codex_hooks")
+        remove_hook_feature_flags(backup_path)
     else:
         backup_path.write_text("", encoding="utf-8")
     return backup_path
@@ -774,6 +1776,20 @@ def command_install(args: argparse.Namespace) -> int:
     config = load_toml_config(paths.config_path)
     active_provider = active_provider_name(config)
     provider = choose_provider(config, args.provider)
+    existing_settings_data = read_json(paths.settings_path)
+    existing_settings = settings_from_dict(existing_settings_data) if existing_settings_data else None
+    existing_enabled = bool(
+        existing_settings
+        and existing_settings.provider == provider
+        and provider_base_url(config, provider) == existing_settings.base_url
+    )
+    service_tier_policy = args.service_tier_policy or (
+        existing_settings.service_tier_policy if existing_enabled and existing_settings else DEFAULT_SERVICE_TIER_POLICY
+    )
+    upstream_api_key_env_arg = validate_env_name(args.upstream_api_key_env) if args.upstream_api_key_env else None
+    upstream_api_key_env = upstream_api_key_env_arg or (
+        existing_settings.upstream_api_key_env if existing_enabled and existing_settings else None
+    )
     settings = ProxySettings(
         provider=provider,
         host=args.host,
@@ -781,6 +1797,8 @@ def command_install(args: argparse.Namespace) -> int:
         proxy_base=normalized_base_path(args.proxy_base),
         upstream_base="",
         service_tier=args.service_tier,
+        service_tier_policy=service_tier_policy,
+        upstream_api_key_env=upstream_api_key_env,
     )
     upstream_base = validate_upstream_base(resolve_upstream_base(config, paths, provider, args.upstream_base, settings.base_url))
     settings = ProxySettings(
@@ -790,11 +1808,14 @@ def command_install(args: argparse.Namespace) -> int:
         proxy_base=settings.proxy_base,
         upstream_base=upstream_base,
         service_tier=settings.service_tier,
+        service_tier_policy=settings.service_tier_policy,
+        upstream_api_key_env=settings.upstream_api_key_env,
     )
 
     paths.app_home.mkdir(parents=True, exist_ok=True)
     paths.state_dir.mkdir(parents=True, exist_ok=True)
     paths.backup_dir.mkdir(parents=True, exist_ok=True)
+    require_upstream_auth_available(paths, settings)
 
     if args.prepare_only and args.start:
         raise ConfigError("Use either --prepare-only or --start, not both.")
@@ -814,10 +1835,20 @@ def command_install(args: argparse.Namespace) -> int:
     if not args.start:
         raise ConfigError("Refusing to switch Codex config without a running proxy. Use install --start.")
 
+    verify_requested = bool(getattr(args, "verify", True))
+    verify_timeout = float(getattr(args, "verify_timeout", 60.0))
+    verification = {"status": "skipped", "reason": "--no-verify"}
+    if verify_requested:
+        if install_requires_verification(existing_enabled, existing_settings, settings):
+            verification = verify_upstream_responses(paths, config, settings, verify_timeout)
+        else:
+            verification = {"status": "skipped", "reason": "existing_enabled_no_model_path_change"}
+
     backup_path = choose_config_backup(paths, provider, settings, config)
     config_hash_before = sha256_file(backup_path)
     config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
     hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
+    settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
     start_result = None
     hook_result = None
     try:
@@ -827,14 +1858,14 @@ def command_install(args: argparse.Namespace) -> int:
         set_provider_base_url(paths.config_path, provider, settings.base_url)
         if args.activate_provider or active_provider is None:
             set_active_provider(paths.config_path, provider)
-        set_feature_flag(paths.config_path, "codex_hooks", True)
         hook_result = install_startup_hook(paths)
         config_hash_after = sha256_file(paths.config_path)
 
         write_install_manifest(paths, provider, backup_path, config_hash_before, config_hash_after, hook_result, settings)
     except Exception:
-        if start_result and start_result.get("status") == "started":
-            stop_process(paths)
+        restore_previous_proxy = bool(start_result and start_result.get("status") == "restarted" and existing_settings)
+        if start_result and start_result.get("status") in {"started", "restarted"}:
+            stop_process(paths, force=True)
         if hooks_bytes_before is None:
             paths.hooks_path.unlink(missing_ok=True)
         else:
@@ -843,17 +1874,40 @@ def command_install(args: argparse.Namespace) -> int:
             paths.config_path.unlink(missing_ok=True)
         else:
             paths.config_path.write_bytes(config_bytes_before)
+        if settings_bytes_before is None:
+            paths.settings_path.unlink(missing_ok=True)
+        else:
+            paths.settings_path.write_bytes(settings_bytes_before)
+        if restore_previous_proxy and existing_settings:
+            try:
+                start_background(paths, existing_settings, args.verbose_proxy)
+            except Exception:
+                pass
         raise
 
+    login = detect_login_mode(paths.codex_home)
+    auth = upstream_auth_status(paths, settings)
     print(json_line({
         "status": "installed",
         "provider": provider,
         "base_url": settings.base_url,
         "upstream_base": settings.upstream_base,
+        "service_tier_policy": settings.service_tier_policy,
+        "service_tier_effective_policy": effective_service_tier_policy(settings, login),
+        "fast_behavior": fast_behavior(settings, login),
+        "login_mode": login.login_mode,
+        "upstream_auth": auth["upstream_auth"],
+        "upstream_api_key_env": auth["upstream_api_key_env"],
+        "upstream_api_key_available": auth["upstream_api_key_available"],
+        "upstream_api_key_source": auth["upstream_api_key_source"],
+        "upstream_api_key_persistent": auth["upstream_api_key_persistent"],
+        "chatgpt_login_compatible": bool(auth["upstream_api_key_persistent"]) if login.chatgpt_auth else None,
+        **chatgpt_login_report(paths, settings, login, auth),
         "backup_path": str(backup_path),
         "started": True,
         "config_switched": True,
         "startup_hook": hook_result,
+        "verification": verification,
         "switch_order": "proxy_started_before_config_switch",
         "current_session_effect": ENABLE_SESSION_EFFECT,
         "start_result": start_result,
@@ -864,13 +1918,31 @@ def command_install(args: argparse.Namespace) -> int:
 def command_set_upstream(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     old_settings = read_settings(paths)
+    upstream_api_key_env_arg = getattr(args, "upstream_api_key_env", None)
+    clear_upstream_api_key_env = bool(getattr(args, "clear_upstream_api_key_env", False))
+    service_tier_policy_arg = getattr(args, "service_tier_policy", None)
+    if upstream_api_key_env_arg and clear_upstream_api_key_env:
+        raise ConfigError("Use either --upstream-api-key-env or --clear-upstream-api-key-env, not both.")
+    upstream_base = validate_upstream_base(args.upstream_base) if args.upstream_base else old_settings.upstream_base
+    service_tier_policy = service_tier_policy_arg or old_settings.service_tier_policy
+    if service_tier_policy not in SERVICE_TIER_POLICIES:
+        names = ", ".join(sorted(SERVICE_TIER_POLICIES))
+        raise ConfigError(f"Invalid service tier policy {service_tier_policy!r}. Available: {names}")
+    if clear_upstream_api_key_env:
+        upstream_api_key_env = None
+    elif upstream_api_key_env_arg:
+        upstream_api_key_env = validate_env_name(upstream_api_key_env_arg)
+    else:
+        upstream_api_key_env = old_settings.upstream_api_key_env
     new_settings = ProxySettings(
         provider=old_settings.provider,
         host=old_settings.host,
         port=old_settings.port,
         proxy_base=old_settings.proxy_base,
-        upstream_base=validate_upstream_base(args.upstream_base),
+        upstream_base=upstream_base,
         service_tier=old_settings.service_tier,
+        service_tier_policy=service_tier_policy,
+        upstream_api_key_env=upstream_api_key_env,
     )
     config = load_toml_config(paths.config_path)
     config_base_url = provider_base_url(config, old_settings.provider)
@@ -879,6 +1951,13 @@ def command_set_upstream(args: argparse.Namespace) -> int:
             f"Refusing to update upstream because provider {old_settings.provider!r} no longer points to the local proxy. "
             "Review config.toml, then run install --start if you want to enable the proxy again."
         )
+    require_upstream_auth_available(paths, new_settings)
+    verify_arg_present = hasattr(args, "verify")
+    verify_requested = bool(getattr(args, "verify", False))
+    verify_timeout = float(getattr(args, "verify_timeout", 60.0))
+    verification = {"status": "skipped", "reason": "--no-verify" if verify_arg_present else "not_requested"}
+    if verify_requested:
+        verification = verify_upstream_responses(paths, config, new_settings, verify_timeout)
 
     paths.backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = choose_config_backup(paths, old_settings.provider, new_settings, config)
@@ -891,21 +1970,22 @@ def command_set_upstream(args: argparse.Namespace) -> int:
     hook_result = None
 
     try:
-        _pid, running = current_process(paths)
+        _pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, new_settings)
 
         write_settings(paths, new_settings)
         if running and not args.restart:
-            restart_required = True
-            start_result = {
-                "status": "deferred",
-                "reason": "running_proxy_left_untouched",
-                "pid": _pid,
-                "next_action": "restart Codex App, open a new CLI process, or run start to apply the new upstream",
-            }
+            restart_required = bool(pending_restart or not healthy or runtime_matches is False)
+            start_result = already_running_result(paths, new_settings, _pid, health, runtime_matches=runtime_matches is not False)
+            if restart_required:
+                start_result = {
+                    **start_result,
+                    "status": "deferred",
+                    "reason": "running_proxy_left_untouched",
+                    "next_action": "restart Codex App, open a new CLI process, or run start to apply the new upstream",
+                }
         else:
             start_result = start_background(paths, new_settings, args.verbose_proxy)
         set_provider_base_url(paths.config_path, new_settings.provider, new_settings.base_url)
-        set_feature_flag(paths.config_path, "codex_hooks", True)
         hook_result = install_startup_hook(paths)
         config_hash_after = sha256_file(paths.config_path)
         write_install_manifest(
@@ -939,17 +2019,51 @@ def command_set_upstream(args: argparse.Namespace) -> int:
                 pass
         raise
 
+    login = detect_login_mode(paths.codex_home)
+    auth_env_changed = old_settings.upstream_api_key_env != new_settings.upstream_api_key_env
+    if restart_required and new_settings.upstream_api_key_env and auth_env_changed:
+        next_user_action = (
+            "Provider auth split is verified and saved, but the running proxy has not loaded it yet. "
+            "Before signing in with ChatGPT, restart Codex App or run python -m codex_fast_proxy start; "
+            "do not switch while needs_restart=true."
+        )
+    elif restart_required:
+        next_user_action = (
+            "Restart Codex App, open a new CLI process, or run python -m codex_fast_proxy start later "
+            "to apply the new proxy settings."
+        )
+    elif new_settings.upstream_api_key_env:
+        next_user_action = (
+            "Provider auth split is active. You may keep the current mode, or sign in with ChatGPT if "
+            "you want the full Codex App UI. If Windows login fails with WinError 10013, use "
+            "chatgpt_login_windows_troubleshooting."
+        )
+    else:
+        next_user_action = "No restart is required for the current proxy settings."
+    chatgpt_login_windows_troubleshooting = (
+        CHATGPT_LOGIN_WINDOWS_TROUBLESHOOTING
+        if new_settings.upstream_api_key_env and not restart_required
+        else None
+    )
     print(json_line({
         "status": "upstream_updated",
         "provider": new_settings.provider,
         "base_url": new_settings.base_url,
         "previous_upstream_base": old_settings.upstream_base,
         "upstream_base": new_settings.upstream_base,
+        "service_tier_policy": new_settings.service_tier_policy,
+        "service_tier_effective_policy": effective_service_tier_policy(new_settings, login),
+        "fast_behavior": fast_behavior(new_settings, login),
+        "upstream_auth": "override_configured" if new_settings.upstream_api_key_env else "preserved",
+        "upstream_api_key_env": new_settings.upstream_api_key_env,
         "backup_path": str(backup_path),
         "config_matches": True,
         "restart_required": restart_required,
+        "verification": verification,
         "start_result": start_result,
         "startup_hook": hook_result,
+        "next_user_action": next_user_action,
+        "chatgpt_login_windows_troubleshooting": chatgpt_login_windows_troubleshooting,
         "current_session_effect": (
             "Existing Codex processes keep their current proxy connection. If restart_required is true, restart Codex App, "
             "open a new CLI process, or run start later to apply the new upstream. Also restart Codex if you changed API key, "
@@ -962,17 +2076,31 @@ def command_set_upstream(args: argparse.Namespace) -> int:
 def command_start(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     settings = read_settings(paths)
-    print(json_line(start_background(paths, settings, args.verbose_proxy)))
+    result = start_background(paths, settings, args.verbose_proxy)
+    login = detect_login_mode(paths.codex_home)
+    auth = upstream_auth_status(paths, settings)
+    print(json_line({
+        **result,
+        **chatgpt_login_report(paths, settings, login, auth),
+    }))
     return 0
 
 
-def already_running_result(paths: ProxyPaths, settings: ProxySettings, pid: int, health: dict[str, Any]) -> dict[str, Any]:
+def already_running_result(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    pid: int,
+    health: dict[str, Any],
+    *,
+    runtime_matches: bool = True,
+) -> dict[str, Any]:
     return {
         "status": "already_running",
         "pid": pid,
         "healthy": True,
         "runtime_id": health.get("runtime_id"),
-        "runtime_matches": True,
+        "runtime_matches": runtime_matches,
+        "needs_restart": not runtime_matches,
         "base_url": settings.base_url,
         "upstream_base": settings.upstream_base,
         "log": str(paths.log_path),
@@ -990,7 +2118,26 @@ def restart_background(
     force_stop: bool = False,
 ) -> dict[str, Any]:
     stop_result = stop_process(paths, force=force_stop)
-    start_result = launch_background(paths, settings, verbose_proxy)
+    try:
+        start_result = launch_background(paths, settings, verbose_proxy)
+    except Exception as exc:
+        previous_settings = ProxySettings(
+            provider=settings.provider,
+            host=settings.host,
+            port=settings.port,
+            proxy_base=str(health.get("proxy_base") or settings.proxy_base),
+            upstream_base=str(health.get("upstream_base") or settings.upstream_base),
+            service_tier=str(health.get("service_tier") or settings.service_tier),
+            service_tier_policy=str(health.get("service_tier_policy") or LEGACY_SERVICE_TIER_POLICY),
+            upstream_api_key_env=health.get("upstream_api_key_env") if isinstance(health.get("upstream_api_key_env"), str) else None,
+        )
+        try:
+            launch_background(paths, previous_settings, verbose_proxy)
+        except Exception as restore_exc:
+            raise ConfigError(
+                f"codex-fast-proxy restart failed and restoring the previous proxy also failed: {exc}; restore_error={restore_exc}"
+            ) from exc
+        raise ConfigError(f"codex-fast-proxy restart failed; restored the previous proxy: {exc}") from exc
     return {
         "status": "restarted",
         "reason": reason,
@@ -1004,15 +2151,22 @@ def restart_background(
     }
 
 
-def start_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: bool) -> dict[str, Any]:
+def start_background(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    verbose_proxy: bool,
+    *,
+    restart_stale_runtime: bool = True,
+) -> dict[str, Any]:
     paths.state_dir.mkdir(parents=True, exist_ok=True)
 
-    pid, running = current_process(paths)
+    pid, running, health, healthy, _pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
     if running:
-        health = proxy_health(settings)
-        if health_matches_settings(health, settings):
-            if health_matches_runtime(health):
+        if healthy:
+            if runtime_matches:
                 return already_running_result(paths, settings, pid, health)
+            if not restart_stale_runtime:
+                return already_running_result(paths, settings, pid, health, runtime_matches=False)
             return restart_background(paths, settings, verbose_proxy, pid, health)
         if health_matches_proxy_identity(health, settings, pid):
             return restart_background(
@@ -1036,6 +2190,8 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
     if not is_port_available(settings.host, settings.port):
         raise ConfigError(f"Port {settings.port} is already in use on {settings.host}.")
 
+    login = detect_login_mode(paths.codex_home)
+    effective_policy = effective_service_tier_policy(settings, login)
     command = [
         sys.executable,
         "-m",
@@ -1051,9 +2207,15 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
         settings.upstream_base,
         "--service-tier",
         settings.service_tier,
+        "--service-tier-policy",
+        settings.service_tier_policy,
+        "--service-tier-effective-policy",
+        effective_policy,
         "--log-dir",
         str(paths.state_dir),
     ]
+    if settings.upstream_api_key_env:
+        command.extend(["--upstream-api-key-env", settings.upstream_api_key_env])
     if verbose_proxy:
         command.append("--verbose")
 
@@ -1062,7 +2224,7 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
         process = subprocess.Popen(
             command,
             cwd=str(Path.cwd()),
-            env=child_environment(),
+            env=child_environment(paths, settings),
             stdout=stdout,
             stderr=stderr,
             stdin=subprocess.DEVNULL,
@@ -1071,7 +2233,7 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
         )
 
     try:
-        health = wait_for_proxy_health(settings, process)
+        health = wait_for_proxy_health(settings, process, service_tier_effective_policy=effective_policy)
     except ConfigError:
         error_text = paths.stderr_path.read_text(encoding="utf-8", errors="replace") if paths.stderr_path.exists() else ""
         detail = f" {error_text.strip()}" if error_text.strip() else ""
@@ -1115,7 +2277,7 @@ def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
     if config_base_url != settings.base_url:
         return {"status": "skipped", "reason": "config_not_proxy", "provider": settings.provider}
 
-    return start_background(paths, settings, verbose_proxy)
+    return start_background(paths, settings, verbose_proxy, restart_stale_runtime=False)
 
 
 def command_autostart(args: argparse.Namespace) -> int:
@@ -1153,29 +2315,66 @@ def command_status(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
-    pid, running = current_process(paths)
+    pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
     config = load_toml_config(paths.config_path)
     provider = args.provider or (settings.provider if settings else active_provider_name(config))
     config_base_url = provider_base_url(config, provider) if provider else None
-    health = proxy_health(settings) if settings and running else None
-    healthy = health_matches_settings(health, settings) if settings and running else False
-    pending_restart = settings_restart_pending(health, settings, pid) if settings and running else False
-    runtime_matches = health_matches_runtime(health) if healthy or pending_restart else None
+    hook_status = fast_proxy_hook_trust_status(paths)
+    login = detect_login_mode(paths.codex_home)
+    auth = upstream_auth_status(paths, settings)
+    effective_policy = effective_service_tier_policy(settings, login) if settings else None
+    config_matches = bool(settings and config_base_url == settings.base_url)
+    needs_restart = bool(pending_restart or (healthy and not runtime_matches))
+    behavior = fast_behavior(settings, login)
+    login_report = (
+        chatgpt_login_report(paths, settings, login, auth)
+        if settings
+        else {"provider_auth_preparation": None, "chatgpt_login_hint": None, "next_user_action": None}
+    )
+    diagnosis = status_diagnosis(
+        settings,
+        running=running,
+        healthy=healthy,
+        pending_restart=pending_restart,
+        config_matches=config_matches,
+        runtime_matches=runtime_matches,
+        needs_restart=needs_restart,
+        startup_hook_ready=bool(hook_status["ready"]),
+        login=login,
+        auth=auth,
+        behavior=behavior,
+    )
 
     print(json_line({
         "status": "running" if running else "stopped",
         "pid": pid,
         "healthy": healthy,
         "runtime_id": RUNTIME_ID,
+        "runtime": runtime_status(paths, health),
         "runtime_matches": runtime_matches,
-        "needs_restart": bool(pending_restart or (healthy and not runtime_matches)),
+        "needs_restart": needs_restart,
         "pending_restart": pending_restart,
+        "diagnosis": diagnosis,
         "provider": provider,
         "base_url": settings.base_url if settings else None,
         "upstream_base": settings.upstream_base if settings else None,
+        "service_tier_policy": settings.service_tier_policy if settings else None,
+        "service_tier_effective_policy": effective_policy,
+        "fast_behavior": behavior,
+        "login_mode": login.login_mode,
+        "chatgpt_auth": login.chatgpt_auth,
+        "api_key_auth": login.api_key_auth,
+        "upstream_auth": auth["upstream_auth"],
+        "upstream_api_key_env": auth["upstream_api_key_env"],
+        "upstream_api_key_available": auth["upstream_api_key_available"],
+        "upstream_api_key_source": auth["upstream_api_key_source"],
+        "upstream_api_key_persistent": auth["upstream_api_key_persistent"],
+        "chatgpt_login_compatible": bool(auth["upstream_api_key_persistent"]) if login.chatgpt_auth else None,
+        **login_report,
         "config_base_url": config_base_url,
-        "config_matches": bool(settings and config_base_url == settings.base_url),
-        "startup_hook": has_startup_hook(paths),
+        "config_matches": config_matches,
+        "startup_hook": hook_status["ready"],
+        "startup_hook_trust": hook_status,
         "port_available": is_port_available(settings.host, settings.port) if settings else None,
         "health": health,
         "log": str(paths.log_path),
@@ -1191,29 +2390,45 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     upstream_base = provider_base_url(config, selected_provider) if selected_provider else None
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
-    pid, running = current_process(paths)
-    health = proxy_health(settings) if settings and running else None
-    healthy = health_matches_settings(health, settings) if settings and running else False
-    pending_restart = settings_restart_pending(health, settings, pid) if settings and running else False
-    runtime_matches = health_matches_runtime(health) if healthy or pending_restart else None
-    hooks_enabled = config_feature_enabled(config, "codex_hooks")
+    pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
+    hooks_enabled = hooks_feature_enabled(config)
+    hook_status = fast_proxy_hook_trust_status(paths)
+    login = detect_login_mode(paths.codex_home)
+    auth = upstream_auth_status(paths, settings)
+    effective_policy = effective_service_tier_policy(settings, login) if settings else None
 
     checks = [
         {"name": "python", "ok": sys.version_info >= (3, 11), "detail": sys.version.split()[0]},
         {"name": "codex_config", "ok": paths.config_path.exists(), "detail": str(paths.config_path)},
         {"name": "active_provider", "ok": bool(selected_provider), "detail": selected_provider},
         {"name": "provider_base_url", "ok": bool(upstream_base), "detail": upstream_base},
+        {"name": "runtime_source", "ok": True, "detail": runtime_status(paths, health)},
+        {"name": "login_mode", "ok": True, "detail": login.login_mode},
     ]
     if settings_data:
         checks.extend([
             {"name": "proxy_settings", "ok": True, "detail": str(paths.settings_path)},
             {"name": "config_points_to_proxy", "ok": upstream_base == settings.base_url, "detail": upstream_base},
             {"name": "upstream_saved", "ok": bool(settings.upstream_base), "detail": settings.upstream_base},
+            {"name": "service_tier_policy", "ok": effective_policy in EFFECTIVE_SERVICE_TIER_POLICIES, "detail": {
+                "configured": settings.service_tier_policy,
+                "effective": effective_policy,
+                "fast_behavior": fast_behavior(settings, login),
+            }},
+            {
+                "name": "upstream_auth",
+                "ok": not settings.upstream_api_key_env or bool(auth["upstream_api_key_available"]),
+                "detail": auth,
+            },
             {"name": "proxy_health", "ok": not running or healthy or pending_restart, "detail": health},
             {"name": "proxy_pending_restart", "ok": True, "detail": pending_restart},
             {"name": "proxy_runtime", "ok": not healthy or runtime_matches, "detail": health.get("runtime_id") if health else None},
-            {"name": "codex_hooks_enabled", "ok": hooks_enabled, "detail": hooks_enabled},
-            {"name": "startup_hook", "ok": has_startup_hook(paths), "detail": str(paths.hooks_path)},
+            {
+                "name": "hooks_enabled",
+                "ok": hooks_enabled,
+                "detail": {key: config_feature_value(config, key) for key in HOOK_FEATURE_KEYS},
+            },
+            {"name": "startup_hook", "ok": hook_status["ready"], "detail": hook_status},
         ])
     else:
         checks.append({"name": "proxy_settings", "ok": False, "detail": str(paths.settings_path)})
@@ -1281,9 +2496,73 @@ def command_benchmark(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_check_update(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve() if args.repo else None
+    print(json_line(check_update(repo, args.branch, args.remote)))
+    return 0
+
+
+def command_verify_upstream(args: argparse.Namespace) -> int:
+    paths = paths_for(args.codex_home)
+    config = load_toml_config(paths.config_path)
+    settings = verification_settings_from_args(paths, config, args)
+    require_upstream_auth_available(paths, settings)
+    verification = verify_upstream_responses(paths, config, settings, args.verify_timeout)
+    login = detect_login_mode(paths.codex_home)
+    print(json_line({
+        "status": "verified",
+        "provider": settings.provider,
+        "upstream_base": settings.upstream_base,
+        "service_tier_policy": settings.service_tier_policy,
+        "service_tier_effective_policy": effective_service_tier_policy(settings, login),
+        "fast_behavior": fast_behavior(settings, login),
+        "upstream_auth": "override_configured" if settings.upstream_api_key_env else "preserved",
+        "upstream_api_key_env": settings.upstream_api_key_env,
+        "settings_changed": False,
+        "config_changed": False,
+        "proxy_restarted": False,
+        "verification": verification,
+    }))
+    return 0
+
+
+def command_prepare_chatgpt_login(args: argparse.Namespace) -> int:
+    print(json_line(prepare_chatgpt_login(args)))
+    return 0
+
+
 def command_uninstall(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     manifest = read_json(paths.manifest_path)
+    manifest_settings = settings_from_dict(manifest["settings"]) if manifest else None
+    confirmation = uninstall_needs_chatgpt_direct_confirmation(
+        paths,
+        manifest,
+        manifest_settings,
+        getattr(args, "force", False),
+    )
+    if confirmation and not getattr(args, "confirm_chatgpt_direct_uninstall", False):
+        print(json_line({
+            "status": "confirmation_required",
+            "code": "chatgpt_auth_direct_upstream_uninstall_requires_confirmation",
+            "message": (
+                "ChatGPT login appears to be active. Uninstall would restore Codex config to the direct "
+                "third-party upstream before the proxy auth override is in the path, so future model "
+                "requests may fail with 401."
+            ),
+            "direct_upstream_auth_warning": confirmation,
+            "config_changed": False,
+            "config_restore": "not_attempted",
+            "startup_hook": {"status": "unchanged"},
+            "stop_result": {"status": "not_attempted"},
+            "files": "kept",
+            "next_user_action": (
+                "Keep the proxy enabled for ChatGPT-login UI with a third-party provider, switch Codex App "
+                "back to API-key/third-party provider auth before uninstalling, or explicitly confirm "
+                "uninstall with --confirm-chatgpt-direct-uninstall."
+            ),
+        }))
+        return 4
     stop_result: dict[str, Any] = {"status": "not_attempted", "reason": "config_not_restored"}
     restore_status = "no_manifest"
     backup_path = None
@@ -1305,7 +2584,7 @@ def command_uninstall(args: argparse.Namespace) -> int:
             restore_status = "restored"
             can_stop = True
         else:
-            settings = settings_from_dict(manifest["settings"])
+            settings = manifest_settings
             config = load_toml_config(config_path)
             config_base_url = provider_base_url(config, settings.provider)
             if config_base_url == settings.base_url:
@@ -1323,6 +2602,11 @@ def command_uninstall(args: argparse.Namespace) -> int:
                 can_stop = True
             else:
                 restore_status = "skipped_config_changed"
+
+    if restore_status != "skipped_config_changed":
+        state_keys = hook_result.get("removed_state_keys", []) if isinstance(hook_result, dict) else []
+        if isinstance(state_keys, list):
+            remove_hook_states_by_keys(paths.config_path, [key for key in state_keys if isinstance(key, str)])
 
     if can_stop and args.defer_stop:
         stop_result = {"status": "deferred", "reason": "restart_codex_before_stopping_proxy"}
@@ -1344,6 +2628,9 @@ def command_uninstall(args: argparse.Namespace) -> int:
         "backup_path": backup_path,
         "files": files_status,
     }
+    warning = direct_upstream_auth_warning(paths, manifest_settings, restore_status)
+    if warning:
+        result["direct_upstream_auth_warning"] = warning
     if args.defer_stop and restore_status != "skipped_config_changed":
         result["current_session_effect"] = DEFER_STOP_SESSION_EFFECT
     print(json_line(result))
@@ -1364,6 +2651,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--proxy-base", default=DEFAULT_PROXY_BASE)
     serve.add_argument("--upstream-base", required=True)
     serve.add_argument("--service-tier", default=DEFAULT_SERVICE_TIER)
+    serve.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES), default=DEFAULT_SERVICE_TIER_POLICY)
+    serve.add_argument("--service-tier-effective-policy", choices=sorted(EFFECTIVE_SERVICE_TIER_POLICIES))
+    serve.add_argument("--upstream-api-key-env")
     serve.add_argument("--log-dir", default=str(Path.home() / ".codex" / "codex-fast-proxy-state" / "state"))
     serve.add_argument("--verbose", action="store_true")
 
@@ -1376,6 +2666,10 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--proxy-base", default=DEFAULT_PROXY_BASE)
     install.add_argument("--upstream-base")
     install.add_argument("--service-tier", default=DEFAULT_SERVICE_TIER)
+    install.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES))
+    install.add_argument("--upstream-api-key-env")
+    install.add_argument("--no-verify", dest="verify", action="store_false", default=True)
+    install.add_argument("--verify-timeout", type=float, default=60.0)
     install.add_argument("--start", action="store_true")
     install.add_argument("--prepare-only", action="store_true")
     install.add_argument("--verbose-proxy", action="store_true")
@@ -1384,11 +2678,26 @@ def build_parser() -> argparse.ArgumentParser:
     add_shared_options(start)
     start.add_argument("--verbose-proxy", action="store_true")
 
-    set_upstream = subparsers.add_parser("set-upstream", help="Update the saved upstream URL while keeping Codex on the local proxy.")
+    set_upstream = subparsers.add_parser("set-upstream", help="Update proxy-managed upstream settings while keeping Codex on the local proxy.")
     add_shared_options(set_upstream)
-    set_upstream.add_argument("--upstream-base", required=True)
+    set_upstream.add_argument("--upstream-base")
+    set_upstream.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES))
+    set_upstream.add_argument("--upstream-api-key-env")
+    set_upstream.add_argument("--clear-upstream-api-key-env", action="store_true")
+    set_upstream.add_argument("--no-verify", dest="verify", action="store_false", default=True)
+    set_upstream.add_argument("--verify-timeout", type=float, default=60.0)
     set_upstream.add_argument("--restart", action="store_true")
     set_upstream.add_argument("--verbose-proxy", action="store_true")
+
+    verify_upstream = subparsers.add_parser("verify-upstream", help="Read-only streaming Responses API check for an upstream route.")
+    add_shared_options(verify_upstream)
+    verify_upstream.add_argument("--provider")
+    verify_upstream.add_argument("--upstream-base")
+    verify_upstream.add_argument("--service-tier", default=None)
+    verify_upstream.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES))
+    verify_upstream.add_argument("--upstream-api-key-env")
+    verify_upstream.add_argument("--clear-upstream-api-key-env", action="store_true")
+    verify_upstream.add_argument("--verify-timeout", type=float, default=60.0)
 
     autostart = subparsers.add_parser("autostart", help="Start proxy from a Codex SessionStart hook if enabled.")
     add_shared_options(autostart)
@@ -1418,11 +2727,27 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--api-key-env")
     benchmark.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
 
+    check_update_parser = subparsers.add_parser("check-update", help="Read-only check for newer GitHub commits.")
+    check_update_parser.add_argument("--repo")
+    check_update_parser.add_argument("--remote", default="origin")
+    check_update_parser.add_argument("--branch")
+
+    prepare_login = subparsers.add_parser(
+        "prepare-chatgpt-login",
+        help="Prepare provider auth split before signing in to Codex App with ChatGPT.",
+    )
+    add_shared_options(prepare_login)
+    prepare_login.add_argument("--provider")
+    prepare_login.add_argument("--source-auth-key")
+    prepare_login.add_argument("--target-env")
+    prepare_login.add_argument("--apply", action="store_true")
+
     uninstall = subparsers.add_parser("uninstall", help="Stop proxy and restore the backed-up Codex config.")
     add_shared_options(uninstall)
     uninstall.add_argument("--force", action="store_true")
     uninstall.add_argument("--keep-state", action="store_true")
     uninstall.add_argument("--defer-stop", action="store_true")
+    uninstall.add_argument("--confirm-chatgpt-direct-uninstall", action="store_true")
 
     return parser
 
@@ -1444,9 +2769,14 @@ def main(argv: list[str] | None = None) -> int:
             args.upstream_base,
             "--service-tier",
             args.service_tier,
-            "--log-dir",
-            args.log_dir,
+            "--service-tier-policy",
+            args.service_tier_policy,
         ]
+        effective_policy = args.service_tier_effective_policy or ("preserve" if args.service_tier_policy == "auto" else args.service_tier_policy)
+        serve_args.extend(["--service-tier-effective-policy", effective_policy])
+        serve_args.extend(["--log-dir", args.log_dir])
+        if args.upstream_api_key_env:
+            serve_args.extend(["--upstream-api-key-env", args.upstream_api_key_env])
         if args.verbose:
             serve_args.append("--verbose")
         return serve_main(serve_args)
@@ -1460,6 +2790,9 @@ def main(argv: list[str] | None = None) -> int:
         "status": command_status,
         "doctor": command_doctor,
         "benchmark": command_benchmark,
+        "check-update": command_check_update,
+        "verify-upstream": command_verify_upstream,
+        "prepare-chatgpt-login": command_prepare_chatgpt_login,
         "uninstall": command_uninstall,
     }
     try:

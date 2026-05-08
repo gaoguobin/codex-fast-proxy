@@ -29,6 +29,7 @@ $uninstallJson = $null
 $uninstallResult = $null
 $status = $null
 $deferred = $false
+$confirmationRequired = $false
 
 if (Test-Path $repoRoot) {
     $env:PYTHONPATH = Join-Path $repoRoot 'src'
@@ -36,20 +37,29 @@ if (Test-Path $repoRoot) {
     $status = $statusJson | ConvertFrom-Json
     if ($status.config_matches -eq $true) {
         $uninstallJson = python -m codex_fast_proxy uninstall --defer-stop
+        $uninstallResult = $uninstallJson | ConvertFrom-Json
         $uninstallJson
-        Write-Host 'restart_required_before_cleanup=true'
-        $deferred = $true
+        if ($uninstallResult.status -eq 'confirmation_required') {
+            Write-Host 'uninstall_confirmation_required=true'
+            $confirmationRequired = $true
+        } else {
+            Write-Host 'restart_required_before_cleanup=true'
+            $deferred = $true
+        }
     } else {
         $uninstallJson = python -m codex_fast_proxy uninstall
         $uninstallResult = $uninstallJson | ConvertFrom-Json
-        if ($uninstallResult.config_restore -eq 'skipped_config_changed') {
-            $uninstallJson
+        $uninstallJson
+        if ($uninstallResult.status -eq 'confirmation_required') {
+            Write-Host 'uninstall_confirmation_required=true'
+            $confirmationRequired = $true
+        } elseif ($uninstallResult.config_restore -eq 'skipped_config_changed') {
             throw 'Codex config changed after proxy install, and the selected provider no longer points to the recorded proxy. The proxy was not stopped and files were not removed. Review ~/.codex/config.toml or rerun uninstall with --force if you want to restore the recorded backup.'
         }
     }
 }
 
-if (-not $deferred) {
+if ((-not $deferred) -and (-not $confirmationRequired)) {
     python -m pip uninstall -y codex-fast-proxy
 
     if (Test-Path $skillNamespace) {
@@ -59,23 +69,45 @@ if (-not $deferred) {
     if (Test-Path $repoRoot) {
         Remove-Item -LiteralPath $repoRoot -Recurse -Force
     }
-
-    if ($uninstallJson) {
-        $uninstallJson
-    }
 }
 ```
 
 Report the uninstall JSON result when available.
 
+If the block printed `uninstall_confirmation_required=true`, no uninstall changes were applied.
+Report `direct_upstream_auth_warning`, then ask the user whether they want to keep the proxy enabled
+or explicitly continue uninstalling. Continue only after the user clearly accepts the ChatGPT-login
+direct-upstream 401 risk; then rerun the manager with `--confirm-chatgpt-direct-uninstall`.
+
+If the uninstall JSON has `status="uninstalled"` and includes `direct_upstream_auth_warning`, report
+it before telling the user to restart Codex. This means Codex config has been restored to the direct
+third-party upstream, but the current Codex auth state still looks like ChatGPT account login. Direct
+upstream mode no longer has the proxy auth override, so model requests may send ChatGPT auth to the
+third-party provider and fail with 401. Tell the user to switch Codex App back to
+API-key/third-party provider auth before restarting, or keep the proxy enabled if they want
+ChatGPT-login UI with a third-party provider.
+
 When cleanup completed without `restart_required_before_cleanup=true`, explicitly tell the user:
 
 ```text
-请重启 Codex App，或新开 CLI 实例，让它从 skill 列表中移除 codex-fast-proxy。
+Restart Codex App, or open a new CLI process, so Codex removes codex-fast-proxy from the skill list.
 ```
 
 If the block printed `restart_required_before_cleanup=true`, explicitly tell the user:
 
 ```text
-配置已恢复直连，代理暂时保留运行以避免打断当前进程；请重启 Codex App 并回到这个对话，或新开 CLI 实例后再次执行卸载完成清理。
+Codex config has been restored to direct upstream, and the proxy was left running temporarily to avoid interrupting the current process. Restart Codex App and return to this conversation, or open a new CLI process, then run uninstall again to finish cleanup.
+```
+
+If the block printed `uninstall_confirmation_required=true`, explicitly tell the user:
+
+```text
+No uninstall changes were applied because ChatGPT login appears active and direct upstream mode may return 401. Keep the proxy enabled for ChatGPT-login UI with a third-party provider, switch Codex App back to API-key/third-party provider auth before uninstalling, or explicitly confirm that you want to continue uninstalling anyway.
+```
+
+If `status="uninstalled"` and `direct_upstream_auth_warning` is present, add this before the restart
+instruction:
+
+```text
+Warning: ChatGPT login appears to be active. After uninstall restores direct upstream, requests no longer pass through the proxy upstream auth override. If Codex keeps using ChatGPT auth, the third-party provider may receive a ChatGPT token and return 401. Switch back to API-key/third-party provider auth before restarting, or keep the proxy enabled for ChatGPT-login UI with a third-party provider.
 ```
