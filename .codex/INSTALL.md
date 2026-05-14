@@ -64,7 +64,7 @@ git clone --branch $installRef --single-branch https://github.com/gaoguobin/code
 
 ## After install
 
-Run this check and open the Control UI in the same Codex turn:
+Run this check and start the Control UI in the same Codex turn:
 
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -79,8 +79,8 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 ```
 
 Report the non-secret JSON results in the reply. The `ui` command starts the independent Control UI
-and tries to open it in the external system browser. If `opened_external_browser=false`, give the
-user the returned `url` and say:
+and returns its local URL. Do not use browser automation for this handoff. Give the user the returned
+`url` and say:
 
 ```text
 请在外部浏览器中打开：<url>

@@ -46,8 +46,9 @@ python -m codex_fast_proxy uninstall
 
 - Installing the repo or skill must not change Codex provider config.
 - After file-only install, open the Chinese Control UI with `python -m codex_fast_proxy ui`. It starts
-  an independent local UI, tries to open the external browser, and returns a URL if browser opening
-  fails. Do not treat this as enabling model traffic.
+  an independent local UI and returns a URL. Give that URL to the user as plain text and ask them to
+  open it in an external browser. Do not use browser automation for this handoff, and do not treat
+  this as enabling model traffic.
 - Ordinary users should click the UI's `启用` button. That first-run action prepares provider auth for
   future ChatGPT login and then enables the current provider route through the manager lifecycle.
 - Enable with `install --start`; it starts the local proxy before switching Codex config.

@@ -222,7 +222,8 @@ def open_control_ui(codex_home: str | None, provider: str | None, host: str, por
         "url": url,
         "server_started": started,
         "opened_external_browser": opened,
-        "fallback_message": None if opened else f"请在浏览器中打开：{url}",
+        "open_instruction": None if opened else f"请在外部浏览器中打开：{url}",
+        "fallback_message": None if opened else f"请在外部浏览器中打开：{url}",
     }
 
 

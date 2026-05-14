@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.actions import run_first_run_enable  # noqa: E402
-from codex_fast_proxy.control_ui import render_page  # noqa: E402
+from codex_fast_proxy.control_ui import open_control_ui, render_page  # noqa: E402
 from codex_fast_proxy.state import collect_status  # noqa: E402
 
 
@@ -93,10 +93,11 @@ class ControlUiTests(unittest.TestCase):
         self.assertFalse(self.paths.settings_path.exists())
 
     def test_ui_command_can_be_parsed_without_opening_browser(self) -> None:
-        args = manager.build_parser().parse_args(["ui", "--no-open"])
+        args = manager.build_parser().parse_args(["ui"])
 
         self.assertEqual(args.command, "ui")
-        self.assertTrue(args.no_open)
+        self.assertFalse(args.open_browser)
+        self.assertFalse(args.no_open)
         self.assertEqual(args.host, "127.0.0.1")
         self.assertEqual(args.port, 8786)
 
@@ -108,7 +109,20 @@ class ControlUiTests(unittest.TestCase):
             )
 
         self.assertEqual(exit_code, 0)
-        open_ui.assert_called_once()
+        open_ui.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", 8786, False)
+
+    def test_open_control_ui_returns_external_browser_instruction_by_default(self) -> None:
+        with (
+            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=None),
+            mock.patch("codex_fast_proxy.control_ui.webbrowser.open") as browser_open,
+        ):
+            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786, False)
+
+        browser_open.assert_not_called()
+        self.assertEqual(result["status"], "ready")
+        self.assertFalse(result["opened_external_browser"])
+        self.assertEqual(result["url"], "http://127.0.0.1:8786/")
+        self.assertEqual(result["open_instruction"], "请在外部浏览器中打开：http://127.0.0.1:8786/")
 
 
 if __name__ == "__main__":

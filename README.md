@@ -62,15 +62,9 @@ Paste this into Codex:
 Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
 ```
 
-Then restart Codex App, return to the same conversation, and say:
-
-```text
-Open Codex Fast proxy Control UI
-```
-
-The installer also tries to open the Chinese Control UI in your external browser. Click `启用` there.
-After the UI says setup is ready, restart Codex App or open a new Codex CLI process so Codex reloads
-its provider config. Future sessions use the installed startup hook.
+The installer starts the Chinese Control UI and prints a local URL. Open that URL in your external
+browser and click `启用`. After the UI says setup is ready, restart Codex App or open a new Codex CLI
+process so Codex reloads its provider config. Future sessions use the installed startup hook.
 
 Install is intentionally file-only: it clones the repo, installs the Python package, and links the
 skill. It does not switch your provider, start the proxy, or install hooks until you explicitly

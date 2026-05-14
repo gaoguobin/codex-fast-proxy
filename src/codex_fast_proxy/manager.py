@@ -2533,7 +2533,13 @@ def command_ui(args: argparse.Namespace) -> int:
 
     if args.foreground:
         return serve_control_ui(args.codex_home, args.provider, args.host, args.port)
-    print(json_line(open_control_ui(args.codex_home, args.provider, args.host, args.port, not args.no_open)))
+    print(json_line(open_control_ui(
+        args.codex_home,
+        args.provider,
+        args.host,
+        args.port,
+        args.open_browser and not args.no_open,
+    )))
     return 0
 
 
@@ -2890,13 +2896,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_shared_options(status)
     status.add_argument("--provider")
 
-    ui = subparsers.add_parser("ui", help="Open the local Control UI.")
+    ui = subparsers.add_parser("ui", help="Start the local Control UI and print its URL.")
     add_shared_options(ui)
     ui.add_argument("--provider")
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=8786)
     ui.add_argument("--foreground", action="store_true")
-    ui.add_argument("--no-open", action="store_true")
+    ui.add_argument("--open-browser", action="store_true")
+    ui.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
 
     doctor = subparsers.add_parser("doctor", help="Check Codex config and proxy environment.")
     add_shared_options(doctor)
