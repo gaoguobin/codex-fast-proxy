@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import sys
 import unittest
 import uuid
@@ -14,7 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.actions import run_configure_upstream, run_first_run_enable  # noqa: E402
-from codex_fast_proxy.control_ui import open_control_ui, render_page  # noqa: E402
+from codex_fast_proxy.control_ui import open_control_ui, render_page, start_background_server  # noqa: E402
 from codex_fast_proxy.ports import find_available_port  # noqa: E402
 from codex_fast_proxy.state import collect_status  # noqa: E402
 
@@ -247,6 +248,17 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["code"], "control_ui_start_failed")
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertIsNone(result["open_instruction"])
+
+    def test_background_server_uses_detached_windows_process_flags(self) -> None:
+        with (
+            mock.patch("codex_fast_proxy.control_ui.os.name", "nt"),
+            mock.patch("codex_fast_proxy.control_ui.subprocess.Popen") as popen,
+        ):
+            start_background_server(str(self.codex_home), None, "127.0.0.1", 8786)
+
+        flags = popen.call_args.kwargs["creationflags"]
+        self.assertTrue(flags & subprocess.CREATE_NEW_PROCESS_GROUP)
+        self.assertTrue(flags & subprocess.DETACHED_PROCESS)
 
     def test_find_available_port_skips_reserved_proxy_port(self) -> None:
         bound_ports: list[int] = []

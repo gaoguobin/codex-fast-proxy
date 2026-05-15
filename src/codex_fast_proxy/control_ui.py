@@ -192,10 +192,18 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
 
     kwargs: dict[str, Any] = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     if os.name == "nt":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+        kwargs["creationflags"] = flags
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(command, **kwargs)
+    try:
+        subprocess.Popen(command, **kwargs)
+    except OSError:
+        if os.name != "nt" or "creationflags" not in kwargs:
+            raise
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        subprocess.Popen(command, **kwargs)
     return True
 
 
