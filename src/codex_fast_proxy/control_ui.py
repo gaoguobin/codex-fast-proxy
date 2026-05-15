@@ -118,7 +118,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         else '<button id="primary" data-action="diagnostics">打开诊断</button>'
     )
     snapshot_json = html.escape(json.dumps(snapshot, ensure_ascii=False))
-    token_json = html.escape(json.dumps(token))
+    token_json = json.dumps(token)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -155,11 +155,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     </section>
   </main>
   <script>
-    const token = JSON.parse('{token_json}');
+    const token = {token_json};
     async function refresh() {{
-      const response = await fetch('/api/status');
-      const data = await response.json();
-      render(data.snapshot);
+      try {{
+        const response = await fetch('/api/status');
+        const data = await response.json();
+        render(data.snapshot);
+      }} catch (error) {{
+        document.getElementById('state').textContent = '需要处理';
+        document.getElementById('message').textContent = '刷新失败：' + (error && error.message ? error.message : error);
+      }}
     }}
     function render(snapshot) {{
       const userState = snapshot.user_state || {{}};
@@ -174,17 +179,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     async function enable(button) {{
       button.disabled = true;
       button.textContent = '正在准备环境...';
-      const response = await fetch('/api/actions/enable', {{
-        method: 'POST',
-        headers: {{ 'Content-Type': 'application/json', '{CONTROL_TOKEN_HEADER}': token }},
-        body: '{{}}'
-      }});
-      const data = await response.json();
-      if (data.status !== 'ok') {{
+      try {{
+        const response = await fetch('/api/actions/enable', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json', '{CONTROL_TOKEN_HEADER}': token }},
+          body: '{{}}'
+        }});
+        const data = await response.json();
+        if (data.status !== 'ok') {{
+          document.getElementById('state').textContent = '需要处理';
+          document.getElementById('message').textContent = data.error || '启用失败，请打开诊断。';
+          button.disabled = false;
+          button.textContent = '启用';
+          return;
+        }}
+        render(data.snapshot);
+      }} catch (error) {{
         document.getElementById('state').textContent = '需要处理';
-        document.getElementById('message').textContent = data.error || '启用失败，请打开诊断。';
+        document.getElementById('message').textContent = '启用失败：' + (error && error.message ? error.message : error);
+        button.disabled = false;
+        button.textContent = '启用';
       }}
-      render(data.snapshot);
     }}
     document.getElementById('primary').addEventListener('click', async (event) => {{
       const action = event.currentTarget.dataset.action;

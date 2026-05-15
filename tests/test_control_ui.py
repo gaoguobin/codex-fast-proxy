@@ -61,6 +61,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("启用", html)
         self.assertIn("重启 Codex 前请用外部浏览器打开此页面", html)
         self.assertIn("正在准备环境", html)
+        self.assertIn('const token = "token";', html)
+        self.assertNotIn("&quot;token&quot;", html)
 
     def test_first_run_enable_prepares_provider_auth_and_installs_without_printing_secret(self) -> None:
         (self.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")
