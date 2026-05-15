@@ -18,6 +18,7 @@ CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = 8786
 CONTROL_TOKEN_HEADER = "X-Codex-Fast-Proxy-Token"
 MAX_JSON_BODY_BYTES = 64 * 1024
+RESERVED_PORTS = {8787}
 
 
 class ControlServer(ThreadingHTTPServer):
@@ -282,6 +283,8 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
 
 def find_available_port(host: str, preferred: int) -> int | None:
     for port in range(preferred, preferred + 10):
+        if port in RESERVED_PORTS:
+            continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.settimeout(0.2)
             try:

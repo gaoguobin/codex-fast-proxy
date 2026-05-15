@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.actions import run_first_run_enable  # noqa: E402
-from codex_fast_proxy.control_ui import open_control_ui, render_page  # noqa: E402
+from codex_fast_proxy.control_ui import find_available_port, open_control_ui, render_page  # noqa: E402
 from codex_fast_proxy.state import collect_status  # noqa: E402
 
 
@@ -125,6 +125,31 @@ class ControlUiTests(unittest.TestCase):
         self.assertFalse(result["opened_external_browser"])
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertEqual(result["open_instruction"], "请在外部浏览器中打开：http://127.0.0.1:8786/")
+
+    def test_find_available_port_skips_reserved_proxy_port(self) -> None:
+        bound_ports: list[int] = []
+
+        class DummySocket:
+            def settimeout(self, _timeout: float) -> None:
+                return None
+
+            def bind(self, address: tuple[str, int]) -> None:
+                _, port = address
+                bound_ports.append(port)
+                if port in {8786, 8788}:
+                    raise OSError("busy")
+
+            def __enter__(self) -> "DummySocket":
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb) -> None:
+                return None
+
+        with mock.patch("codex_fast_proxy.control_ui.socket.socket", return_value=DummySocket()):
+            port = find_available_port("127.0.0.1", 8786)
+
+        self.assertEqual(port, 8789)
+        self.assertNotIn(8787, bound_ports)
 
 
 if __name__ == "__main__":
