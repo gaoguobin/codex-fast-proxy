@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from .core import is_success_status
 from .proxy import compact_json, join_paths
 
 
@@ -679,14 +680,6 @@ def sample_plan(pairs: int) -> list[str]:
 
 def median(values: list[float]) -> float | None:
     return round(statistics.median(values), 1) if values else None
-
-
-def is_success_status(value: Any) -> bool:
-    try:
-        status = int(value)
-    except (TypeError, ValueError):
-        return False
-    return 200 <= status < 400
 
 
 def summarize_samples(samples: list[dict[str, Any]], label: str) -> dict[str, Any]:

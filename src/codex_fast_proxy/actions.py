@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import contextlib
-import io
-import json
 from typing import Any
+
+
+SPEED_MODE_POLICIES = {
+    "fast": "auto",
+    "standard": "preserve",
+}
 
 
 def state(code: str, title: str, message: str, primary_action: str = "refresh", primary_label: str = "重新检查") -> dict[str, str]:
@@ -48,7 +51,7 @@ def run_first_run_enable(codex_home: str | None, provider: str | None = None) ->
         "--use-provider-auth-file",
         "--start",
     )
-    install_result = run_manager_json(manager, manager.command_install, install_args)
+    install_result = manager.install_result(install_args)
 
     return {
         "status": "enabled",
@@ -58,10 +61,10 @@ def run_first_run_enable(codex_home: str | None, provider: str | None = None) ->
         "restart_required": True,
         "user_state": {
             "code": "restart_required",
-            "title": "已准备好，请重启 Codex",
-            "message": "设置已保存。请重启 Codex，重启后即可继续使用当前模型服务。",
+            "title": "已启用，重启后接管",
+            "message": "当前对话可以继续。Codex 重启后，新会话会走本地代理，并按速度模式处理请求。",
         },
-        "next_user_action": "请重启 Codex，然后回到此页面确认运行状态。",
+        "next_user_action": "当前对话可以继续；方便时重启 Codex，然后回到此页面确认运行状态。",
     }
 
 
@@ -113,21 +116,27 @@ def run_configure_upstream(
     codex_home: str | None,
     upstream_base: str | None,
     api_key: str | None,
+    speed_mode: str | None = None,
 ) -> dict[str, Any]:
     from . import manager
 
-    result = manager.configure_upstream(codex_home, upstream_base, api_key)
+    result = manager.configure_upstream(
+        codex_home,
+        upstream_base,
+        api_key,
+        service_tier_policy=service_tier_policy_for_speed_mode(speed_mode),
+    )
     if result.get("restart_required"):
         result["user_state"] = state(
             "restart_required",
-            "配置已保存，请重启 Codex",
-            "新的模型服务配置已验证并保存。重启 Codex 后会应用到当前使用路径。",
+            "配置已保存，重启后接管",
+            "当前对话可以继续。Codex 重启后，新配置和速度模式会应用到新的会话。",
         )
     else:
         result["user_state"] = state(
             "configured",
             "配置已保存",
-            "新的模型服务配置已验证并保存，当前状态可以继续使用。",
+            "模型服务和速度模式已保存，当前状态可以继续使用。",
         )
     return result
 
@@ -135,16 +144,17 @@ def run_configure_upstream(
 def run_uninstall(codex_home: str | None, confirm_chatgpt_direct_uninstall: bool = False) -> dict[str, Any]:
     from . import manager
 
-    defer_stop, _provider = manager.enabled_installation(manager.paths_for(codex_home), None)
+    paths = manager.paths_for(codex_home)
+    defer_stop, _provider = manager.enabled_installation(paths, None)
     args = ["--defer-stop"] if defer_stop else []
+    if not defer_stop:
+        args.append("--keep-state")
     if confirm_chatgpt_direct_uninstall:
         args.append("--confirm-chatgpt-direct-uninstall")
-    result = run_manager_json(
-        manager,
-        manager.command_uninstall,
-        manager_args(manager, "uninstall", codex_home, *args),
-        allowed_exit_codes={0, 4},
-    )
+    result, exit_code = manager.uninstall_result(manager_args(manager, "uninstall", codex_home, *args))
+    if exit_code not in {0, 4}:
+        detail = result.get("message") or result.get("error") or f"exit code {exit_code}"
+        raise ValueError(str(detail))
     if result.get("status") == "confirmation_required":
         result["user_state"] = state(
             "confirmation_required",
@@ -160,35 +170,15 @@ def run_uninstall(codex_home: str | None, confirm_chatgpt_direct_uninstall: bool
         result["user_state"] = state(
             "uninstalled_deferred",
             "已恢复，请重启 Codex",
-            "Codex 配置已恢复到原模型服务。为避免打断当前会话，代理会暂时保留；重启 Codex 后可再次打开控制面板完成清理。",
+            "Codex 已恢复到原模型服务。请重启 Codex，重启后再次打开控制面板完成清理。",
         )
     else:
+        result["control_ui_cleanup"] = {"path": str(paths.app_home)}
         result["user_state"] = state(
             "uninstalled",
-            "已清理",
-            "代理状态和启动项已清理。重启 Codex 或新开 CLI 后，Codex 会回到原模型服务路径。",
+            "已清理完成",
+            "本地代理已停止，相关状态会在控制面板关闭后清理。Codex 会继续使用原模型服务。",
         )
-    return result
-
-
-def run_manager_json(
-    manager: Any,
-    command: Any,
-    args: Any,
-    *,
-    allowed_exit_codes: set[int] | None = None,
-) -> dict[str, Any]:
-    allowed = allowed_exit_codes or {0}
-    output = io.StringIO()
-    with contextlib.redirect_stdout(output):
-        exit_code = command(args)
-    text = output.getvalue().strip()
-    result = json.loads(text) if text else {"status": "ok"}
-    if not isinstance(result, dict):
-        raise ValueError("Manager command returned an invalid JSON object.")
-    if exit_code not in allowed:
-        detail = result.get("message") or result.get("error") or f"exit code {exit_code}"
-        raise ValueError(str(detail))
     return result
 
 
@@ -198,3 +188,12 @@ def manager_args(manager: Any, command: str, codex_home: str | None, *args: str)
         argv.extend(["--codex-home", codex_home])
     argv.extend(args)
     return manager.build_parser().parse_args(argv)
+
+
+def service_tier_policy_for_speed_mode(speed_mode: str | None) -> str | None:
+    if not speed_mode:
+        return None
+    try:
+        return SPEED_MODE_POLICIES[speed_mode]
+    except KeyError as exc:
+        raise ValueError("Unknown speed mode.") from exc

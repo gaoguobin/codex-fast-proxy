@@ -1,34 +1,52 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
+
+from .auth import detect_login_mode
+from .auth_store import chatgpt_login_report, upstream_auth_status
+from .config import active_provider_name, load_toml_config, provider_base_url
+from .hooks import fast_proxy_hook_trust_status
+from .models import paths_for, settings_from_dict
+from .proxy import RUNTIME_ID
+from .runtime_process import is_port_available, proxy_runtime_state
+from .runtime_status import runtime_status
+from .status_rules import effective_service_tier_policy, fast_behavior, status_diagnosis
+from .storage import read_json
 
 
 SCHEMA_VERSION = 1
+RuntimeProbe = Callable[[Any, Any], tuple[int | None, bool, dict[str, Any] | None, bool, bool, bool | None]]
+PortProbe = Callable[[str, int], bool]
 
 
-def collect_status(codex_home: str | None, provider: str | None = None) -> dict[str, Any]:
-    from . import manager
-
-    paths = manager.paths_for(codex_home)
-    settings_data = manager.read_json(paths.settings_path)
-    settings = manager.settings_from_dict(settings_data) if settings_data else None
-    pid, running, health, healthy, pending_restart, runtime_matches = manager.proxy_runtime_state(paths, settings)
-    config = manager.load_toml_config(paths.config_path)
-    selected_provider = provider or (settings.provider if settings else manager.active_provider_name(config))
-    config_base_url = manager.provider_base_url(config, selected_provider) if selected_provider else None
-    hook_status = manager.fast_proxy_hook_trust_status(paths)
-    login = manager.detect_login_mode(paths.codex_home)
-    auth = manager.upstream_auth_status(paths, settings)
+def collect_status(
+    codex_home: str | None,
+    provider: str | None = None,
+    *,
+    runtime_probe: RuntimeProbe = proxy_runtime_state,
+    port_probe: PortProbe = is_port_available,
+) -> dict[str, Any]:
+    paths = paths_for(codex_home)
+    settings_data = read_json(paths.settings_path)
+    settings = settings_from_dict(settings_data) if settings_data else None
+    pid, running, health, healthy, pending_restart, runtime_matches = runtime_probe(paths, settings)
+    config = load_toml_config(paths.config_path)
+    selected_provider = provider or (settings.provider if settings else active_provider_name(config))
+    config_base_url = provider_base_url(config, selected_provider) if selected_provider else None
+    hook_status = fast_proxy_hook_trust_status(paths)
+    login = detect_login_mode(paths.codex_home)
+    auth = upstream_auth_status(paths, settings)
     config_matches = bool(settings and config_base_url == settings.base_url)
     needs_restart = bool(pending_restart or (healthy and not runtime_matches))
-    behavior = manager.fast_behavior(settings, login)
-    effective_policy = manager.effective_service_tier_policy(settings, login) if settings else None
+    behavior = fast_behavior(settings, login)
+    effective_policy = effective_service_tier_policy(settings, login) if settings else None
     login_report = (
-        manager.chatgpt_login_report(paths, settings, login, auth)
+        chatgpt_login_report(paths, settings, login, auth)
         if settings
         else {"provider_auth_preparation": None, "chatgpt_login_hint": None, "next_user_action": None}
     )
-    diagnosis = manager.status_diagnosis(
+    diagnosis = status_diagnosis(
         settings,
         running=running,
         healthy=healthy,
@@ -47,8 +65,8 @@ def collect_status(codex_home: str | None, provider: str | None = None) -> dict[
         "status": "running" if running else "stopped",
         "pid": pid,
         "healthy": healthy,
-        "runtime_id": manager.RUNTIME_ID,
-        "runtime": manager.runtime_status(paths, health),
+        "runtime_id": RUNTIME_ID,
+        "runtime": runtime_status(paths, health),
         "runtime_matches": runtime_matches,
         "needs_restart": needs_restart,
         "pending_restart": pending_restart,
@@ -75,7 +93,7 @@ def collect_status(codex_home: str | None, provider: str | None = None) -> dict[
         "config_matches": config_matches,
         "startup_hook": hook_status["ready"],
         "startup_hook_trust": hook_status,
-        "port_available": manager.is_port_available(settings.host, settings.port) if settings else None,
+        "port_available": port_probe(settings.host, settings.port) if settings else None,
         "health": health,
         "log": str(paths.log_path),
         "stdout": str(paths.stdout_path),
@@ -94,10 +112,18 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     elif snapshot.get("config_matches") and snapshot.get("needs_restart"):
         view = (
             "restart_required",
-            "已准备好，请重启 Codex",
-            "设置已保存。重启 Codex 后即可使用；如果之后切换到 ChatGPT 登录，也已完成准备。",
+            "已启用，重启后接管",
+            "当前对话可以继续。Codex 重启后，新会话会走本地代理，并按速度模式处理请求。",
             "refresh",
             "我已重启，重新检查",
+        )
+    elif snapshot.get("base_url") and snapshot.get("config_base_url") == snapshot.get("upstream_base"):
+        view = (
+            "cleanup_pending",
+            "已停用，完成清理",
+            "Codex 已恢复到原模型服务。点击完成清理后，会停止并移除本地代理状态。",
+            "uninstall",
+            "完成清理",
         )
     elif provider_ready and code in {"not_enabled", "config_not_proxy"}:
         view = (

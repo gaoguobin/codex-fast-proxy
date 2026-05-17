@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from .auth import resolve_env
 from .dashboard import DASHBOARD_PATH, render_dashboard
+from .status_rules import EFFECTIVE_SERVICE_TIER_POLICIES, SERVICE_TIER_POLICIES
 
 
 HOP_BY_HOP_HEADERS = {
@@ -37,10 +38,6 @@ BODY_METHODS = {"POST", "PUT", "PATCH"}
 RESPONSES_PATH = "/v1/responses"
 HEALTH_PATH = "/__codex_fast_proxy/health"
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
-SERVICE_TIER_POLICIES = {"auto", "inject_missing", "preserve"}
-EFFECTIVE_SERVICE_TIER_POLICIES = {"inject_missing", "preserve"}
-
-
 def source_fingerprint(paths: Iterable[Path]) -> str:
     digest = hashlib.sha256()
     for path in paths:

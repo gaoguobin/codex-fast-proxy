@@ -6,8 +6,8 @@ from collections import deque
 from html import escape
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
+from .core import safe_url_display
 
 DASHBOARD_PATH = "/__codex_fast_proxy/dashboard"
 DASHBOARD_EVENT_LIMIT = 8
@@ -32,17 +32,6 @@ EVENT_DETAIL_FIELDS = (
     "response_content_type",
     "error_type",
 )
-
-
-def safe_url_display(url: str) -> str:
-    parsed = urlsplit(url)
-    if not parsed.scheme or not parsed.netloc:
-        return url
-
-    netloc = parsed.netloc.rsplit("@", 1)[-1]
-    path = parsed.path.rstrip("/") or "/"
-    return urlunsplit((parsed.scheme, netloc, path, "", ""))
-
 
 def read_recent_events(log_path: Path, limit: int = DASHBOARD_EVENT_LIMIT) -> list[dict[str, Any]]:
     if limit <= 0:

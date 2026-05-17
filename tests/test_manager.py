@@ -19,6 +19,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import codex_fast_proxy.manager as manager  # noqa: E402
 import codex_fast_proxy.benchmark as benchmark  # noqa: E402
+import codex_fast_proxy.skill_link as skill_link  # noqa: E402
+import codex_fast_proxy.updater as updater  # noqa: E402
 from codex_fast_proxy.manager import (  # noqa: E402
     autostart_proxy,
     choose_provider,
@@ -152,15 +154,15 @@ class ManagerConfigTests(unittest.TestCase):
             stdout = ""
             stderr = ""
 
-        original_is_windows = manager.is_windows_platform
-        original_run = manager.subprocess.run
-        manager.is_windows_platform = lambda: True
-        manager.subprocess.run = lambda command, **_kwargs: calls.append(command) or Completed()
+        original_is_windows = skill_link.is_windows_platform
+        original_run = skill_link.subprocess.run
+        skill_link.is_windows_platform = lambda: True
+        skill_link.subprocess.run = lambda command, **_kwargs: calls.append(command) or Completed()
         try:
             result = manager.link_skill_namespace(repo_root, skills_root)
         finally:
-            manager.is_windows_platform = original_is_windows
-            manager.subprocess.run = original_run
+            skill_link.is_windows_platform = original_is_windows
+            skill_link.subprocess.run = original_run
 
         self.assertEqual(result["status"], "linked")
         self.assertEqual(result["link_type"], "junction")
@@ -183,13 +185,13 @@ class ManagerConfigTests(unittest.TestCase):
         link = manager.skill_namespace_path(skills_root)
         link.mkdir(parents=True)
 
-        original_points_to = manager.path_points_to
-        manager.path_points_to = lambda _path, _target: True
+        original_points_to = skill_link.path_points_to
+        skill_link.path_points_to = lambda _path, _target: True
         try:
             with self.assertRaises(ConfigError):
                 manager.unlink_skill_namespace(repo_root, skills_root)
         finally:
-            manager.path_points_to = original_points_to
+            skill_link.path_points_to = original_points_to
 
     def test_benchmark_default_timeout_allows_long_codex_runs(self) -> None:
         args = manager.build_parser().parse_args(["benchmark"])
@@ -1929,7 +1931,7 @@ class ManagerConfigTests(unittest.TestCase):
     def test_check_update_is_read_only_and_reports_available_update(self) -> None:
         repo = self.temp_dir / "repo"
         calls: list[tuple[str, ...]] = []
-        original_run_git = manager.run_git
+        original_run_git = updater.run_git
 
         def fake_run_git(_repo, *args, timeout=30.0):
             calls.append(args)
@@ -1949,11 +1951,11 @@ class ManagerConfigTests(unittest.TestCase):
                 raise ConfigError("missing remote commit")
             raise AssertionError(args)
 
-        manager.run_git = fake_run_git
+        updater.run_git = fake_run_git
         try:
             result = manager.check_update(repo)
         finally:
-            manager.run_git = original_run_git
+            updater.run_git = original_run_git
 
         self.assertTrue(result["read_only"])
         self.assertTrue(result["update_available"])
@@ -1967,7 +1969,7 @@ class ManagerConfigTests(unittest.TestCase):
     def test_check_update_reports_up_to_date(self) -> None:
         repo = self.temp_dir / "repo"
         commit = "a" * 40
-        original_run_git = manager.run_git
+        original_run_git = updater.run_git
 
         def fake_run_git(_repo, *args, timeout=30.0):
             if args == ("rev-parse", "--is-inside-work-tree"):
@@ -1984,11 +1986,11 @@ class ManagerConfigTests(unittest.TestCase):
                 return f"{commit}\trefs/heads/main"
             raise AssertionError(args)
 
-        manager.run_git = fake_run_git
+        updater.run_git = fake_run_git
         try:
             result = manager.check_update(repo)
         finally:
-            manager.run_git = original_run_git
+            updater.run_git = original_run_git
 
         self.assertFalse(result["update_available"])
         self.assertFalse(result["local_changes"])
@@ -1999,7 +2001,7 @@ class ManagerConfigTests(unittest.TestCase):
         repo = self.temp_dir / "repo"
         local_commit = "c" * 40
         remote_commit = "b" * 40
-        original_run_git = manager.run_git
+        original_run_git = updater.run_git
 
         def fake_run_git(_repo, *args, timeout=30.0):
             if args == ("rev-parse", "--is-inside-work-tree"):
@@ -2020,11 +2022,11 @@ class ManagerConfigTests(unittest.TestCase):
                 return ""
             raise AssertionError(args)
 
-        manager.run_git = fake_run_git
+        updater.run_git = fake_run_git
         try:
             result = manager.check_update(repo)
         finally:
-            manager.run_git = original_run_git
+            updater.run_git = original_run_git
 
         self.assertEqual(result["relation"], "local_ahead")
         self.assertFalse(result["update_available"])
@@ -2034,7 +2036,7 @@ class ManagerConfigTests(unittest.TestCase):
         repo = self.temp_dir / "repo"
         local_commit = "c" * 40
         remote_commit = "b" * 40
-        original_run_git = manager.run_git
+        original_run_git = updater.run_git
 
         def fake_run_git(_repo, *args, timeout=30.0):
             if args == ("rev-parse", "--is-inside-work-tree"):
@@ -2058,11 +2060,11 @@ class ManagerConfigTests(unittest.TestCase):
                 raise ConfigError("not ancestor")
             raise AssertionError(args)
 
-        manager.run_git = fake_run_git
+        updater.run_git = fake_run_git
         try:
             result = manager.check_update(repo)
         finally:
-            manager.run_git = original_run_git
+            updater.run_git = original_run_git
 
         self.assertEqual(result["relation"], "diverged")
         self.assertTrue(result["update_available"])
@@ -2115,15 +2117,15 @@ class ManagerConfigTests(unittest.TestCase):
             raise AssertionError(args)
 
         with (
-            mock.patch("codex_fast_proxy.manager.check_update", return_value={
+            mock.patch("codex_fast_proxy.updater.check_update", return_value={
                 "status": "checked",
                 "local_changes": False,
                 "relation": "remote_ahead",
             }),
-            mock.patch("codex_fast_proxy.manager.run_git", side_effect=fake_run_git),
-            mock.patch("codex_fast_proxy.manager.run_python", side_effect=fake_run_python),
-            mock.patch("codex_fast_proxy.manager.run_python_json", side_effect=fake_run_python_json),
-            mock.patch("codex_fast_proxy.manager.link_skill_namespace", return_value={"status": "already_linked"}),
+            mock.patch("codex_fast_proxy.updater.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.updater.run_python", side_effect=fake_run_python),
+            mock.patch("codex_fast_proxy.updater.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.updater.link_skill_namespace", return_value={"status": "already_linked"}),
         ):
             result = manager.update_installation(codex_home, repo=repo, branch="main")
 
@@ -2156,15 +2158,15 @@ class ManagerConfigTests(unittest.TestCase):
             raise AssertionError(args)
 
         with (
-            mock.patch("codex_fast_proxy.manager.check_update", return_value={
+            mock.patch("codex_fast_proxy.updater.check_update", return_value={
                 "status": "checked",
                 "local_changes": False,
                 "relation": "same",
             }),
-            mock.patch("codex_fast_proxy.manager.run_git", side_effect=fake_run_git),
-            mock.patch("codex_fast_proxy.manager.run_python") as run_python,
-            mock.patch("codex_fast_proxy.manager.run_python_json", side_effect=fake_run_python_json),
-            mock.patch("codex_fast_proxy.manager.link_skill_namespace", return_value={"status": "already_linked"}),
+            mock.patch("codex_fast_proxy.updater.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.updater.run_python") as run_python,
+            mock.patch("codex_fast_proxy.updater.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.updater.link_skill_namespace", return_value={"status": "already_linked"}),
         ):
             result = manager.update_installation(self.temp_dir / ".codex", repo=repo, branch="main")
 
@@ -2179,13 +2181,13 @@ class ManagerConfigTests(unittest.TestCase):
         repo.mkdir()
 
         with (
-            mock.patch("codex_fast_proxy.manager.run_git", return_value="a" * 40),
-            mock.patch("codex_fast_proxy.manager.check_update", return_value={
+            mock.patch("codex_fast_proxy.updater.run_git", return_value="a" * 40),
+            mock.patch("codex_fast_proxy.updater.check_update", return_value={
                 "status": "checked",
                 "local_changes": True,
                 "relation": "remote_ahead",
             }),
-            mock.patch("codex_fast_proxy.manager.run_python") as run_python,
+            mock.patch("codex_fast_proxy.updater.run_python") as run_python,
         ):
             result = manager.update_installation(self.temp_dir / ".codex", repo=repo, branch="main")
 
