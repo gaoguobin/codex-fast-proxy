@@ -497,7 +497,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const selected = document.querySelector('input[name="speedMode"]:checked');
       return selected ? selected.value : 'fast';
     }}
+    function shouldReloadForSnapshot(snapshot) {{
+      const userState = snapshot.user_state || {{}};
+      const action = userState.primary_action || 'diagnostics';
+      const terminalState = ['cleanup_pending', 'uninstalled_deferred', 'uninstalled'].includes(userState.code);
+      const currentAction = $('primary').dataset.action || 'diagnostics';
+      const hasRuntimeControls = Boolean($('update') || $('uninstall'));
+      const shouldShowRuntimeControls = Boolean(snapshot.base_url) && !terminalState;
+      const hasProviderPanel = Boolean($('providerPanel'));
+      const shouldShowProviderPanel = Array.isArray(snapshot.providers) && snapshot.providers.length > 0 && !terminalState;
+      return currentAction !== action ||
+        hasRuntimeControls !== shouldShowRuntimeControls ||
+        hasProviderPanel !== shouldShowProviderPanel;
+    }}
     function render(snapshot) {{
+      if (shouldReloadForSnapshot(snapshot)) {{
+        window.location.reload();
+        return;
+      }}
       const userState = snapshot.user_state || {{}};
       $('state').textContent = userState.title || '需要处理';
       $('message').textContent = userState.message || '请打开诊断，或让 Codex 根据诊断结果修复。';

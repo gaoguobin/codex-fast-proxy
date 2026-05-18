@@ -259,6 +259,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("'set-speed-mode'", html)
         self.assertIn("window.location.href = data.action.control_ui.url;", html)
         self.assertIn("data.action.control_ui.reload_after_ms", html)
+        self.assertIn("shouldReloadForSnapshot(snapshot)", html)
+        self.assertIn("window.location.reload();", html)
 
     def test_control_page_maps_preserve_policy_to_standard_speed_mode(self) -> None:
         html = render_page(
