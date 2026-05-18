@@ -100,22 +100,40 @@ class ControlHandler(BaseHTTPRequestHandler):
             }, status=400)
 
     def run_action(self, action: str) -> dict[str, Any]:
-        from .actions import run_configure_upstream, run_first_run_enable, run_uninstall, run_update
+        from .actions import (
+            run_first_run_enable,
+            run_save_provider,
+            run_set_speed_mode,
+            run_switch_provider,
+            run_uninstall,
+            run_update,
+        )
 
         body = self.read_body_json()
         shutdown_control_ui = False
         if action == "enable":
-            result = run_first_run_enable(self.server.codex_home, self.server.provider)
+            action_provider = body.get("provider") if isinstance(body.get("provider"), str) else self.server.provider
+            result = run_first_run_enable(self.server.codex_home, action_provider)
         elif action == "update":
             result = run_update(self.server.codex_home, self.server.provider)
             if result.get("control_ui_reload_required"):
                 result["control_ui"] = self.start_replacement_control_ui()
                 shutdown_control_ui = result["control_ui"].get("status") == "ready"
-        elif action == "configure-upstream":
-            result = run_configure_upstream(
+        elif action == "save-provider":
+            result = run_save_provider(
                 self.server.codex_home,
+                body.get("provider") if isinstance(body.get("provider"), str) else None,
                 body.get("upstream_base") if isinstance(body.get("upstream_base"), str) else None,
                 body.get("api_key") if isinstance(body.get("api_key"), str) else None,
+            )
+        elif action == "switch-provider":
+            result = run_switch_provider(
+                self.server.codex_home,
+                body.get("provider") if isinstance(body.get("provider"), str) else None,
+            )
+        elif action == "set-speed-mode":
+            result = run_set_speed_mode(
+                self.server.codex_home,
                 body.get("speed_mode") if isinstance(body.get("speed_mode"), str) else None,
             )
         elif action == "uninstall":
@@ -203,11 +221,15 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
 
 
 def user_error_message(action: str, snapshot: dict[str, Any]) -> str:
-    if action == "configure-upstream":
+    if action in {"save-provider", "configure-upstream"}:
         upstream = snapshot.get("upstream_base")
         if isinstance(upstream, str) and upstream:
             return f"没有保存。新的模型服务没有通过验证，当前仍在使用：{upstream}"
         return "没有保存。新的模型服务没有通过验证，当前设置保持不变。"
+    if action == "switch-provider":
+        return "没有切换。请选择已保存且可验证的 Provider。"
+    if action == "set-speed-mode":
+        return "速度模式没有保存，当前设置保持不变。"
     if action == "enable":
         return "启用没有完成，当前设置保持不变。请打开诊断，或让 Codex 检查原因。"
     if action == "update":

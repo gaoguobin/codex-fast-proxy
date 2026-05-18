@@ -44,6 +44,37 @@ def display_text(value: Any, fallback: str = "未配置") -> str:
     return str(value) if isinstance(value, str) and value else fallback
 
 
+def provider_key_label(value: Any) -> str:
+    if value == "saved":
+        return "已保存"
+    if isinstance(value, str) and value.startswith("process_env:"):
+        return f"环境变量 {value.split(':', 1)[1]}"
+    if isinstance(value, str) and value.startswith("windows_user_env:"):
+        return f"环境变量 {value.split(':', 1)[1]}"
+    if isinstance(value, str) and value.startswith("auth_json:"):
+        return f"Codex 已保存 {value.split(':', 1)[1]}"
+    return "未保存"
+
+
+def providers_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = snapshot.get("providers")
+    providers = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+    if providers:
+        return providers
+    provider = snapshot.get("provider")
+    upstream = snapshot.get("upstream_base") or snapshot.get("config_base_url")
+    if (isinstance(provider, str) and provider) or upstream or snapshot.get("base_url"):
+        return [{
+            "name": provider if isinstance(provider, str) and provider else "当前 Provider",
+            "base_url": upstream,
+            "current": True,
+            "active": True,
+            "proxy_enabled": bool(snapshot.get("config_matches")),
+            "api_key": "saved" if snapshot.get("upstream_api_key_file") else "missing",
+        }]
+    return []
+
+
 def render_page(snapshot: dict[str, Any], token: str) -> str:
     user_state = snapshot.get("user_state", {})
     state_code = str(user_state.get("code") or "")
@@ -56,67 +87,107 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         if primary_action in {"enable", "refresh", "uninstall"}
         else '<button id="primary" data-action="diagnostics">打开诊断</button>'
     )
-    maintenance = ""
     labels: dict[str, str] = {}
-    show_maintenance = bool(snapshot.get("base_url")) and state_code not in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
-    if show_maintenance:
-        provider_label = html.escape(display_text(snapshot.get("provider"), "未选择"))
-        upstream_value = html.escape(str(snapshot.get("upstream_base") or ""), quote=True)
-        upstream_label = html.escape(display_text(snapshot.get("upstream_base"), "未设置"))
-        auth_label = html.escape(upstream_auth_label(snapshot))
+    terminal_state = state_code in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
+    show_runtime_controls = bool(snapshot.get("base_url")) and not terminal_state
+    action_buttons = ""
+    danger_zone = ""
+    if show_runtime_controls:
+        labels.update({
+            "update": "更新",
+            "uninstall": "停用并恢复",
+            "confirmUninstall": "我知道可能导致模型请求失败，仍要停用",
+        })
+        action_buttons = """
+        <button id="update" class="secondary" data-action="update">更新</button>
+        <button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>
+"""
+        danger_zone = """
+      <div id="dangerZone" class="danger-zone" style="display:none">
+        <p>仍要继续停用只适合你已经理解风险的情况。继续后，当前 ChatGPT 登录可能无法直接使用第三方模型服务。</p>
+        <button id="confirmUninstall" class="warn" data-action="confirm-uninstall">我知道可能导致模型请求失败，仍要停用</button>
+      </div>
+"""
+
+    providers = providers_from_snapshot(snapshot)
+    selected_provider = str(snapshot.get("current_provider") or snapshot.get("provider") or "")
+    selected_record = next((item for item in providers if item.get("name") == selected_provider), providers[0] if providers else {})
+    provider_options = "\n".join(
+        f'<option value="{html.escape(str(item.get("name") or ""), quote=True)}"'
+        f'{" selected" if item is selected_record else ""}>{html.escape(str(item.get("name") or "未命名"))}</option>'
+        for item in providers
+    )
+    provider_name_value = html.escape(str(selected_record.get("name") or selected_provider), quote=True)
+    provider_url_value = html.escape(str(selected_record.get("base_url") or ""), quote=True)
+    provider_auth_value = html.escape(provider_key_label(selected_record.get("api_key")), quote=True)
+    provider_management = ""
+    if providers and not terminal_state:
+        labels.update({
+            "saveProvider": "保存 Provider",
+            "switchProvider": "切换到此 Provider",
+            "newProvider": "新增",
+        })
+        provider_management = f"""
+      <h2>Provider 管理</h2>
+      <div class="provider-summary">
+        <div class="provider-title">
+          <label class="select-label">Provider
+            <select id="providerSelect">{provider_options}</select>
+          </label>
+          <button id="newProvider" class="secondary" type="button">新增</button>
+        </div>
+        <dl>
+          <div><dt>模型服务</dt><dd id="providerUpstream">{html.escape(display_text(selected_record.get("base_url"), "未设置"))}</dd></div>
+          <div><dt>API Key</dt><dd id="providerAuth">{provider_auth_value}</dd></div>
+        </dl>
+      </div>
+      <form id="providerForm" class="provider-form">
+        <label>Provider 名称
+          <input id="providerNameInput" autocomplete="off" value="{provider_name_value}" placeholder="my-provider">
+        </label>
+        <label>模型服务地址
+          <input id="upstreamBase" autocomplete="off" value="{provider_url_value}" placeholder="https://api.example.com/v1">
+        </label>
+        <label>API Key
+          <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
+        </label>
+        <div class="actions compact">
+          <button id="saveProvider" type="submit">保存 Provider</button>
+          <button id="switchProvider" class="secondary" type="button">切换到此 Provider</button>
+        </div>
+      </form>
+"""
+
+    speed_controls = ""
+    if providers and not terminal_state:
         status_label, status_class = provider_status(snapshot)
         speed_label = html.escape(speed_mode_label(snapshot))
         speed_mode = speed_mode_from_snapshot(snapshot)
         fast_checked = " checked" if speed_mode == "fast" else ""
         standard_checked = " checked" if speed_mode == "standard" else ""
-        labels = {
-            "update": "更新",
-            "uninstall": "停用并恢复",
-            "confirmUninstall": "我知道可能导致模型请求失败，仍要停用",
-            "saveConfig": "保存并验证",
-        }
-        maintenance = f"""
-        <button id="update" class="secondary" data-action="update">更新</button>
-        <button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>
-      </div>
-      <div id="dangerZone" class="danger-zone" style="display:none">
-        <p>仍要继续停用只适合你已经理解风险的情况。继续后，当前 ChatGPT 登录可能无法直接使用第三方模型服务。</p>
-        <button id="confirmUninstall" class="warn" data-action="confirm-uninstall">我知道可能导致模型请求失败，仍要停用</button>
-      </div>
-      <h2>当前模型服务</h2>
+        labels["saveSpeed"] = "保存速度模式"
+        disabled_speed = "" if show_runtime_controls else " disabled"
+        speed_controls = f"""
+      <h2>速度模式</h2>
       <div class="provider-summary">
         <div class="provider-title">
           <div>
-            <span class="muted">Provider</span>
-            <strong id="providerName">{provider_label}</strong>
+            <span class="muted">当前策略</span>
+            <strong id="providerSpeed">{speed_label}</strong>
           </div>
           <span id="providerStatus" class="status-pill {status_class}">{html.escape(status_label)}</span>
         </div>
-        <dl>
-          <div><dt>模型服务</dt><dd id="providerUpstream">{upstream_label}</dd></div>
-          <div><dt>API Key</dt><dd id="providerAuth">{auth_label}</dd></div>
-          <div><dt>速度模式</dt><dd id="providerSpeed">{speed_label}</dd></div>
-        </dl>
       </div>
-      <form id="configForm" class="provider-form">
-        <label>模型服务地址
-          <input id="upstreamBase" autocomplete="off" value="{upstream_value}" placeholder="https://api.example.com/v1">
-        </label>
-        <label>API Key
-          <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
-        </label>
+      <form id="speedForm" class="provider-form">
         <fieldset>
-          <legend>速度模式</legend>
           <div class="segments">
             <label><input type="radio" name="speedMode" value="fast"{fast_checked}>快速</label>
             <label><input type="radio" name="speedMode" value="standard"{standard_checked}>标准</label>
           </div>
         </fieldset>
-        <button id="saveConfig" type="submit">保存并验证</button>
+        <button id="saveSpeed" type="submit"{disabled_speed}>保存速度模式</button>
       </form>
 """
-    else:
-        maintenance = "</div>"
     snapshot_json = html.escape(json.dumps(snapshot, ensure_ascii=False))
     token_json = json.dumps(token)
     labels_json = json.dumps(labels, ensure_ascii=False)
@@ -156,9 +227,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     dd {{ color: #17202a; font-size: 14px; margin: 3px 0 0; overflow-wrap: anywhere; }}
     form {{ display: grid; gap: 10px; margin-top: 14px; }}
     label {{ display: grid; gap: 6px; color: #344054; font-size: 14px; }}
-    input {{ border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; padding: 10px 12px; }}
+    input, select {{ border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; padding: 10px 12px; }}
     fieldset {{ border: 0; margin: 0; padding: 0; }}
     legend {{ color: #344054; font-size: 14px; margin-bottom: 6px; }}
+    .select-label {{ min-width: 220px; }}
+    .actions.compact {{ margin-top: 4px; }}
     .segments {{ display: flex; flex-wrap: wrap; gap: 8px; }}
     .segments label {{ align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; display: flex; flex: 1 1 120px; gap: 8px; padding: 10px 12px; }}
     .segments input {{ margin: 0; padding: 0; }}
@@ -175,7 +248,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       <p id="message" class="message">{html.escape(message)}</p>
       <div class="actions">
         {button}
-        {maintenance}
+        {action_buttons}
+      </div>
+      {danger_zone}
+      {provider_management}
+      {speed_controls}
       <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
       <details>
         <summary>诊断</summary>
@@ -188,7 +265,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     const headerName = {json.dumps(CONTROL_TOKEN_HEADER)};
     const $ = (id) => document.getElementById(id);
     const labels = {labels_json};
-    function resetControls(userState) {{
+    let providerRecords = {json.dumps(providers, ensure_ascii=False)};
+    function resetControls(userState, snapshot) {{
       Object.entries(labels).forEach(([id, label]) => {{
         const item = $(id);
         if (item) {{
@@ -202,12 +280,55 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (dangerZone) dangerZone.style.display = userState.code === 'confirmation_required' ? 'block' : 'none';
       const uninstall = $('uninstall');
       if (uninstall) uninstall.style.display = userState.code === 'confirmation_required' ? 'none' : 'inline-block';
+      const saveSpeed = $('saveSpeed');
+      if (saveSpeed) saveSpeed.disabled = !snapshot.base_url;
     }}
-    function resetForm(snapshot) {{
+    function keyLabel(value) {{
+      if (value === 'saved') return '已保存';
+      if (typeof value === 'string' && value.includes(':')) {{
+        const parts = value.split(':');
+        if (parts[0] === 'auth_json') return `Codex 已保存 ${{parts[1]}}`;
+        return `环境变量 ${{parts[1]}}`;
+      }}
+      return '未保存';
+    }}
+    function selectedProviderName() {{
+      const select = $('providerSelect');
+      const typed = $('providerNameInput');
+      return select && select.value ? select.value : (typed ? typed.value.trim() : '');
+    }}
+    function providerByName(name) {{
+      return providerRecords.find((item) => item.name === name) || null;
+    }}
+    function fillProviderForm(record) {{
+      const nameInput = $('providerNameInput');
+      if (nameInput) nameInput.value = record ? record.name || '' : '';
       const upstreamBase = $('upstreamBase');
-      if (upstreamBase) upstreamBase.value = snapshot.upstream_base || '';
+      if (upstreamBase) upstreamBase.value = record ? record.base_url || '' : '';
       const apiKey = $('apiKey');
       if (apiKey) apiKey.value = '';
+      const upstreamLabel = $('providerUpstream');
+      if (upstreamLabel) upstreamLabel.textContent = record && record.base_url ? record.base_url : '未设置';
+      const authLabel = $('providerAuth');
+      if (authLabel) authLabel.textContent = record ? keyLabel(record.api_key) : '未保存';
+    }}
+    function resetProviderForm(snapshot) {{
+      providerRecords = Array.isArray(snapshot.providers) ? snapshot.providers : providerRecords;
+      const select = $('providerSelect');
+      if (select) {{
+        const current = snapshot.current_provider || snapshot.provider || (providerRecords[0] && providerRecords[0].name) || '';
+        select.textContent = '';
+        providerRecords.forEach((item) => {{
+          const option = document.createElement('option');
+          option.value = item.name || '';
+          option.textContent = item.name || '未命名';
+          select.appendChild(option);
+        }});
+        select.value = current;
+        fillProviderForm(providerByName(select.value));
+      }}
+    }}
+    function resetSpeedForm(snapshot) {{
       const speedMode = snapshot.service_tier_policy === 'preserve' ? 'standard' : 'fast';
       const speedInput = document.querySelector(`input[name="speedMode"][value="${{speedMode}}"]`);
       if (speedInput) speedInput.checked = true;
@@ -233,16 +354,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       return ['未启用', 'idle'];
     }}
     function resetSummary(snapshot) {{
-      const providerName = $('providerName');
-      if (!providerName) return;
-      providerName.textContent = displayValue(snapshot.provider, '未选择');
-      $('providerUpstream').textContent = displayValue(snapshot.upstream_base, '未设置');
-      $('providerAuth').textContent = authLabel(snapshot);
-      $('providerSpeed').textContent = speedLabel(snapshot);
+      const providerSpeed = $('providerSpeed');
+      if (providerSpeed) providerSpeed.textContent = speedLabel(snapshot);
       const [label, className] = providerStatus(snapshot);
       const status = $('providerStatus');
-      status.textContent = label;
-      status.className = `status-pill ${{className}}`;
+      if (status) {{
+        status.textContent = label;
+        status.className = `status-pill ${{className}}`;
+      }}
     }}
     function selectedSpeedMode() {{
       const selected = document.querySelector('input[name="speedMode"]:checked');
@@ -256,9 +375,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const button = $('primary');
       button.dataset.action = userState.primary_action || 'diagnostics';
       button.textContent = userState.primary_label || '打开诊断';
-      resetControls(userState);
+      resetControls(userState, snapshot);
       resetSummary(snapshot);
-      resetForm(snapshot);
+      resetProviderForm(snapshot);
+      resetSpeedForm(snapshot);
     }}
     async function requestAction(action, body) {{
       const response = await fetch('/api/actions/' + action, {{
@@ -293,7 +413,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     $('primary').addEventListener('click', async (event) => {{
       const action = event.currentTarget.dataset.action;
-      if (action === 'enable') await runButton(event.currentTarget, 'enable');
+      if (action === 'enable') await runButton(event.currentTarget, 'enable', {{ provider: selectedProviderName() || null }});
       else if (action === 'refresh') window.location.reload();
       else if (action === 'uninstall') await runButton(event.currentTarget, 'uninstall');
       else document.querySelector('details').open = true;
@@ -301,14 +421,25 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if ($('update')) $('update').addEventListener('click', (event) => runButton(event.currentTarget, 'update'));
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
-    if ($('configForm')) $('configForm').addEventListener('submit', async (event) => {{
+    if ($('providerSelect')) $('providerSelect').addEventListener('change', (event) => fillProviderForm(providerByName(event.currentTarget.value)));
+    if ($('newProvider')) $('newProvider').addEventListener('click', () => {{
+      const select = $('providerSelect');
+      if (select) select.value = '';
+      fillProviderForm(null);
+    }});
+    if ($('switchProvider')) $('switchProvider').addEventListener('click', (event) => runButton(event.currentTarget, 'switch-provider', {{ provider: $('providerNameInput').value.trim() || selectedProviderName() }}));
+    if ($('providerForm')) $('providerForm').addEventListener('submit', async (event) => {{
       event.preventDefault();
-      await runButton($('saveConfig'), 'configure-upstream', {{
+      await runButton($('saveProvider'), 'save-provider', {{
+        provider: $('providerNameInput').value.trim() || selectedProviderName(),
         upstream_base: $('upstreamBase').value.trim() || null,
-        api_key: $('apiKey').value.trim() || null,
-        speed_mode: selectedSpeedMode()
+        api_key: $('apiKey').value.trim() || null
       }});
       $('apiKey').value = '';
+    }});
+    if ($('speedForm')) $('speedForm').addEventListener('submit', async (event) => {{
+      event.preventDefault();
+      await runButton($('saveSpeed'), 'set-speed-mode', {{ speed_mode: selectedSpeedMode() }});
     }});
   </script>
 </body>

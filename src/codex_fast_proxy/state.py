@@ -5,7 +5,7 @@ from typing import Any
 
 from .auth import detect_login_mode
 from .auth_store import chatgpt_login_report, upstream_auth_status
-from .config import active_provider_name, load_toml_config, provider_base_url
+from .config import active_provider_name, configured_providers, load_toml_config, provider_base_url
 from .hooks import fast_proxy_hook_trust_status
 from .models import paths_for, settings_from_dict
 from .proxy import RUNTIME_ID
@@ -32,7 +32,10 @@ def collect_status(
     settings = settings_from_dict(settings_data) if settings_data else None
     pid, running, health, healthy, pending_restart, runtime_matches = runtime_probe(paths, settings)
     config = load_toml_config(paths.config_path)
+    providers = configured_providers(config)
     selected_provider = provider or (settings.provider if settings else active_provider_name(config))
+    if not selected_provider and len(providers) == 1:
+        selected_provider = next(iter(providers))
     config_base_url = provider_base_url(config, selected_provider) if selected_provider else None
     hook_status = fast_proxy_hook_trust_status(paths)
     login = detect_login_mode(paths.codex_home)
@@ -99,6 +102,9 @@ def collect_status(
         "stdout": str(paths.stdout_path),
         "stderr": str(paths.stderr_path),
     }
+    from .manager import provider_inventory
+
+    snapshot.update(provider_inventory(paths.codex_home, selected_provider))
     return {**snapshot, "user_state": user_state(snapshot)}
 
 

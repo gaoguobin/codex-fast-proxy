@@ -56,6 +56,11 @@ def run_first_run_enable(codex_home: str | None, provider: str | None = None) ->
     return {
         "status": "enabled",
         "provider": selected_provider,
+        "chatgpt_compatibility": {
+            "status": "ready" if prepare_result.get("status") in {"already_prepared", "prepared"} else "pending",
+            "provider": selected_provider,
+            "detail": prepare_result.get("status"),
+        },
         "prepare_chatgpt_login": prepare_result,
         "install": install_result,
         "restart_required": True,
@@ -137,6 +142,72 @@ def run_configure_upstream(
             "configured",
             "配置已保存",
             "模型服务和速度模式已保存，当前状态可以继续使用。",
+        )
+    return result
+
+
+def run_save_provider(
+    codex_home: str | None,
+    provider: str | None,
+    upstream_base: str | None,
+    api_key: str | None,
+) -> dict[str, Any]:
+    from . import manager
+
+    if not provider or not upstream_base:
+        raise ValueError("Provider 和模型服务地址都不能为空。")
+    result = manager.save_provider(codex_home, provider, upstream_base, api_key)
+    result["user_state"] = state(
+        "provider_saved",
+        "Provider 已保存",
+        "模型服务地址和 API Key 已保存。需要使用它时，点击切换。",
+    )
+    return result
+
+
+def run_switch_provider(codex_home: str | None, provider: str | None) -> dict[str, Any]:
+    from . import manager
+
+    if not provider:
+        raise ValueError("请选择 Provider。")
+    result = manager.switch_provider(codex_home, provider)
+    if result.get("restart_required"):
+        result["user_state"] = state(
+            "restart_required",
+            "Provider 已切换，重启后接管",
+            "当前对话可以继续。Codex 重启后，新会话会使用新的模型服务。",
+        )
+    else:
+        result["user_state"] = state(
+            "provider_selected",
+            "Provider 已选择",
+            "点击启用后会使用这个模型服务。",
+            "enable",
+            "启用",
+        )
+    return result
+
+
+def run_set_speed_mode(codex_home: str | None, speed_mode: str | None) -> dict[str, Any]:
+    from . import manager
+
+    result = manager.configure_upstream(
+        codex_home,
+        None,
+        None,
+        service_tier_policy=service_tier_policy_for_speed_mode(speed_mode),
+    )
+    if result.get("restart_required"):
+        result["user_state"] = state(
+            "restart_required",
+            "速度模式已保存，重启后接管",
+            "当前对话可以继续。Codex 重启后，新速度模式会应用到新的会话。",
+        )
+    else:
+        result["user_state"] = state(
+            "speed_saved",
+            "速度模式已保存",
+            "当前状态可以继续使用。",
         )
     return result
 
