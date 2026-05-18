@@ -5,7 +5,8 @@ from typing import Any
 
 from .auth import detect_login_mode
 from .auth_store import chatgpt_login_report, upstream_auth_status
-from .config import active_provider_name, configured_providers, load_toml_config, provider_base_url
+from .config import active_provider_name, configured_providers, load_toml_config, provider_base_url, provider_name_for_base_url
+from .dashboard import is_response_event, read_recent_events
 from .hooks import fast_proxy_hook_trust_status
 from .models import paths_for, settings_from_dict
 from .proxy import RUNTIME_ID
@@ -33,14 +34,17 @@ def collect_status(
     pid, running, health, healthy, pending_restart, runtime_matches = runtime_probe(paths, settings)
     config = load_toml_config(paths.config_path)
     providers = configured_providers(config)
-    selected_provider = provider or (settings.provider if settings else active_provider_name(config))
+    active_provider = active_provider_name(config)
+    config_provider = provider_name_for_base_url(config, settings.base_url) if settings else None
+    selected_provider = provider or (settings.provider if settings else active_provider)
     if not selected_provider and len(providers) == 1:
         selected_provider = next(iter(providers))
-    config_base_url = provider_base_url(config, selected_provider) if selected_provider else None
+    route_provider = config_provider or active_provider or selected_provider
+    config_base_url = provider_base_url(config, route_provider) if route_provider else None
     hook_status = fast_proxy_hook_trust_status(paths)
     login = detect_login_mode(paths.codex_home)
     auth = upstream_auth_status(paths, settings)
-    config_matches = bool(settings and config_base_url == settings.base_url)
+    config_matches = bool(settings and config_provider)
     needs_restart = bool(pending_restart or (healthy and not runtime_matches))
     behavior = fast_behavior(settings, login)
     effective_policy = effective_service_tier_policy(settings, login) if settings else None
@@ -75,6 +79,7 @@ def collect_status(
         "pending_restart": pending_restart,
         "diagnosis": diagnosis,
         "provider": selected_provider,
+        "config_provider": config_provider or active_provider,
         "base_url": settings.base_url if settings else None,
         "upstream_base": settings.upstream_base if settings else None,
         "service_tier_policy": settings.service_tier_policy if settings else None,
@@ -101,11 +106,29 @@ def collect_status(
         "log": str(paths.log_path),
         "stdout": str(paths.stdout_path),
         "stderr": str(paths.stderr_path),
+        "recent_response_events": recent_response_events(paths.log_path),
     }
     from .manager import provider_inventory
 
     snapshot.update(provider_inventory(paths.codex_home, selected_provider))
     return {**snapshot, "user_state": user_state(snapshot)}
+
+
+def recent_response_events(log_path: Any) -> list[dict[str, Any]]:
+    fields = (
+        "ts",
+        "method",
+        "path",
+        "status",
+        "duration_ms",
+        "service_tier_before",
+        "service_tier_after",
+        "service_tier_injected",
+        "service_tier_effective_policy",
+        "stream",
+    )
+    events = [event for event in read_recent_events(log_path, limit=32) if is_response_event(event)]
+    return [{key: event.get(key) for key in fields if key in event} for event in events[-5:]]
 
 
 def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -114,7 +137,7 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     provider_ready = bool(snapshot.get("provider") and snapshot.get("config_base_url"))
 
     if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
-        view = ("working", "运行正常", "Codex 已准备好继续使用当前模型服务。", None, None)
+        view = ("working", "运行正常", "Codex 已准备好继续使用当前模型服务。", "uninstall", "停用并恢复")
     elif snapshot.get("config_matches") and snapshot.get("needs_restart"):
         view = (
             "restart_required",
@@ -123,13 +146,13 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
             "refresh",
             "我已重启，重新检查",
         )
-    elif snapshot.get("base_url") and snapshot.get("config_base_url") == snapshot.get("upstream_base"):
+    elif snapshot.get("base_url") and not snapshot.get("config_matches"):
         view = (
             "cleanup_pending",
-            "已停用，完成清理",
-            "Codex 已恢复到原模型服务。点击完成清理后，会停止并移除本地代理状态。",
-            "uninstall",
-            "完成清理",
+            "已停用",
+            "Codex 已恢复到原模型服务。你可以重新启用，或完成清理并移除本地代理状态。",
+            "enable",
+            "重新启用",
         )
     elif provider_ready and code in {"not_enabled", "config_not_proxy"}:
         view = (

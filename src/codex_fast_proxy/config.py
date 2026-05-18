@@ -65,6 +65,16 @@ def provider_config_for(config: dict[str, Any], provider: str) -> dict[str, Any]
     return provider_config
 
 
+def provider_name_for_base_url(config: dict[str, Any], base_url: str) -> str | None:
+    active_provider = active_provider_name(config)
+    if active_provider and provider_base_url(config, active_provider) == base_url:
+        return active_provider
+    for name in configured_providers(config):
+        if provider_base_url(config, name) == base_url:
+            return name
+    return None
+
+
 def read_toml_lines(path: Path) -> tuple[list[str], str]:
     if not path.exists():
         return [], "\n"

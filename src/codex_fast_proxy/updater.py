@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import ConfigError, redact_sensitive_text, redact_url_secrets, safe_url_display
-from .config import active_provider_name, load_toml_config, provider_base_url
+from .config import active_provider_name, load_toml_config, provider_name_for_base_url
 from .models import ProxyPaths, paths_for, settings_from_dict
 from .skill_link import link_skill_namespace
 from .storage import read_json
@@ -146,10 +146,13 @@ def enabled_installation(paths: ProxyPaths, provider: str | None) -> tuple[bool,
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
     config = load_toml_config(paths.config_path)
-    selected_provider = provider or (settings.provider if settings else active_provider_name(config))
-    if not settings or not selected_provider or selected_provider != settings.provider:
+    config_provider = provider_name_for_base_url(config, settings.base_url) if settings else None
+    selected_provider = provider or config_provider or (settings.provider if settings else active_provider_name(config))
+    if not settings or not selected_provider:
         return False, selected_provider
-    return provider_base_url(config, selected_provider) == settings.base_url, selected_provider
+    if provider and provider != config_provider and provider != settings.provider:
+        return False, selected_provider
+    return bool(config_provider), selected_provider
 
 
 def module_args(command: str, codex_home: Path, provider: str | None = None) -> list[str]:
@@ -226,9 +229,12 @@ def update_installation(
 
     skill_link = link_skill_namespace(repo_path)
     if was_enabled:
-        install_args = module_args("install", paths.codex_home, selected_provider)
-        install_args.append("--start")
-        refresh_result = run_python_json(install_args, timeout=300.0)
+        if selected_provider == settings_from_dict(read_json(paths.settings_path)).provider:
+            install_args = module_args("install", paths.codex_home, selected_provider)
+            install_args.append("--start")
+            refresh_result = run_python_json(install_args, timeout=300.0)
+        else:
+            refresh_result = run_python_json(module_args("start", paths.codex_home), timeout=300.0)
     else:
         refresh_result = run_python_json(module_args("doctor", paths.codex_home, selected_provider), timeout=120.0)
     final_status = run_python_json(module_args("status", paths.codex_home, selected_provider), timeout=120.0)

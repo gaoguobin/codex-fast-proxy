@@ -95,6 +95,40 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(providers["other"]["base_url"], "https://api.other.test/v1")
         self.assertNotIn(settings.base_url, json.dumps(snapshot["providers"]))
 
+    def test_status_snapshot_allows_proxy_managed_provider_switch_without_config_provider_change(self) -> None:
+        settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.other.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(
+            self.paths,
+            "other",
+            api_key="other-provider-secret",
+            base_url="https://api.other.test/v1",
+        )
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+
+        snapshot = collect_status(str(self.codex_home))
+        providers = {item["name"]: item for item in snapshot["providers"]}
+
+        self.assertTrue(snapshot["config_matches"])
+        self.assertEqual(snapshot["provider"], "other")
+        self.assertEqual(snapshot["config_provider"], "acme")
+        self.assertEqual(providers["other"]["base_url"], "https://api.other.test/v1")
+        self.assertTrue(providers["other"]["current"])
+        self.assertNotIn("acme", providers)
+
     def test_status_snapshot_maps_restored_proxy_to_cleanup_state(self) -> None:
         manager.write_settings(
             self.paths,
@@ -111,8 +145,8 @@ class ControlUiTests(unittest.TestCase):
         snapshot = collect_status(str(self.codex_home))
 
         self.assertEqual(snapshot["user_state"]["code"], "cleanup_pending")
-        self.assertEqual(snapshot["user_state"]["title"], "已停用，完成清理")
-        self.assertEqual(snapshot["user_state"]["primary_action"], "uninstall")
+        self.assertEqual(snapshot["user_state"]["title"], "已停用")
+        self.assertEqual(snapshot["user_state"]["primary_action"], "enable")
 
     def test_control_page_is_chinese_and_warns_about_codex_embedded_browser(self) -> None:
         html = render_page(
@@ -133,16 +167,17 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("更新", html)
         self.assertIn("停用并恢复", html)
         self.assertIn('id="providerPanel"', html)
-        self.assertIn("Provider 管理", html)
+        self.assertIn("供应商管理", html)
         self.assertIn("管理", html)
         self.assertIn("模型服务地址", html)
-        self.assertNotIn("本地入口", html)
         self.assertNotIn("providerProxy", html)
         self.assertIn("添加供应商", html)
         self.assertIn("编辑供应商", html)
         self.assertIn("保存供应商", html)
         self.assertIn("保存速度模式", html)
         self.assertIn("速度模式", html)
+        self.assertIn('id="statusPanel"', html)
+        self.assertIn("ChatGPT 账户登录", html)
         self.assertIn('name="speedMode" value="fast" checked', html)
         self.assertIn('name="speedMode" value="standard"', html)
         self.assertIn("重启 Codex 前请用外部浏览器打开此页面", html)
@@ -208,23 +243,25 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn("保存并验证", html)
         self.assertNotIn("速度模式", html)
 
-    def test_control_page_cleanup_state_uses_single_primary_button(self) -> None:
+    def test_control_page_cleanup_state_offers_reenable_and_finish_cleanup(self) -> None:
         html = render_page(
             {
                 "base_url": "http://127.0.0.1:8787/v1",
                 "upstream_base": "https://api.acme.test/v1",
                 "user_state": {
                     "code": "cleanup_pending",
-                    "title": "已停用，完成清理",
+                    "title": "已停用",
                     "message": "Codex 已恢复到原模型服务。",
-                    "primary_action": "uninstall",
-                    "primary_label": "完成清理",
+                    "primary_action": "enable",
+                    "primary_label": "重新启用",
                 },
             },
             "token",
         )
 
-        self.assertIn('data-action="uninstall"', html)
+        self.assertIn('data-action="enable"', html)
+        self.assertIn("重新启用", html)
+        self.assertIn('id="finishCleanup"', html)
         self.assertIn("完成清理", html)
         self.assertIn("else if (action === 'uninstall') await runButton", html)
         self.assertNotIn("保存并验证", html)
@@ -284,6 +321,32 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('name="speedMode" value="standard" checked', html)
         self.assertIn('name="speedMode" value="fast"', html)
         self.assertIn("需处理", html)
+
+    def test_control_page_hides_speed_mode_for_chatgpt_login(self) -> None:
+        html = render_page(
+            {
+                "providers": [{
+                    "name": "acme",
+                    "base_url": "https://api.acme.test/v1",
+                    "current": True,
+                    "active": True,
+                    "api_key": "saved",
+                }],
+                "login_mode": "chatgpt",
+                "chatgpt_auth": True,
+                "user_state": {
+                    "title": "运行正常",
+                    "message": "Codex 已准备好继续使用当前模型服务。",
+                    "primary_action": "uninstall",
+                    "primary_label": "停用并恢复",
+                },
+            },
+            "token",
+        )
+
+        self.assertNotIn('id="speedPanel"', html)
+        self.assertNotIn("保存速度模式", html)
+        self.assertIn("ChatGPT 账户登录", html)
 
     def test_configure_upstream_errors_are_user_facing(self) -> None:
         message = user_error_message(
@@ -567,11 +630,54 @@ class ControlUiTests(unittest.TestCase):
         stored_auth = json.loads(self.paths.provider_auth_path.read_text(encoding="utf-8"))
 
         self.assertEqual(result["status"], "provider_saved")
-        self.assertEqual(manager.provider_base_url(config, "other"), "https://api.other.test/v1")
+        self.assertIsNone(manager.provider_base_url(config, "other"))
         self.assertEqual(stored_auth["providers"]["other"]["api_key"], "other-provider-secret")
+        self.assertEqual(stored_auth["providers"]["other"]["base_url"], "https://api.other.test/v1")
         self.assertNotIn("other-provider-secret", result_text)
 
-    def test_switch_provider_restores_old_provider_and_activates_new_one(self) -> None:
+    def test_save_current_provider_updates_proxy_state_without_mutating_user_config(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(
+            self.paths,
+            "acme",
+            api_key="old-provider-secret",
+            base_url="https://api.acme.test/v1",
+        )
+        manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+        config_before = self.paths.config_path.read_bytes()
+
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.start_background", return_value={"status": "started", "pid": 1234}),
+        ):
+            result = run_save_provider(
+                str(self.codex_home),
+                "acme",
+                "https://api.new.test/v1",
+                "new-provider-secret",
+            )
+
+        stored_auth = json.loads(self.paths.provider_auth_path.read_text(encoding="utf-8"))
+        saved_settings = manager.read_settings(self.paths)
+
+        self.assertEqual(result["status"], "provider_saved")
+        self.assertFalse(result["config_changed"])
+        self.assertEqual(self.paths.config_path.read_bytes(), config_before)
+        self.assertEqual(saved_settings.upstream_base, "https://api.new.test/v1")
+        self.assertTrue(saved_settings.upstream_api_key_file)
+        self.assertEqual(stored_auth["providers"]["acme"]["api_key"], "new-provider-secret")
+        self.assertEqual(stored_auth["providers"]["acme"]["base_url"], "https://api.new.test/v1")
+
+    def test_switch_provider_updates_proxy_settings_without_mutating_user_config(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
             host="127.0.0.1",
@@ -603,11 +709,12 @@ class ControlUiTests(unittest.TestCase):
         saved_settings = manager.read_settings(self.paths)
 
         self.assertEqual(result["status"], "provider_switched")
+        self.assertFalse(result["config_changed"])
         self.assertEqual(saved_settings.provider, "other")
         self.assertEqual(saved_settings.upstream_base, "https://api.other.test/v1")
-        self.assertEqual(config["model_provider"], "other")
-        self.assertEqual(manager.provider_base_url(config, "acme"), "https://api.acme.test/v1")
-        self.assertEqual(manager.provider_base_url(config, "other"), settings.base_url)
+        self.assertEqual(config["model_provider"], "acme")
+        self.assertEqual(manager.provider_base_url(config, "acme"), settings.base_url)
+        self.assertEqual(manager.provider_base_url(config, "other"), "https://api.other.test/v1")
 
     def test_set_speed_mode_saves_standard_without_provider_change(self) -> None:
         settings = manager.ProxySettings(

@@ -23,26 +23,64 @@ DIRECT_UPSTREAM_RESTORE_STATUSES = {
 
 
 def provider_auth_secret(paths: Any, provider: str) -> str | None:
-    data = read_json(paths.provider_auth_path)
-    if not data:
-        return None
-    providers = data.get("providers")
-    if not isinstance(providers, dict):
-        return None
-    entry = providers.get(provider)
-    if not isinstance(entry, dict):
-        return None
+    entry = provider_auth_entry(paths, provider)
     value = entry.get("api_key")
     return value if isinstance(value, str) and value else None
 
 
+def provider_auth_base_url(paths: Any, provider: str) -> str | None:
+    entry = provider_auth_entry(paths, provider)
+    value = entry.get("base_url")
+    return value if isinstance(value, str) and value else None
+
+
+def provider_auth_entry(paths: Any, provider: str) -> dict[str, Any]:
+    data = read_json(paths.provider_auth_path)
+    if not data:
+        return {}
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        return {}
+    entry = providers.get(provider)
+    if not isinstance(entry, dict):
+        return {}
+    return entry
+
+
+def provider_auth_provider_names(paths: Any) -> set[str]:
+    data = read_json(paths.provider_auth_path)
+    if not data:
+        return set()
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        return set()
+    return {name for name, entry in providers.items() if isinstance(name, str) and isinstance(entry, dict)}
+
+
 def write_provider_auth_secret(paths: Any, provider: str, secret: str) -> None:
+    write_provider_auth_entry(paths, provider, api_key=secret)
+
+
+def write_provider_auth_entry(
+    paths: Any,
+    provider: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> None:
     data = read_json(paths.provider_auth_path) or {"version": 1, "providers": {}}
     providers = data.setdefault("providers", {})
     if not isinstance(providers, dict):
         providers = {}
         data["providers"] = providers
-    providers[provider] = {"api_key": secret}
+    entry = providers.get(provider)
+    if not isinstance(entry, dict):
+        entry = {}
+    if api_key is not None:
+        entry["api_key"] = api_key
+    if base_url is not None:
+        entry["base_url"] = base_url
+    providers[provider] = entry
     write_secret_json(paths.provider_auth_path, data)
 
 
@@ -132,7 +170,8 @@ def uninstall_needs_chatgpt_direct_confirmation(
         return warning
 
     config = load_toml_config(config_path)
-    config_base_url = provider_base_url(config, settings.provider)
+    config_provider = str(manifest.get("provider") or settings.provider)
+    config_base_url = provider_base_url(config, config_provider)
     if config_base_url == settings.base_url:
         return warning
     if force and config_base_url != settings.upstream_base:

@@ -23,12 +23,15 @@ from .auth_prepare import (
 from .auth_store import (
     chatgpt_login_report,
     direct_upstream_auth_warning,
+    provider_auth_base_url,
+    provider_auth_provider_names,
     provider_auth_secret,
     require_upstream_auth_available,
     uninstall_needs_chatgpt_direct_confirmation,
     upstream_api_key_source,
     upstream_auth_configured,
     upstream_auth_status,
+    write_provider_auth_entry,
     write_provider_auth_secret,
 )
 from .config import (
@@ -40,6 +43,7 @@ from .config import (
     load_toml_config,
     provider_base_url,
     provider_config_for,
+    provider_name_for_base_url,
     set_active_provider,
     set_provider_base_url,
 )
@@ -396,9 +400,13 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
     settings = settings_from_dict(settings_data) if settings_data else None
     active_provider = active_provider_name(config)
     configured = configured_providers(config)
-    names = set(configured)
+    saved_names = provider_auth_provider_names(paths)
+    names = set(configured) | saved_names
     if settings:
         names.add(settings.provider)
+        config_proxy_provider = provider_name_for_base_url(config, settings.base_url)
+        if config_proxy_provider and config_proxy_provider != settings.provider and config_proxy_provider not in saved_names:
+            names.discard(config_proxy_provider)
     current_provider = selected_provider or (settings.provider if settings else active_provider)
     if not current_provider and len(names) == 1:
         current_provider = next(iter(names))
@@ -407,8 +415,12 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
     for name in sorted(names):
         provider_config = provider_config_for(config, name)
         config_base = provider_base_url(config, name)
-        proxy_enabled = bool(settings and name == settings.provider and config_base == settings.base_url)
-        upstream_base = settings.upstream_base if proxy_enabled and settings else config_base
+        proxy_enabled = bool(settings and name == settings.provider)
+        upstream_base = (
+            settings.upstream_base
+            if settings and name == settings.provider
+            else provider_auth_base_url(paths, name) or config_base
+        )
         providers.append({
             "name": name,
             "active": name == active_provider,
@@ -613,10 +625,11 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
         upstream_api_key_file=upstream_api_key_file,
     )
     config = load_toml_config(paths.config_path)
-    config_base_url = provider_base_url(config, old_settings.provider)
+    config_provider = provider_name_for_base_url(config, old_settings.base_url) or old_settings.provider
+    config_base_url = provider_base_url(config, config_provider)
     if config_base_url != old_settings.base_url:
         raise ConfigError(
-            f"Refusing to update upstream because provider {old_settings.provider!r} no longer points to the local proxy. "
+            f"Refusing to update upstream because Codex config no longer points to the local proxy. "
             "Review config.toml, then run install --start if you want to enable the proxy again."
         )
     require_upstream_auth_available(paths, new_settings)
@@ -628,7 +641,7 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
         verification = verify_upstream_responses(paths, config, new_settings, verify_timeout)
 
     paths.backup_dir.mkdir(parents=True, exist_ok=True)
-    backup_path = choose_config_backup(paths, old_settings.provider, new_settings, config)
+    backup_path = choose_config_backup(paths, config_provider, new_settings, config)
     config_hash_before = sha256_file(backup_path)
     config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
     hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
@@ -653,12 +666,12 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
                 }
         else:
             start_result = start_background(paths, new_settings, args.verbose_proxy)
-        set_provider_base_url(paths.config_path, new_settings.provider, new_settings.base_url)
+        set_provider_base_url(paths.config_path, config_provider, new_settings.base_url)
         hook_result = install_startup_hook(paths)
         config_hash_after = sha256_file(paths.config_path)
         write_install_manifest(
             paths,
-            new_settings.provider,
+            config_provider,
             backup_path,
             config_hash_before,
             config_hash_after,
@@ -818,27 +831,66 @@ def save_provider(
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
     config = load_toml_config(paths.config_path)
-    config_base = provider_base_url(config, name)
-    if settings and settings.provider == name and config_base == settings.base_url:
-        result = configure_upstream(
-            paths.codex_home,
-            normalized_upstream,
-            api_key,
-            verify=verify,
-            verify_timeout=verify_timeout,
-        )
+    if settings and settings.provider == name:
+        auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
+        settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
+        stripped_key = api_key.strip() if api_key else None
+        start_result = None
+        try:
+            write_provider_auth_entry(paths, name, api_key=stripped_key, base_url=normalized_upstream)
+            new_settings = replace(
+                settings,
+                upstream_base=normalized_upstream,
+                upstream_api_key_file=settings.upstream_api_key_file or bool(provider_auth_secret(paths, name)),
+            )
+            require_upstream_auth_available(paths, new_settings)
+            verification = (
+                verify_upstream_responses(paths, config, new_settings, verify_timeout)
+                if verify
+                else {"status": "skipped"}
+            )
+            write_settings(paths, new_settings)
+            start_result = start_background(paths, new_settings, False)
+        except Exception:
+            if start_result and start_result.get("status") in {"started", "restarted"}:
+                stop_process(paths, force=True)
+            if auth_bytes_before is None:
+                paths.provider_auth_path.unlink(missing_ok=True)
+            else:
+                paths.provider_auth_path.write_bytes(auth_bytes_before)
+            if settings_bytes_before is None:
+                paths.settings_path.unlink(missing_ok=True)
+            else:
+                paths.settings_path.write_bytes(settings_bytes_before)
+            raise
+
+        login = detect_login_mode(paths.codex_home)
+        auth = upstream_auth_status(paths, new_settings)
         return {
-            **result,
+            "status": "provider_saved",
+            "provider": name,
+            "base_url": new_settings.base_url,
+            "previous_upstream_base": settings.upstream_base,
+            "upstream_base": new_settings.upstream_base,
+            "service_tier_policy": new_settings.service_tier_policy,
+            "service_tier_effective_policy": effective_service_tier_policy(new_settings, login),
+            "fast_behavior": fast_behavior(new_settings, login),
+            "upstream_auth": auth["upstream_auth"],
+            "upstream_api_key_file": auth["upstream_api_key_file"],
+            "upstream_api_key_source": auth["upstream_api_key_source"],
+            "api_key_changed": bool(stripped_key),
+            "config_changed": False,
+            "restart_required": False,
+            "verification": verification,
+            "start_result": start_result,
             "provider_inventory": provider_inventory(paths.codex_home, name),
+            "secret_printed": False,
         }
 
-    config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
     auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
     stripped_key = api_key.strip() if api_key else None
     try:
-        if stripped_key:
-            write_provider_auth_secret(paths, name, stripped_key)
-        set_provider_base_url(paths.config_path, name, normalized_upstream)
+        write_provider_auth_entry(paths, name, api_key=stripped_key, base_url=normalized_upstream)
         if verify:
             verify_settings = ProxySettings(
                 provider=name,
@@ -850,12 +902,8 @@ def save_provider(
                 service_tier_policy=settings.service_tier_policy if settings else DEFAULT_SERVICE_TIER_POLICY,
                 upstream_api_key_file=bool(provider_auth_secret(paths, name)),
             )
-            verify_upstream_responses(paths, load_toml_config(paths.config_path), verify_settings, verify_timeout)
+            verify_upstream_responses(paths, config, verify_settings, verify_timeout)
     except Exception:
-        if config_bytes_before is None:
-            paths.config_path.unlink(missing_ok=True)
-        else:
-            paths.config_path.write_bytes(config_bytes_before)
         if auth_bytes_before is None:
             paths.provider_auth_path.unlink(missing_ok=True)
         else:
@@ -872,25 +920,6 @@ def save_provider(
     }
 
 
-def create_provider_switch_backup(
-    paths: ProxyPaths,
-    old_settings: ProxySettings,
-    provider: str,
-    upstream_base: str,
-) -> Path:
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    backup_path = paths.backup_dir / f"config.toml.{timestamp}.bak"
-    if paths.config_path.exists():
-        shutil.copy2(paths.config_path, backup_path)
-    else:
-        backup_path.write_text("", encoding="utf-8")
-    set_provider_base_url(backup_path, old_settings.provider, old_settings.upstream_base)
-    set_provider_base_url(backup_path, provider, upstream_base)
-    set_active_provider(backup_path, provider)
-    remove_hook_feature_flags(backup_path)
-    return backup_path
-
-
 def switch_provider(
     codex_home: str | Path | None,
     provider: str,
@@ -904,12 +933,11 @@ def switch_provider(
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
     config_base = provider_base_url(config, name)
-    upstream_base = settings.upstream_base if settings and settings.provider == name and config_base == settings.base_url else config_base
+    upstream_base = settings.upstream_base if settings and settings.provider == name else provider_auth_base_url(paths, name) or config_base
     if not upstream_base:
         raise ConfigError(f"Provider {name!r} has no model service URL.")
 
     if not settings:
-        set_active_provider(paths.config_path, name)
         return {
             "status": "provider_selected",
             "provider": name,
@@ -919,6 +947,7 @@ def switch_provider(
         }
 
     auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
+    settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
     prepare_result: dict[str, Any] | None = None
     try:
         if not provider_auth_secret(paths, name):
@@ -932,6 +961,7 @@ def switch_provider(
                 ))
             except ConfigError as exc:
                 raise ConfigError(f"Provider {name!r} needs an API key before switching.") from exc
+        write_provider_auth_entry(paths, name, base_url=validate_upstream_base(upstream_base))
         new_settings = replace(
             settings,
             provider=name,
@@ -942,42 +972,20 @@ def switch_provider(
         require_upstream_auth_available(paths, new_settings)
         if verify:
             verify_upstream_responses(paths, config, new_settings, verify_timeout)
-    except Exception as exc:
+    except Exception:
         if auth_bytes_before is None:
             paths.provider_auth_path.unlink(missing_ok=True)
         else:
             paths.provider_auth_path.write_bytes(auth_bytes_before)
         raise
 
-    paths.backup_dir.mkdir(parents=True, exist_ok=True)
-    backup_path = create_provider_switch_backup(paths, settings, name, new_settings.upstream_base)
-    config_hash_before = sha256_file(backup_path)
-    config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
-    hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
-    settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
     start_result = None
-    hook_result = None
     try:
         write_settings(paths, new_settings)
         start_result = start_background(paths, new_settings, False)
-        if settings.provider != name:
-            set_provider_base_url(paths.config_path, settings.provider, settings.upstream_base)
-        set_provider_base_url(paths.config_path, name, new_settings.base_url)
-        set_active_provider(paths.config_path, name)
-        hook_result = install_startup_hook(paths)
-        config_hash_after = sha256_file(paths.config_path)
-        write_install_manifest(paths, name, backup_path, config_hash_before, config_hash_after, hook_result, new_settings)
     except Exception:
         if start_result and start_result.get("status") in {"started", "restarted"}:
             stop_process(paths, force=True)
-        if hooks_bytes_before is None:
-            paths.hooks_path.unlink(missing_ok=True)
-        else:
-            paths.hooks_path.write_bytes(hooks_bytes_before)
-        if config_bytes_before is None:
-            paths.config_path.unlink(missing_ok=True)
-        else:
-            paths.config_path.write_bytes(config_bytes_before)
         if settings_bytes_before is None:
             paths.settings_path.unlink(missing_ok=True)
         else:
@@ -1007,9 +1015,9 @@ def switch_provider(
         "upstream_api_key_file": auth["upstream_api_key_file"],
         "upstream_api_key_source": auth["upstream_api_key_source"],
         "prepare_chatgpt_login": prepare_result,
-        "restart_required": True,
+        "restart_required": False,
         "start_result": start_result,
-        "startup_hook": hook_result,
+        "config_changed": False,
         "provider_inventory": provider_inventory(paths.codex_home, name),
         "secret_printed": False,
     }
@@ -1048,8 +1056,7 @@ def command_stop(args: argparse.Namespace) -> int:
     settings = settings_from_dict(settings_data) if settings_data else None
     if settings and not args.force:
         config = load_toml_config(paths.config_path)
-        config_base_url = provider_base_url(config, settings.provider)
-        if config_base_url == settings.base_url:
+        if provider_name_for_base_url(config, settings.base_url):
             raise ConfigError(
                 "Refusing to stop while Codex config still points to the proxy. "
                 "Use uninstall --defer-stop to disable safely, or stop --force if you understand the risk."
@@ -1088,10 +1095,11 @@ def command_ui(args: argparse.Namespace) -> int:
 
 def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     config = load_toml_config(paths.config_path)
-    selected_provider = provider or active_provider_name(config)
-    upstream_base = provider_base_url(config, selected_provider) if selected_provider else None
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
+    config_proxy_provider = provider_name_for_base_url(config, settings.base_url) if settings else None
+    selected_provider = provider or config_proxy_provider or active_provider_name(config)
+    upstream_base = provider_base_url(config, selected_provider) if selected_provider else None
     pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
     hooks_enabled = hooks_feature_enabled(config)
     hook_status = fast_proxy_hook_trust_status(paths)
@@ -1110,7 +1118,7 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     if settings_data:
         checks.extend([
             {"name": "proxy_settings", "ok": True, "detail": str(paths.settings_path)},
-            {"name": "config_points_to_proxy", "ok": upstream_base == settings.base_url, "detail": upstream_base},
+            {"name": "config_points_to_proxy", "ok": bool(config_proxy_provider), "detail": upstream_base},
             {"name": "upstream_saved", "ok": bool(settings.upstream_base), "detail": settings.upstream_base},
             {"name": "service_tier_policy", "ok": effective_policy in EFFECTIVE_SERVICE_TIER_POLICIES, "detail": {
                 "configured": settings.service_tier_policy,
@@ -1308,6 +1316,7 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if manifest:
         config_path = Path(manifest["config_path"])
         backup_path = manifest["backup_path"]
+        manifest_provider = str(manifest.get("provider") or manifest_settings.provider)
         current_hash = sha256_file(config_path)
         if current_hash == manifest.get("config_hash_before"):
             restore_status = "already_restored"
@@ -1319,9 +1328,9 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         else:
             settings = manifest_settings
             config = load_toml_config(config_path)
-            config_base_url = provider_base_url(config, settings.provider)
+            config_base_url = provider_base_url(config, manifest_provider)
             if config_base_url == settings.base_url:
-                set_provider_base_url(config_path, settings.provider, settings.upstream_base)
+                set_provider_base_url(config_path, manifest_provider, settings.upstream_base)
                 restore_hook_feature_flag(config_path, backup_path, hook_result)
                 restore_status = "restored_base_url"
                 can_stop = True

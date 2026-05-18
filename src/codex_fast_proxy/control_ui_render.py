@@ -23,25 +23,40 @@ def provider_status(snapshot: dict[str, Any]) -> tuple[str, str]:
         return "待重启", "warn"
     if snapshot.get("config_matches"):
         return "需处理", "warn"
-    if snapshot.get("base_url") and snapshot.get("config_base_url") == snapshot.get("upstream_base"):
+    if snapshot.get("base_url") and not snapshot.get("config_matches"):
         return "已恢复", "idle"
     if snapshot.get("base_url"):
         return "未接管", "idle"
     return "未启用", "idle"
 
 
-def upstream_auth_label(snapshot: dict[str, Any]) -> str:
-    if snapshot.get("upstream_api_key_file"):
-        return "已保存"
-    if snapshot.get("upstream_api_key_env"):
-        return f"环境变量 {snapshot['upstream_api_key_env']}"
-    if snapshot.get("upstream_auth") == "preserved":
-        return "使用 Codex 当前登录"
-    return "未配置"
-
-
 def display_text(value: Any, fallback: str = "未配置") -> str:
     return str(value) if isinstance(value, str) and value else fallback
+
+
+def boolean_label(value: Any) -> str:
+    return "是" if value else "否"
+
+
+def proxy_route_label(snapshot: dict[str, Any]) -> str:
+    if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
+        return "正在通过本地代理"
+    if snapshot.get("config_matches") and snapshot.get("needs_restart"):
+        return "已指向本地代理，等待重启"
+    if snapshot.get("base_url"):
+        return "已停用或未接管"
+    return "未启用"
+
+
+def fast_behavior_label(snapshot: dict[str, Any]) -> str:
+    behavior = snapshot.get("fast_behavior")
+    if behavior == "app_controlled":
+        return "由 Codex App 控制"
+    if behavior == "inject_missing":
+        return "快速模式"
+    if behavior == "preserve":
+        return "标准模式"
+    return "未启用"
 
 
 def provider_key_label(value: Any) -> str:
@@ -73,6 +88,91 @@ def providers_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             "api_key": "saved" if snapshot.get("upstream_api_key_file") else "missing",
         }]
     return []
+
+
+def render_recent_events(snapshot: dict[str, Any]) -> str:
+    raw = snapshot.get("recent_response_events")
+    events = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+    if not events:
+        return '<p class="empty-state">还没有请求记录。发一条 Codex 消息后，这里会显示最近的代理请求。</p>'
+    rows: list[str] = []
+    for event in reversed(events):
+        status = display_text(event.get("status"), "n/a")
+        duration = display_text(event.get("duration_ms"), "n/a")
+        injected = "是" if event.get("service_tier_injected") else "否"
+        tier_before = display_text(event.get("service_tier_before"), "n/a")
+        tier_after = display_text(event.get("service_tier_after"), "n/a")
+        rows.append(f"""
+          <tr>
+            <td>{html.escape(display_text(event.get("path"), "n/a"))}</td>
+            <td>{html.escape(status)}</td>
+            <td>{html.escape(duration)} ms</td>
+            <td>{html.escape(tier_before)} -> {html.escape(tier_after)}</td>
+            <td>{html.escape(injected)}</td>
+          </tr>
+""")
+    return f"""
+        <div class="event-table-wrap">
+          <table class="event-table">
+            <thead>
+              <tr>
+                <th>路径</th>
+                <th>状态</th>
+                <th>耗时</th>
+                <th>速度参数</th>
+                <th>注入</th>
+              </tr>
+            </thead>
+            <tbody>{''.join(rows)}</tbody>
+          </table>
+        </div>
+"""
+
+
+def render_status_panel(snapshot: dict[str, Any]) -> str:
+    chatgpt_login = bool(snapshot.get("chatgpt_auth"))
+    proxy_status = proxy_route_label(snapshot)
+    auth_text = "ChatGPT 账户登录" if chatgpt_login else "API Key / 第三方登录"
+    return f"""
+      <details id="statusPanel" class="maintenance-panel">
+        <summary>
+          <span class="summary-copy">
+            <span class="muted">状态</span>
+            <strong>{html.escape(proxy_status)}</strong>
+            <span>{html.escape(auth_text)}</span>
+          </span>
+          <span class="summary-action">查看</span>
+        </summary>
+        <div class="maintenance-body">
+          <div class="status-grid">
+            <div>
+              <span class="muted">走本地代理</span>
+              <strong>{html.escape(boolean_label(snapshot.get("config_matches")))}</strong>
+            </div>
+            <div>
+              <span class="muted">ChatGPT 账户登录</span>
+              <strong>{html.escape(boolean_label(chatgpt_login))}</strong>
+            </div>
+            <div>
+              <span class="muted">当前供应商</span>
+              <strong>{html.escape(display_text(snapshot.get("provider"), "未选择"))}</strong>
+            </div>
+            <div>
+              <span class="muted">速度控制</span>
+              <strong>{html.escape(fast_behavior_label(snapshot))}</strong>
+            </div>
+          </div>
+          <dl>
+            <div><dt>本地入口</dt><dd>{html.escape(display_text(snapshot.get("base_url"), "未启用"))}</dd></div>
+            <div><dt>上游服务</dt><dd>{html.escape(display_text(snapshot.get("upstream_base"), "未配置"))}</dd></div>
+            <div><dt>Codex 当前入口</dt><dd>{html.escape(display_text(snapshot.get("config_base_url"), "未配置"))}</dd></div>
+            <div><dt>登录方式</dt><dd>{html.escape(display_text(snapshot.get("login_mode"), "未知"))}</dd></div>
+          </dl>
+          <h2 class="subsection-title">最近请求</h2>
+          {render_recent_events(snapshot)}
+        </div>
+      </details>
+"""
 
 
 def render_provider_cards(providers: list[dict[str, Any]], selected_provider: str) -> str:
@@ -125,22 +225,23 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     show_runtime_controls = bool(snapshot.get("base_url")) and not terminal_state
     action_buttons = ""
     danger_zone = ""
+    labels["update"] = "更新"
     if show_runtime_controls:
         labels.update({
-            "update": "更新",
             "uninstall": "停用并恢复",
             "confirmUninstall": "我知道可能导致模型请求失败，仍要停用",
         })
-        action_buttons = """
-        <button id="update" class="secondary" data-action="update">更新</button>
-        <button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>
-"""
+        if primary_action != "uninstall":
+            action_buttons = '<button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>'
         danger_zone = """
       <div id="dangerZone" class="danger-zone" style="display:none">
         <p>仍要继续停用只适合你已经理解风险的情况。继续后，当前 ChatGPT 登录可能无法直接使用第三方模型服务。</p>
         <button id="confirmUninstall" class="warn" data-action="confirm-uninstall">我知道可能导致模型请求失败，仍要停用</button>
       </div>
 """
+    elif state_code == "cleanup_pending":
+        labels["finishCleanup"] = "完成清理"
+        action_buttons = '<button id="finishCleanup" class="warn" data-action="uninstall">完成清理</button>'
 
     providers = providers_from_snapshot(snapshot)
     selected_provider = str(snapshot.get("current_provider") or snapshot.get("provider") or "")
@@ -159,7 +260,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       <details id="providerPanel" class="maintenance-panel">
         <summary>
           <span class="summary-copy">
-            <span class="muted">Provider 管理</span>
+            <span class="muted">供应商管理</span>
             <strong id="providerSummaryName">{summary_name}</strong>
             <span id="providerSummaryUrl">{summary_url}</span>
           </span>
@@ -168,7 +269,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         <div class="maintenance-body">
           <div class="provider-panel-header">
             <div>
-              <h2>Provider 管理</h2>
+              <h2>供应商管理</h2>
               <div class="provider-tabs" aria-label="应用">
                 <span class="provider-tab active">Codex</span>
               </div>
@@ -203,7 +304,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
 """
 
     speed_controls = ""
-    if providers and not terminal_state:
+    if providers and not terminal_state and not snapshot.get("chatgpt_auth"):
         status_label, status_class = provider_status(snapshot)
         speed_label = html.escape(speed_mode_label(snapshot))
         speed_mode = speed_mode_from_snapshot(snapshot)
@@ -212,25 +313,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         labels["saveSpeed"] = "保存速度模式"
         disabled_speed = "" if show_runtime_controls else " disabled"
         speed_controls = f"""
-      <h2>速度模式</h2>
-      <div class="provider-summary">
-        <div class="provider-title">
-          <div>
-            <span class="muted">当前策略</span>
+      <details id="speedPanel" class="maintenance-panel">
+        <summary>
+          <span class="summary-copy">
+            <span class="muted">速度模式</span>
             <strong id="providerSpeed">{speed_label}</strong>
-          </div>
+            <span>当前策略</span>
+          </span>
           <span id="providerStatus" class="status-pill {status_class}">{html.escape(status_label)}</span>
+        </summary>
+        <div class="maintenance-body">
+          <form id="speedForm" class="provider-form">
+            <fieldset>
+              <div class="segments">
+                <label><input type="radio" name="speedMode" value="fast"{fast_checked}>快速</label>
+                <label><input type="radio" name="speedMode" value="standard"{standard_checked}>标准</label>
+              </div>
+            </fieldset>
+            <button id="saveSpeed" type="submit"{disabled_speed}>保存速度模式</button>
+          </form>
         </div>
-      </div>
-      <form id="speedForm" class="provider-form">
-        <fieldset>
-          <div class="segments">
-            <label><input type="radio" name="speedMode" value="fast"{fast_checked}>快速</label>
-            <label><input type="radio" name="speedMode" value="standard"{standard_checked}>标准</label>
-          </div>
-        </fieldset>
-        <button id="saveSpeed" type="submit"{disabled_speed}>保存速度模式</button>
-      </form>
+      </details>
 """
     snapshot_json = html.escape(json.dumps(snapshot, ensure_ascii=False))
     token_json = json.dumps(token)
@@ -272,6 +375,21 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin: 0 auto;
       max-width: 880px;
       padding: 32px 22px 42px;
+    }}
+    .topbar {{
+      align-items: center;
+      display: flex;
+      gap: 16px;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }}
+    .topbar h1 {{
+      margin: 0;
+    }}
+    .topbar-actions {{
+      display: flex;
+      flex: 0 0 auto;
+      gap: 8px;
     }}
     .panel {{
       background: var(--surface);
@@ -526,23 +644,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-weight: 600;
       margin: 0;
     }}
-    .provider-summary {{
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 15px;
-    }}
-    .provider-title {{
-      align-items: center;
-      display: flex;
-      gap: 12px;
-      justify-content: space-between;
-    }}
-    .provider-title strong {{
-      display: block;
-      font-size: 18px;
-      font-weight: 600;
-      margin-top: 4px;
-    }}
     .muted {{
       color: var(--muted);
       font-size: 13px;
@@ -570,6 +671,25 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       background: var(--surface-soft);
       border-color: var(--border);
       color: var(--muted-strong);
+    }}
+    .status-grid {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 14px;
+    }}
+    .status-grid > div {{
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      min-width: 0;
+      padding: 13px;
+    }}
+    .status-grid strong {{
+      display: block;
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 5px;
+      overflow-wrap: anywhere;
     }}
     dl {{
       display: grid;
@@ -650,6 +770,37 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin: 0;
       padding: 0;
     }}
+    .subsection-title {{
+      border-top: 1px solid var(--border);
+      font-size: 15px;
+      margin: 18px 0 10px;
+      padding-top: 16px;
+    }}
+    .empty-state {{
+      color: var(--muted);
+      line-height: 1.6;
+      margin: 0;
+    }}
+    .event-table-wrap {{
+      overflow-x: auto;
+    }}
+    .event-table {{
+      border-collapse: collapse;
+      min-width: 640px;
+      width: 100%;
+    }}
+    .event-table th,
+    .event-table td {{
+      border-bottom: 1px solid var(--surface-soft);
+      font-size: 13px;
+      padding: 9px 8px;
+      text-align: left;
+      white-space: nowrap;
+    }}
+    .event-table th {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
     details {{
       margin-top: 24px;
       border-top: 1px solid var(--border);
@@ -671,14 +822,20 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .provider-panel-header, .provider-card {{ flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
       button {{ width: 100%; }}
-      .provider-card-actions button, #newProvider, #cancelProvider {{ width: auto; }}
-      dl {{ grid-template-columns: 1fr; }}
+      .topbar {{ align-items: stretch; flex-direction: column; }}
+      .topbar-actions button, .provider-card-actions button, #newProvider, #cancelProvider {{ width: auto; }}
+      dl, .status-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
 <body>
   <main>
-    <h1>Codex 控制面板</h1>
+    <div class="topbar">
+      <h1>Codex 控制面板</h1>
+      <div class="topbar-actions">
+        <button id="update" class="secondary" data-action="update">更新</button>
+      </div>
+    </div>
     <section class="panel">
       <p id="state" class="state">{html.escape(title)}</p>
       <p id="message" class="message">{html.escape(message)}</p>
@@ -687,6 +844,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         {action_buttons}
       </div>
       {danger_zone}
+      {render_status_panel(snapshot)}
       {provider_management}
       {speed_controls}
       <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
@@ -835,18 +993,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function speedLabel(snapshot) {{
       return snapshot.service_tier_policy === 'preserve' ? '标准' : '快速';
     }}
-    function authLabel(snapshot) {{
-      if (snapshot.upstream_api_key_file) return '已保存';
-      if (snapshot.upstream_api_key_env) return `环境变量 ${{snapshot.upstream_api_key_env}}`;
-      if (snapshot.upstream_auth === 'preserved') return '使用 Codex 当前登录';
-      return '未配置';
-    }}
     function providerStatus(snapshot) {{
       if (snapshot.config_matches && snapshot.healthy && !snapshot.needs_restart) return ['运行中', 'ok'];
       if (snapshot.config_matches && snapshot.needs_restart) return ['待重启', 'warn'];
       if (snapshot.config_matches) return ['需处理', 'warn'];
-      if (snapshot.base_url && snapshot.config_base_url === snapshot.upstream_base) return ['已恢复', 'idle'];
-      if (snapshot.base_url) return ['未接管', 'idle'];
+      if (snapshot.base_url) return ['已恢复', 'idle'];
       return ['未启用', 'idle'];
     }}
     function resetSummary(snapshot) {{
@@ -874,8 +1025,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const shouldShowRuntimeControls = Boolean(snapshot.base_url) && !terminalState;
       const hasProviderPanel = Boolean($('providerPanel'));
       const shouldShowProviderPanel = Array.isArray(snapshot.providers) && snapshot.providers.length > 0 && !terminalState;
+      const hasSpeedForm = Boolean($('speedForm'));
+      const shouldShowSpeedForm = shouldShowProviderPanel && !snapshot.chatgpt_auth;
       return hasRuntimeControls !== shouldShowRuntimeControls ||
-        hasProviderPanel !== shouldShowProviderPanel;
+        hasProviderPanel !== shouldShowProviderPanel ||
+        hasSpeedForm !== shouldShowSpeedForm;
     }}
     function render(snapshot) {{
       if (shouldReloadForSnapshot(snapshot)) {{
@@ -949,6 +1103,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }});
     if ($('update')) $('update').addEventListener('click', (event) => runButton(event.currentTarget, 'update'));
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
+    if ($('finishCleanup')) $('finishCleanup').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
     if ($('newProvider')) $('newProvider').addEventListener('click', () => {{
       openProviderEditor(null, '添加供应商');

@@ -13,7 +13,7 @@ from typing import Any
 
 from .auth import detect_login_mode, read_secret_from_auth
 from .auth_store import provider_auth_secret
-from .config import load_toml_config, provider_base_url
+from .config import load_toml_config, provider_name_for_base_url
 from .core import ConfigError
 from .defaults import INTERNAL_UPSTREAM_API_KEY_ENV, PORT_SEARCH_ATTEMPTS
 from .models import ProxyPaths, ProxySettings, settings_from_dict
@@ -398,8 +398,7 @@ def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
 
     settings = settings_from_dict(settings_data)
     config = load_toml_config(paths.config_path)
-    config_base_url = provider_base_url(config, settings.provider)
-    if config_base_url != settings.base_url:
+    if not provider_name_for_base_url(config, settings.base_url):
         return {"status": "skipped", "reason": "config_not_proxy", "provider": settings.provider}
 
     return start_background(paths, settings, verbose_proxy, restart_stale_runtime=False)

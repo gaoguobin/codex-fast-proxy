@@ -68,7 +68,10 @@ def run_first_run_enable(codex_home: str | None, provider: str | None = None) ->
         "user_state": {
             "code": "restart_required",
             "title": "已启用，重启后接管",
-            "message": "当前对话可以继续。Codex 重启后，新会话会走本地代理，并按速度模式处理请求。",
+            "message": (
+                "当前对话可以继续。Codex 重启后，新会话会走本地代理。"
+                "如果你有 ChatGPT 账号，可以在 Codex App 里登录 ChatGPT，继续使用原生 UI 功能。"
+            ),
         },
         "next_user_action": "当前对话可以继续；方便时重启 Codex，然后回到此页面确认运行状态。",
     }
@@ -178,10 +181,16 @@ def run_switch_provider(codex_home: str | None, provider: str | None) -> dict[st
             "Provider 已切换，重启后接管",
             "当前对话可以继续。Codex 重启后，新会话会使用新的模型服务。",
         )
+    elif result.get("status") == "provider_switched":
+        result["user_state"] = state(
+            "provider_switched",
+            "供应商已切换",
+            "当前代理已经使用新的模型服务，Codex 配置仍保持在本地代理入口。",
+        )
     else:
         result["user_state"] = state(
             "provider_selected",
-            "Provider 已选择",
+            "供应商已选择",
             "点击启用后会使用这个模型服务。",
             "enable",
             "启用",
