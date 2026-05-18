@@ -31,6 +31,7 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     is_loopback_host,
     open_control_ui,
     render_page,
+    schedule_control_ui_restart,
     schedule_path_cleanup,
     start_background_server,
     user_error_message,
@@ -257,6 +258,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("resetSpeedForm(snapshot);", html)
         self.assertIn("'set-speed-mode'", html)
         self.assertIn("window.location.href = data.action.control_ui.url;", html)
+        self.assertIn("data.action.control_ui.reload_after_ms", html)
 
     def test_control_page_maps_preserve_policy_to_standard_speed_mode(self) -> None:
         html = render_page(
@@ -313,7 +315,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(result["control_ui_reload_required"])
         self.assertIn("正在打开新版控制面板", result["user_state"]["message"])
 
-    def test_update_control_action_starts_replacement_ui(self) -> None:
+    def test_update_control_action_restarts_current_ui_on_same_port(self) -> None:
         handler = object.__new__(ControlHandler)
         handler.server = mock.Mock(
             codex_home=str(self.codex_home),
@@ -329,15 +331,17 @@ class ControlUiTests(unittest.TestCase):
                 "final_status": {"needs_restart": False},
                 "user_state": {"title": "更新完成"},
             }),
-            mock.patch.object(handler, "start_replacement_control_ui", return_value={
-                "status": "ready",
-                "url": "http://127.0.0.1:8788/",
+            mock.patch.object(handler, "restart_current_control_ui", return_value={
+                "status": "scheduled",
+                "url": "http://127.0.0.1:8786/",
+                "same_port": True,
             }),
         ):
             response = handler.run_action("update")
 
         self.assertTrue(response["shutdown_control_ui"])
-        self.assertEqual(response["action"]["control_ui"]["url"], "http://127.0.0.1:8788/")
+        self.assertEqual(response["action"]["control_ui"]["url"], "http://127.0.0.1:8786/")
+        self.assertTrue(response["action"]["control_ui"]["same_port"])
 
     def test_uninstall_control_action_schedules_state_cleanup(self) -> None:
         handler = object.__new__(ControlHandler)
@@ -752,6 +756,20 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(command[3], str(self.paths.app_home))
         self.assertEqual(result["status"], "scheduled")
         self.assertEqual(result["pid"], 1234)
+
+    def test_schedule_control_ui_restart_reuses_current_port(self) -> None:
+        with mock.patch("codex_fast_proxy.control_ui.subprocess.Popen") as popen:
+            popen.return_value.pid = 1234
+            result = schedule_control_ui_restart(str(self.codex_home), "acme", "127.0.0.1", 8786, delay=0.1)
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], sys.executable)
+        self.assertIn("codex_fast_proxy", command)
+        self.assertIn("8786", command)
+        self.assertIn("--provider", command)
+        self.assertEqual(result["status"], "scheduled")
+        self.assertEqual(result["url"], "http://127.0.0.1:8786/")
+        self.assertTrue(result["same_port"])
 
     def test_find_available_port_skips_reserved_proxy_port(self) -> None:
         bound_ports: list[int] = []

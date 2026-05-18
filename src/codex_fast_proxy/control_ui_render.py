@@ -525,7 +525,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (data.action && data.action.control_ui && data.action.control_ui.url) {{
         window.setTimeout(() => {{
           window.location.href = data.action.control_ui.url;
-        }}, 500);
+        }}, data.action.control_ui.reload_after_ms || 500);
       }}
     }}
     function startActionProgress(button, action) {{

@@ -36,6 +36,40 @@ for _ in range(80):
     except OSError:
         time.sleep(0.1)
 """
+DELAYED_UI_RESTART_SCRIPT = """
+import http.client
+import subprocess
+import sys
+import time
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+delay = float(sys.argv[3])
+command = sys.argv[4:]
+time.sleep(delay)
+deadline = time.monotonic() + 15
+while time.monotonic() < deadline:
+    try:
+        connection = http.client.HTTPConnection(host, port, timeout=0.2)
+        try:
+            connection.request("GET", "/api/ping")
+            response = connection.getresponse()
+            response.read()
+        finally:
+            connection.close()
+        time.sleep(0.1)
+    except OSError:
+        break
+kwargs = {
+    "stdin": subprocess.DEVNULL,
+    "stdout": subprocess.DEVNULL,
+    "stderr": subprocess.DEVNULL,
+    "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+}
+if sys.platform != "win32":
+    kwargs["start_new_session"] = True
+subprocess.Popen(command, **kwargs)
+"""
 
 
 class ControlServer(ThreadingHTTPServer):
@@ -117,8 +151,8 @@ class ControlHandler(BaseHTTPRequestHandler):
         elif action == "update":
             result = run_update(self.server.codex_home, self.server.provider)
             if result.get("control_ui_reload_required"):
-                result["control_ui"] = self.start_replacement_control_ui()
-                shutdown_control_ui = result["control_ui"].get("status") == "ready"
+                result["control_ui"] = self.restart_current_control_ui()
+                shutdown_control_ui = result["control_ui"].get("status") == "scheduled"
         elif action == "save-provider":
             result = run_save_provider(
                 self.server.codex_home,
@@ -159,6 +193,10 @@ class ControlHandler(BaseHTTPRequestHandler):
         if result.get("status") == "ready":
             result["replaces_current"] = True
         return result
+
+    def restart_current_control_ui(self) -> dict[str, Any]:
+        host, port = self.server.server_address[:2]
+        return schedule_control_ui_restart(self.server.codex_home, self.server.provider, str(host), int(port))
 
     def shutdown_soon(self) -> None:
         timer = threading.Timer(0.2, self.server.shutdown)
@@ -387,6 +425,53 @@ def schedule_path_cleanup(path: Path, delay: float = 1.0) -> dict[str, Any]:
     except OSError as exc:
         return {"status": "error", "path": str(path), "error": str(exc)}
     return {"status": "scheduled", "path": str(path), "pid": process.pid}
+
+
+def schedule_control_ui_restart(
+    codex_home: str | None,
+    provider: str | None,
+    host: str,
+    port: int,
+    delay: float = 0.5,
+) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        "-m",
+        "codex_fast_proxy",
+        "ui",
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    if codex_home:
+        command.extend(["--codex-home", codex_home])
+    if provider:
+        command.extend(["--provider", provider])
+    launcher = [sys.executable, "-c", DELAYED_UI_RESTART_SCRIPT, host, str(port), str(delay), *command]
+    kwargs: dict[str, Any] = {
+        "cwd": str(Path.cwd()),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "start_new_session": os.name != "nt",
+    }
+    try:
+        process = subprocess.Popen(launcher, **kwargs)
+    except OSError as exc:
+        return {
+            "status": "error",
+            "url": f"http://{host}:{port}/",
+            "error": str(exc),
+        }
+    return {
+        "status": "scheduled",
+        "url": f"http://{host}:{port}/",
+        "same_port": True,
+        "pid": process.pid,
+        "reload_after_ms": 1200,
+    }
 
 
 def find_existing_control_ui(
