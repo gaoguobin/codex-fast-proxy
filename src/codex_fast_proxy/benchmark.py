@@ -518,8 +518,9 @@ def benchmark_payload(
         payload["text"] = {"verbosity": "low"}
     if profile.max_output_tokens is not None:
         payload["max_output_tokens"] = profile.max_output_tokens
-    if reasoning_effort and profile.name != "smoke":
+    if reasoning_effort:
         payload["reasoning"] = {"effort": reasoning_effort}
+    if reasoning_effort and profile.name != "smoke":
         payload["include"] = ["reasoning.encrypted_content"]
     if service_tier:
         payload["service_tier"] = service_tier

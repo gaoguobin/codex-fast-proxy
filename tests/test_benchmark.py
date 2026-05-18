@@ -156,6 +156,18 @@ class BenchmarkTests(unittest.TestCase):
         self.assertGreater(len(payload["input"][0]["content"][1]["text"]), 7000)
         self.assertIn("4200-5000 Chinese characters", payload["input"][2]["content"][0]["text"])
 
+    def test_smoke_payload_can_use_low_reasoning_without_heavy_include(self) -> None:
+        profile = benchmark.profile_for_name("smoke")
+        payload = json.loads(
+            benchmark_payload("gpt-test", profile, "priority", reasoning_effort="low").decode("utf-8")
+        )
+
+        self.assertEqual(payload["reasoning"], {"effort": "low"})
+        self.assertEqual(payload["max_output_tokens"], 16)
+        self.assertEqual(payload["service_tier"], "priority")
+        self.assertNotIn("include", payload)
+        self.assertNotIn("instructions", payload)
+
     def test_run_benchmark_keeps_only_redacted_metrics(self) -> None:
         target = BenchmarkTarget(
             provider="acme",

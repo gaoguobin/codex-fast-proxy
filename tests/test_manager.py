@@ -1760,7 +1760,7 @@ class ManagerConfigTests(unittest.TestCase):
         def fake_run_sample(target, label, timeout):
             self.assertEqual(target.model, "gpt-test")
             self.assertEqual(target.profile, "smoke")
-            self.assertEqual(target.reasoning_effort, "high")
+            self.assertEqual(target.reasoning_effort, "low")
             self.assertEqual(target.api_key, "provider-secret")
             self.assertEqual(label, "priority")
             self.assertEqual(timeout, 42.0)
@@ -1781,6 +1781,7 @@ class ManagerConfigTests(unittest.TestCase):
         result_text = json.dumps(result)
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["request"], "POST /v1/responses")
+        self.assertEqual(result["reasoning_effort"], "low")
         self.assertEqual(result["service_tier_request"], "priority")
         self.assertNotIn("provider-secret", result_text)
 

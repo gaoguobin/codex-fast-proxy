@@ -12,6 +12,8 @@ from .models import ProxyPaths, ProxySettings, settings_from_dict
 from .status_rules import SERVICE_TIER_POLICIES, effective_service_tier_policy
 from .storage import read_json
 
+VERIFICATION_REASONING_EFFORT = "low"
+
 
 def resolve_upstream_auth_options(
     current_env: str | None,
@@ -75,11 +77,8 @@ def verify_upstream_responses(
     from .benchmark import BenchmarkTarget, run_sample
 
     model = config.get("model")
-    reasoning_effort = config.get("model_reasoning_effort")
     if not isinstance(model, str) or not model:
         raise ConfigError("Codex config has no model; rerun set-upstream with --no-verify or configure a model first.")
-    if reasoning_effort is not None and not isinstance(reasoning_effort, str):
-        raise ConfigError("Codex config model_reasoning_effort must be a string.")
 
     provider_config = provider_config_for(config, settings.provider)
     api_key_source, api_key = resolve_verification_api_key(paths, provider_config, settings)
@@ -93,7 +92,7 @@ def verify_upstream_responses(
         service_tier=settings.service_tier,
         api_key_source=api_key_source,
         api_key=api_key,
-        reasoning_effort=reasoning_effort,
+        reasoning_effort=VERIFICATION_REASONING_EFFORT,
     )
 
     try:
@@ -114,6 +113,7 @@ def verify_upstream_responses(
         "request": "POST /v1/responses",
         "stream": True,
         "profile": "smoke",
+        "reasoning_effort": VERIFICATION_REASONING_EFFORT,
         "provider": settings.provider,
         "upstream_base": settings.upstream_base,
         "model": model,

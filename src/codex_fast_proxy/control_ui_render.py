@@ -335,6 +335,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     const headerName = {json.dumps(CONTROL_TOKEN_HEADER)};
     const $ = (id) => document.getElementById(id);
     const labels = {labels_json};
+    const actionProgress = {{
+      enable: [
+        {{ delay: 0, label: '正在准备环境...', message: '正在读取当前 Provider 并准备环境。' }},
+        {{ delay: 6000, label: '正在验证模型服务...', message: '正在连接当前模型服务，首次启用可能需要几十秒。' }},
+        {{ delay: 18000, label: '模型服务响应较慢...', message: '仍在等待模型服务响应，完成后页面会自动更新。' }}
+      ],
+      default: [
+        {{ delay: 0, label: '处理中...', message: null }}
+      ]
+    }};
     let providerRecords = {json.dumps(providers, ensure_ascii=False)};
     function escapeHtml(value) {{
       return String(value).replace(/[&<>"']/g, (char) => ({{
@@ -518,10 +528,23 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         }}, 500);
       }}
     }}
+    function startActionProgress(button, action) {{
+      const timers = [];
+      const steps = actionProgress[action] || actionProgress.default;
+      const applyStep = (step) => {{
+        button.textContent = step.label;
+        if (step.message) $('message').textContent = step.message;
+      }};
+      steps.forEach((step) => {{
+        if (step.delay > 0) timers.push(window.setTimeout(() => applyStep(step), step.delay));
+        else applyStep(step);
+      }});
+      return () => timers.forEach((timer) => window.clearTimeout(timer));
+    }}
     async function runButton(button, action, body) {{
       button.disabled = true;
       const oldText = button.textContent;
-      button.textContent = action === 'enable' ? '正在准备环境...' : '处理中...';
+      const stopProgress = startActionProgress(button, action);
       try {{
         await requestAction(action, body);
       }} catch (error) {{
@@ -529,6 +552,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         $('message').textContent = (error && error.message) ? error.message : String(error);
         button.disabled = false;
         button.textContent = oldText;
+      }} finally {{
+        stopProgress();
       }}
     }}
     $('primary').addEventListener('click', async (event) => {{

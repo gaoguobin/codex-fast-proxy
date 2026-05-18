@@ -145,6 +145,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('name="speedMode" value="standard"', html)
         self.assertIn("重启 Codex 前请用外部浏览器打开此页面", html)
         self.assertIn("正在准备环境", html)
+        self.assertIn("正在验证模型服务", html)
+        self.assertIn("首次启用可能需要几十秒", html)
         self.assertIn('const token = "token";', html)
         self.assertNotIn("&quot;token&quot;", html)
 
