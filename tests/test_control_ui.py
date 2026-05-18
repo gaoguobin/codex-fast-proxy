@@ -130,11 +130,15 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("启用", html)
         self.assertIn("更新", html)
         self.assertIn("停用并恢复", html)
-        self.assertIn("当前模型服务", html)
+        self.assertIn('id="providerPanel"', html)
+        self.assertIn("Provider 管理", html)
+        self.assertIn("管理", html)
         self.assertIn("模型服务地址", html)
         self.assertNotIn("本地入口", html)
         self.assertNotIn("providerProxy", html)
-        self.assertIn("保存 Provider", html)
+        self.assertIn("添加供应商", html)
+        self.assertIn("编辑供应商", html)
+        self.assertIn("保存供应商", html)
         self.assertIn("保存速度模式", html)
         self.assertIn("速度模式", html)
         self.assertIn('name="speedMode" value="fast" checked', html)
@@ -143,6 +147,45 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("正在准备环境", html)
         self.assertIn('const token = "token";', html)
         self.assertNotIn("&quot;token&quot;", html)
+
+    def test_provider_management_is_collapsed_by_default(self) -> None:
+        html = render_page(
+            {
+                "providers": [{
+                    "name": "acme",
+                    "base_url": "https://api.acme.test/v1",
+                    "current": True,
+                    "active": True,
+                    "api_key": "saved",
+                }, {
+                    "name": "other",
+                    "base_url": "https://api.other.test/v1",
+                    "current": False,
+                    "active": False,
+                    "api_key": "missing",
+                }],
+                "provider": "acme",
+                "user_state": {
+                    "title": "准备启用",
+                    "message": "点击启用后，会自动准备当前模型服务路径。",
+                    "primary_action": "enable",
+                    "primary_label": "启用",
+                },
+            },
+            "token",
+        )
+
+        self.assertIn('<details id="providerPanel" class="maintenance-panel">', html)
+        self.assertNotIn('<details id="providerPanel" class="maintenance-panel" open', html)
+        self.assertIn('id="providerSummaryName">acme</strong>', html)
+        self.assertIn('id="providerSummaryUrl">https://api.acme.test/v1</span>', html)
+        self.assertIn('id="providerEditor" class="provider-editor" hidden', html)
+        self.assertIn("添加供应商", html)
+        self.assertIn("编辑供应商", html)
+        self.assertIn('data-provider-action="switch"', html)
+        self.assertIn('data-provider="other">启用</button>', html)
+        self.assertIn("https://api.other.test/v1", html)
+        self.assertNotIn("providerSelect", html)
 
     def test_control_page_hides_maintenance_controls_before_enable(self) -> None:
         html = render_page(
@@ -200,11 +243,14 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('const labels = {"update": "更新"', html)
         self.assertIn('"uninstall": "停用并恢复"', html)
         self.assertIn('"confirmUninstall": "我知道可能导致模型请求失败，仍要停用"', html)
-        self.assertIn('"saveProvider": "保存 Provider"', html)
+        self.assertIn('"saveProvider": "保存供应商"', html)
         self.assertIn('"saveSpeed": "保存速度模式"', html)
         self.assertIn("resetControls(userState, snapshot);", html)
         self.assertIn("resetSummary(snapshot);", html)
         self.assertIn('value="https://api.acme.test/v1"', html)
+        self.assertIn("providerSummaryName", html)
+        self.assertIn("providerSummaryUrl", html)
+        self.assertIn("renderProviderList(snapshot);", html)
         self.assertIn("resetProviderForm(snapshot);", html)
         self.assertIn("resetSpeedForm(snapshot);", html)
         self.assertIn("'set-speed-mode'", html)

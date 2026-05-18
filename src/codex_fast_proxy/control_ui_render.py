@@ -75,6 +75,39 @@ def providers_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def render_provider_cards(providers: list[dict[str, Any]], selected_provider: str) -> str:
+    cards: list[str] = []
+    for item in providers:
+        name = str(item.get("name") or "未命名")
+        name_attr = html.escape(name, quote=True)
+        is_current = bool(item.get("current")) or name == selected_provider
+        card_class = "provider-card current" if is_current else "provider-card"
+        status_label = "使用中" if is_current else "已配置"
+        status_class = "ok" if is_current else "idle"
+        enable_button = "" if is_current else (
+            f'<button class="provider-enable" type="button" data-provider-action="switch" '
+            f'data-provider="{name_attr}">启用</button>'
+        )
+        cards.append(f"""
+            <article class="{card_class}" data-provider-name="{name_attr}">
+              <div class="provider-main">
+                <span class="provider-avatar">{html.escape((name[:1] or "?").upper())}</span>
+                <div class="provider-info">
+                  <strong>{html.escape(name)}</strong>
+                  <span class="provider-url">{html.escape(display_text(item.get("base_url"), "未设置模型服务"))}</span>
+                  <span class="provider-auth-state">密钥：{html.escape(provider_key_label(item.get("api_key")))}</span>
+                </div>
+              </div>
+              <div class="provider-card-actions">
+                <span class="status-pill {status_class}">{status_label}</span>
+                {enable_button}
+                <button class="provider-edit" type="button" data-provider-action="edit" data-provider="{name_attr}">编辑供应商</button>
+              </div>
+            </article>
+""")
+    return "".join(cards)
+
+
 def render_page(snapshot: dict[str, Any], token: str) -> str:
     user_state = snapshot.get("user_state", {})
     state_code = str(user_state.get("code") or "")
@@ -112,50 +145,61 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     providers = providers_from_snapshot(snapshot)
     selected_provider = str(snapshot.get("current_provider") or snapshot.get("provider") or "")
     selected_record = next((item for item in providers if item.get("name") == selected_provider), providers[0] if providers else {})
-    provider_options = "\n".join(
-        f'<option value="{html.escape(str(item.get("name") or ""), quote=True)}"'
-        f'{" selected" if item is selected_record else ""}>{html.escape(str(item.get("name") or "未命名"))}</option>'
-        for item in providers
-    )
     provider_name_value = html.escape(str(selected_record.get("name") or selected_provider), quote=True)
     provider_url_value = html.escape(str(selected_record.get("base_url") or ""), quote=True)
-    provider_auth_value = html.escape(provider_key_label(selected_record.get("api_key")), quote=True)
     provider_management = ""
     if providers and not terminal_state:
+        summary_name = html.escape(str(selected_record.get("name") or selected_provider or "未选择"))
+        summary_url = html.escape(display_text(selected_record.get("base_url"), "未设置模型服务"))
         labels.update({
-            "saveProvider": "保存 Provider",
-            "switchProvider": "切换到此 Provider",
-            "newProvider": "新增",
+            "saveProvider": "保存供应商",
         })
+        selected_provider_name = str(selected_record.get("name") or selected_provider or "")
         provider_management = f"""
-      <h2>Provider 管理</h2>
-      <div class="provider-summary">
-        <div class="provider-title">
-          <label class="select-label">Provider
-            <select id="providerSelect">{provider_options}</select>
-          </label>
-          <button id="newProvider" class="secondary" type="button">新增</button>
+      <details id="providerPanel" class="maintenance-panel">
+        <summary>
+          <span class="summary-copy">
+            <span class="muted">Provider 管理</span>
+            <strong id="providerSummaryName">{summary_name}</strong>
+            <span id="providerSummaryUrl">{summary_url}</span>
+          </span>
+          <span class="summary-action">管理</span>
+        </summary>
+        <div class="maintenance-body">
+          <div class="provider-panel-header">
+            <div>
+              <h2>Provider 管理</h2>
+              <div class="provider-tabs" aria-label="应用">
+                <span class="provider-tab active">Codex</span>
+              </div>
+            </div>
+            <button id="newProvider" type="button">添加供应商</button>
+          </div>
+          <div id="providerList" class="provider-list">
+            {render_provider_cards(providers, selected_provider_name)}
+          </div>
+          <div id="providerEditor" class="provider-editor" hidden>
+            <div class="provider-editor-title">
+              <h3 id="providerEditorTitle">编辑供应商</h3>
+              <button id="cancelProvider" class="provider-edit" type="button">取消</button>
+            </div>
+            <form id="providerForm" class="provider-form">
+              <label>供应商名称
+                <input id="providerNameInput" autocomplete="off" value="{provider_name_value}" placeholder="my-provider" required>
+              </label>
+              <label>模型服务地址
+                <input id="upstreamBase" autocomplete="off" value="{provider_url_value}" placeholder="https://api.example.com/v1" required>
+              </label>
+              <label>API Key
+                <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
+              </label>
+              <div class="actions compact">
+                <button id="saveProvider" type="submit">保存供应商</button>
+              </div>
+            </form>
+          </div>
         </div>
-        <dl>
-          <div><dt>模型服务</dt><dd id="providerUpstream">{html.escape(display_text(selected_record.get("base_url"), "未设置"))}</dd></div>
-          <div><dt>API Key</dt><dd id="providerAuth">{provider_auth_value}</dd></div>
-        </dl>
-      </div>
-      <form id="providerForm" class="provider-form">
-        <label>Provider 名称
-          <input id="providerNameInput" autocomplete="off" value="{provider_name_value}" placeholder="my-provider">
-        </label>
-        <label>模型服务地址
-          <input id="upstreamBase" autocomplete="off" value="{provider_url_value}" placeholder="https://api.example.com/v1">
-        </label>
-        <label>API Key
-          <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
-        </label>
-        <div class="actions compact">
-          <button id="saveProvider" type="submit">保存 Provider</button>
-          <button id="switchProvider" class="secondary" type="button">切换到此 Provider</button>
-        </div>
-      </form>
+      </details>
 """
 
     speed_controls = ""
@@ -214,9 +258,36 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     button:disabled {{ cursor: wait; opacity: .65; }}
     .danger-zone {{ border-top: 1px solid #e5e8ef; margin-top: 18px; padding-top: 18px; }}
     .danger-zone p {{ color: #7c2d12; line-height: 1.6; margin: 0 0 12px; }}
+    .maintenance-panel {{ border-top: 1px solid #e5e8ef; margin-top: 28px; padding-top: 4px; }}
+    .maintenance-panel summary {{ align-items: center; cursor: pointer; display: flex; gap: 14px; justify-content: space-between; list-style: none; padding: 14px 0; }}
+    .maintenance-panel summary::-webkit-details-marker {{ display: none; }}
+    .summary-copy {{ display: grid; gap: 3px; min-width: 0; }}
+    .summary-copy strong {{ font-size: 17px; font-weight: 600; }}
+    .summary-copy span:last-child {{ color: #344054; font-size: 14px; overflow-wrap: anywhere; }}
+    .summary-action {{ border: 1px solid #cbd5e1; border-radius: 999px; color: #344054; flex: 0 0 auto; font-size: 13px; font-weight: 650; padding: 5px 10px; }}
+    .maintenance-body {{ border-top: 1px solid #e5e8ef; padding-top: 14px; }}
+    .provider-panel-header {{ align-items: start; display: flex; gap: 14px; justify-content: space-between; margin-bottom: 14px; }}
+    .provider-panel-header h2 {{ margin: 0; }}
+    .provider-tabs {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }}
+    .provider-tab {{ border: 1px solid #cbd5e1; border-radius: 999px; color: #344054; font-size: 13px; font-weight: 650; padding: 5px 10px; }}
+    .provider-tab.active {{ background: #111827; border-color: #111827; color: white; }}
+    .provider-list {{ display: grid; gap: 12px; }}
+    .provider-card {{ background: #f8fafc; border: 1px solid #d9dee7; border-radius: 8px; display: flex; gap: 14px; justify-content: space-between; padding: 14px; }}
+    .provider-card.current {{ background: white; border-color: #c7d2fe; box-shadow: inset 0 0 0 1px #e0e7ff; }}
+    .provider-main {{ display: flex; gap: 12px; min-width: 0; }}
+    .provider-avatar {{ align-items: center; background: #dbeafe; border-radius: 999px; color: #1d4ed8; display: inline-flex; flex: 0 0 auto; font-size: 16px; font-weight: 700; height: 36px; justify-content: center; width: 36px; }}
+    .provider-info {{ display: grid; gap: 4px; min-width: 0; }}
+    .provider-info strong {{ font-size: 16px; }}
+    .provider-url, .provider-auth-state {{ color: #344054; font-size: 13px; overflow-wrap: anywhere; }}
+    .provider-card-actions {{ align-items: center; display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }}
+    .provider-card-actions button {{ padding: 8px 12px; }}
+    .provider-card-actions .provider-edit {{ background: #344054; }}
+    .provider-editor {{ border-top: 1px solid #e5e8ef; margin-top: 16px; padding-top: 16px; }}
+    .provider-editor-title {{ align-items: center; display: flex; gap: 10px; justify-content: space-between; margin-bottom: 10px; }}
+    .provider-editor-title h3 {{ font-size: 16px; margin: 0; }}
     .provider-summary {{ border-top: 1px solid #e5e8ef; border-bottom: 1px solid #e5e8ef; padding: 14px 0; }}
     .provider-title {{ align-items: center; display: flex; gap: 12px; justify-content: space-between; }}
-    .provider-title strong {{ display: block; font-size: 20px; margin-top: 3px; }}
+    .provider-title strong {{ display: block; font-size: 18px; margin-top: 3px; }}
     .muted {{ color: #667085; font-size: 13px; }}
     .status-pill {{ border-radius: 999px; display: inline-flex; font-size: 13px; font-weight: 650; padding: 5px 10px; white-space: nowrap; }}
     .status-pill.ok {{ background: #dcfce7; color: #166534; }}
@@ -230,14 +301,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     input, select {{ border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; padding: 10px 12px; }}
     fieldset {{ border: 0; margin: 0; padding: 0; }}
     legend {{ color: #344054; font-size: 14px; margin-bottom: 6px; }}
-    .select-label {{ min-width: 220px; }}
     .actions.compact {{ margin-top: 4px; }}
     .segments {{ display: flex; flex-wrap: wrap; gap: 8px; }}
     .segments label {{ align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; display: flex; flex: 1 1 120px; gap: 8px; padding: 10px 12px; }}
     .segments input {{ margin: 0; padding: 0; }}
     details {{ margin-top: 24px; border-top: 1px solid #e5e8ef; padding-top: 18px; }}
     pre {{ background: #111827; border-radius: 8px; color: #e5e7eb; overflow: auto; padding: 16px; }}
-    @media (max-width: 640px) {{ dl {{ grid-template-columns: 1fr; }} .provider-title {{ align-items: flex-start; flex-direction: column; }} }}
+    @media (max-width: 640px) {{ .provider-panel-header, .provider-card {{ flex-direction: column; }} .provider-card-actions {{ justify-content: flex-start; }} }}
   </style>
 </head>
 <body>
@@ -266,6 +336,57 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     const $ = (id) => document.getElementById(id);
     const labels = {labels_json};
     let providerRecords = {json.dumps(providers, ensure_ascii=False)};
+    function escapeHtml(value) {{
+      return String(value).replace(/[&<>"']/g, (char) => ({{
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }}[char]));
+    }}
+    function currentProviderName(snapshot) {{
+      const records = Array.isArray(providerRecords) ? providerRecords : [];
+      if (snapshot && typeof snapshot.current_provider === 'string' && snapshot.current_provider) return snapshot.current_provider;
+      if (snapshot && typeof snapshot.provider === 'string' && snapshot.provider) return snapshot.provider;
+      const current = records.find((item) => item && item.current && item.name);
+      if (current && current.name) return current.name;
+      return records[0] && records[0].name ? records[0].name : '';
+    }}
+    function renderProviderCard(record, currentName) {{
+      const name = record && record.name ? String(record.name) : '未命名';
+      const baseUrl = record && record.base_url ? String(record.base_url) : '未设置模型服务';
+      const isCurrent = Boolean(record && record.current) || name === currentName;
+      const statusLabel = isCurrent ? '使用中' : '已配置';
+      const statusClass = isCurrent ? 'ok' : 'idle';
+      const enableButton = isCurrent ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">启用</button>`;
+      const avatar = (name.trim().charAt(0) || '?').toUpperCase();
+      return `
+            <article class="provider-card${{isCurrent ? ' current' : ''}}" data-provider-name="${{escapeHtml(name)}}">
+              <div class="provider-main">
+                <span class="provider-avatar">${{escapeHtml(avatar)}}</span>
+                <div class="provider-info">
+                  <strong>${{escapeHtml(name)}}</strong>
+                  <span class="provider-url">${{escapeHtml(baseUrl)}}</span>
+                  <span class="provider-auth-state">密钥：${{escapeHtml(keyLabel(record ? record.api_key : null))}}</span>
+                </div>
+              </div>
+              <div class="provider-card-actions">
+                <span class="status-pill ${{statusClass}}">${{statusLabel}}</span>
+                ${{enableButton}}
+                <button class="provider-edit" type="button" data-provider-action="edit" data-provider="${{escapeHtml(name)}}">编辑供应商</button>
+              </div>
+            </article>
+`;
+    }}
+    function renderProviderList(snapshot) {{
+      providerRecords = Array.isArray(snapshot.providers) ? snapshot.providers : providerRecords;
+      const list = $('providerList');
+      if (list) {{
+        const currentName = currentProviderName(snapshot);
+        list.innerHTML = providerRecords.map((item) => renderProviderCard(item, currentName)).join('');
+      }}
+    }}
     function resetControls(userState, snapshot) {{
       Object.entries(labels).forEach(([id, label]) => {{
         const item = $(id);
@@ -292,10 +413,20 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       return '未保存';
     }}
-    function selectedProviderName() {{
-      const select = $('providerSelect');
-      const typed = $('providerNameInput');
-      return select && select.value ? select.value : (typed ? typed.value.trim() : '');
+    function openProviderEditor(record, title) {{
+      const editor = $('providerEditor');
+      if (editor) editor.hidden = false;
+      const editorTitle = $('providerEditorTitle');
+      if (editorTitle && title) editorTitle.textContent = title;
+      fillProviderForm(record);
+      const nameInput = $('providerNameInput');
+      if (nameInput) nameInput.focus();
+    }}
+    function closeProviderEditor() {{
+      const editor = $('providerEditor');
+      if (editor) editor.hidden = true;
+      const editorTitle = $('providerEditorTitle');
+      if (editorTitle) editorTitle.textContent = '编辑供应商';
     }}
     function providerByName(name) {{
       return providerRecords.find((item) => item.name === name) || null;
@@ -307,26 +438,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (upstreamBase) upstreamBase.value = record ? record.base_url || '' : '';
       const apiKey = $('apiKey');
       if (apiKey) apiKey.value = '';
-      const upstreamLabel = $('providerUpstream');
-      if (upstreamLabel) upstreamLabel.textContent = record && record.base_url ? record.base_url : '未设置';
-      const authLabel = $('providerAuth');
-      if (authLabel) authLabel.textContent = record ? keyLabel(record.api_key) : '未保存';
     }}
     function resetProviderForm(snapshot) {{
-      providerRecords = Array.isArray(snapshot.providers) ? snapshot.providers : providerRecords;
-      const select = $('providerSelect');
-      if (select) {{
-        const current = snapshot.current_provider || snapshot.provider || (providerRecords[0] && providerRecords[0].name) || '';
-        select.textContent = '';
-        providerRecords.forEach((item) => {{
-          const option = document.createElement('option');
-          option.value = item.name || '';
-          option.textContent = item.name || '未命名';
-          select.appendChild(option);
-        }});
-        select.value = current;
-        fillProviderForm(providerByName(select.value));
-      }}
+      renderProviderList(snapshot);
+      closeProviderEditor();
+      fillProviderForm(providerByName(currentProviderName(snapshot)));
     }}
     function resetSpeedForm(snapshot) {{
       const speedMode = snapshot.service_tier_policy === 'preserve' ? 'standard' : 'fast';
@@ -362,6 +478,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         status.textContent = label;
         status.className = `status-pill ${{className}}`;
       }}
+      const summaryName = $('providerSummaryName');
+      if (summaryName) summaryName.textContent = currentProviderName(snapshot) || '未选择';
+      const summaryUrl = $('providerSummaryUrl');
+      if (summaryUrl) summaryUrl.textContent = displayValue((providerByName(currentProviderName(snapshot)) || {{}}).base_url, '未设置模型服务');
     }}
     function selectedSpeedMode() {{
       const selected = document.querySelector('input[name="speedMode"]:checked');
@@ -376,8 +496,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       button.dataset.action = userState.primary_action || 'diagnostics';
       button.textContent = userState.primary_label || '打开诊断';
       resetControls(userState, snapshot);
-      resetSummary(snapshot);
       resetProviderForm(snapshot);
+      resetSummary(snapshot);
       resetSpeedForm(snapshot);
     }}
     async function requestAction(action, body) {{
@@ -413,7 +533,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     $('primary').addEventListener('click', async (event) => {{
       const action = event.currentTarget.dataset.action;
-      if (action === 'enable') await runButton(event.currentTarget, 'enable', {{ provider: selectedProviderName() || null }});
+      if (action === 'enable') await runButton(event.currentTarget, 'enable', {{ provider: currentProviderName() || null }});
       else if (action === 'refresh') window.location.reload();
       else if (action === 'uninstall') await runButton(event.currentTarget, 'uninstall');
       else document.querySelector('details').open = true;
@@ -421,17 +541,26 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if ($('update')) $('update').addEventListener('click', (event) => runButton(event.currentTarget, 'update'));
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
-    if ($('providerSelect')) $('providerSelect').addEventListener('change', (event) => fillProviderForm(providerByName(event.currentTarget.value)));
     if ($('newProvider')) $('newProvider').addEventListener('click', () => {{
-      const select = $('providerSelect');
-      if (select) select.value = '';
-      fillProviderForm(null);
+      openProviderEditor(null, '添加供应商');
     }});
-    if ($('switchProvider')) $('switchProvider').addEventListener('click', (event) => runButton(event.currentTarget, 'switch-provider', {{ provider: $('providerNameInput').value.trim() || selectedProviderName() }}));
+    if ($('cancelProvider')) $('cancelProvider').addEventListener('click', () => closeProviderEditor());
+    if ($('providerList')) $('providerList').addEventListener('click', async (event) => {{
+      const button = event.target.closest('button[data-provider-action]');
+      if (!button) return;
+      const provider = button.dataset.provider || '';
+      if (button.dataset.providerAction === 'edit') {{
+        openProviderEditor(providerByName(provider), '编辑供应商');
+        return;
+      }}
+      if (button.dataset.providerAction === 'switch') {{
+        await runButton(button, 'switch-provider', {{ provider }});
+      }}
+    }});
     if ($('providerForm')) $('providerForm').addEventListener('submit', async (event) => {{
       event.preventDefault();
       await runButton($('saveProvider'), 'save-provider', {{
-        provider: $('providerNameInput').value.trim() || selectedProviderName(),
+        provider: $('providerNameInput').value.trim() || null,
         upstream_base: $('upstreamBase').value.trim() || null,
         api_key: $('apiKey').value.trim() || null
       }});
