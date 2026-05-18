@@ -63,9 +63,10 @@ Paste this into Codex:
 Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
 ```
 
-The installer starts the Chinese Control UI and prints a local URL. Open that URL in your external
-browser and click `启用`. After the UI says setup is ready, restart Codex App or open a new Codex CLI
-process so Codex reloads its provider config. Future sessions use the installed startup hook.
+The installer starts the Chinese Control UI and prints a local URL. Open that Control UI URL in your
+external browser and click `启用`. After the UI says setup is ready, restart Codex App or open a new
+Codex CLI process so Codex reloads its provider config. Future sessions use the installed startup
+hook.
 
 Install is intentionally file-only: it clones the repo, installs the Python package, and links the
 skill. It does not switch your provider, start the proxy, or install hooks until you explicitly
@@ -78,7 +79,7 @@ Most users should operate this through natural language in Codex:
 | Goal | Say this to Codex |
 | --- | --- |
 | Install from GitHub | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md` |
-| Enable proxy | `Enable Codex Fast proxy` |
+| Enable | Open the Control UI and click `启用` |
 | Open Control UI | `Open Codex Fast proxy Control UI` |
 | Check status | `Show Codex Fast proxy status` |
 | Open diagnostics | Use the Control UI diagnostics section |
@@ -93,14 +94,16 @@ Advanced command-line usage lives in [docs/advanced-usage.md](docs/advanced-usag
 
 ## After Enable
 
-A healthy enabled setup should report:
+A healthy setup should show `运行正常` in the Control UI. Diagnostics should report:
 
 - `healthy=true`
 - `config_matches=true`
 - `startup_hook=true`
 - `runtime_matches=true`
 - `needs_restart=false`
-- `base_url=http://127.0.0.1:<selected-port>/v1`
+
+The local proxy URL is an internal detail. Ordinary users should use only the Control UI URL and the
+model service URL shown in the Control UI.
 
 In API-key mode, the default `auto` policy can inject global priority when Codex omits
 `service_tier`. In ChatGPT-login or unclear states, the default behavior is conservative and
@@ -138,15 +141,11 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 
 ## Diagnostics
 
-Open the enabled `base_url` reported by status, for example:
+Open the Control UI and expand `诊断`. This is the normal diagnostics path for users.
 
-```text
-http://127.0.0.1:8787/v1
-```
-
-The old proxy-hosted dashboard is now a diagnostics surface. It is read-only and shows local proxy
-status, upstream URL, Fast policy, auth mode, recent `/v1/responses` traffic, metadata checks, and
-the latest benchmark summary if one exists.
+The old proxy-hosted dashboard remains an advanced read-only fallback. It shows local proxy status,
+upstream URL, Fast policy, auth mode, recent `/v1/responses` traffic, metadata checks, and the
+latest benchmark summary if one exists.
 It does not show prompts, request bodies, response content, API keys, cookies, or headers.
 
 ## Safety

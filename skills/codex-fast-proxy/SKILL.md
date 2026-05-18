@@ -65,10 +65,14 @@ pointing to the local proxy; use Control UI or `set-upstream` to change the save
 
 ## Result handling
 
-Treat JSON output as the source of truth. Report user-facing fields such as `provider`, `base_url`,
+Treat JSON output as the source of truth. Report user-facing fields such as `provider`,
 `upstream_base`, `service_tier_policy`, `upstream_auth`, `config_matches`, `runtime_matches`,
 `needs_restart`, `startup_hook`, `verification`, `backup_path`, `config_restore`, and
 `next_user_action` when present.
+
+For normal users, do not surface the proxy `base_url` unless they are explicitly asking for
+diagnostics. Use "Control UI URL" for the browser page and "model service URL" for the upstream
+provider endpoint.
 
 For benchmark requests, run `benchmark` only after the user explicitly accepts the cost. Report
 sample counts, medians, observed speedup, `priority_accepted`, `observed_priority_effective`, and

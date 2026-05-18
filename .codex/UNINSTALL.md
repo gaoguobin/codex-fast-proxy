@@ -21,12 +21,15 @@ Report the printed URL as plain text. The UI uses the manager uninstall path:
 - if ChatGPT login is active and direct upstream may return 401, the manager returns
   `confirmation_required` before changing files.
 
+The normal Control UI path restores the user's familiar Codex model-service setup and cleans runtime
+state. It does not remove the installed repository, uninstall the Python package, or remove the skill
+link.
+
 ## CLI fallback
 
 Use this only when the UI cannot be opened or the user explicitly asks Codex to perform cleanup. If
 sandbox or approval controls apply, request approval because uninstall may restore
-`~/.codex/config.toml`, edit `~/.codex/hooks.json`, stop a background proxy, uninstall a Python
-package, remove a skill link under `~/.agents`, and delete `~/.codex/codex-fast-proxy`.
+`~/.codex/config.toml`, edit `~/.codex/hooks.json`, and stop a background proxy.
 
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -45,6 +48,25 @@ if ($status.config_matches -eq $true) {
     return
 }
 & $pythonCmd -m codex_fast_proxy uninstall
+```
+
+If uninstall returns `confirmation_required`, no uninstall changes were applied. Report
+`direct_upstream_auth_warning` and ask whether the user wants to keep the proxy enabled, switch back
+to API-key/third-party provider auth before uninstalling, or explicitly continue despite the
+ChatGPT-login direct-upstream 401 risk.
+
+After cleanup, tell the user to restart Codex App or open a new CLI process so Codex reloads the
+restored provider config.
+
+## Deep install removal
+
+Do not remove the repository, editable Python install, or skill link unless the user explicitly asks
+for deep removal. Deep removal may delete `~/.codex/codex-fast-proxy`, uninstall the package, and
+remove the skill link under `~/.agents`; describe that scope and wait for confirmation first. If the
+user confirms deep removal after the proxy has already been disabled, use the manager-owned skill
+unlink before deleting files:
+
+```powershell
 if (Test-Path $repoRoot) {
     & $pythonCmd -m codex_fast_proxy unlink-skill --repo-root $repoRoot
 }
@@ -53,13 +75,5 @@ if (Test-Path $repoRoot) {
     Remove-Item -LiteralPath $repoRoot -Recurse -Force
 }
 ```
-
-If uninstall returns `confirmation_required`, no uninstall changes were applied. Report
-`direct_upstream_auth_warning` and ask whether the user wants to keep the proxy enabled, switch back
-to API-key/third-party provider auth before uninstalling, or explicitly continue despite the
-ChatGPT-login direct-upstream 401 risk.
-
-After full cleanup, tell the user to restart Codex App or open a new CLI process so Codex removes
-`codex-fast-proxy` from the skill list.
 
 Never print API key values, `auth.json` contents, ChatGPT tokens, cookies, request bodies, or prompts.
