@@ -118,7 +118,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     button = (
         f'<button id="primary" data-action="{html.escape(str(primary_action))}">{html.escape(primary_label)}</button>'
         if primary_action in {"enable", "refresh", "uninstall"}
-        else '<button id="primary" data-action="diagnostics">打开诊断</button>'
+        else '<button id="primary" class="secondary" data-action="diagnostics">打开诊断</button>'
     )
     labels: dict[str, str] = {}
     terminal_state = state_code in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
@@ -242,72 +242,438 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Codex 控制面板</title>
   <style>
-    :root {{ color-scheme: light; font-family: "Segoe UI", system-ui, sans-serif; }}
-    body {{ margin: 0; background: #f6f7f9; color: #17202a; }}
-    main {{ max-width: 820px; margin: 0 auto; padding: 40px 20px; }}
-    .panel {{ background: white; border: 1px solid #d9dee7; border-radius: 8px; padding: 24px; }}
-    h1, .state {{ margin: 0 0 16px; }}
-    h1 {{ font-size: 28px; }}
-    h2 {{ font-size: 18px; margin: 28px 0 12px; }}
-    .state {{ font-size: 32px; font-weight: 650; }}
-    .message, .note {{ line-height: 1.6; color: #344054; }}
-    .actions {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }}
-    button {{ border: 0; border-radius: 8px; background: #1769aa; color: white; cursor: pointer; font-size: 15px; font-weight: 600; padding: 11px 18px; }}
-    button.secondary {{ background: #344054; }}
-    button.warn {{ background: #9a3412; }}
-    button:disabled {{ cursor: wait; opacity: .65; }}
-    .danger-zone {{ border-top: 1px solid #e5e8ef; margin-top: 18px; padding-top: 18px; }}
-    .danger-zone p {{ color: #7c2d12; line-height: 1.6; margin: 0 0 12px; }}
-    .maintenance-panel {{ border-top: 1px solid #e5e8ef; margin-top: 28px; padding-top: 4px; }}
-    .maintenance-panel summary {{ align-items: center; cursor: pointer; display: flex; gap: 14px; justify-content: space-between; list-style: none; padding: 14px 0; }}
+    :root {{
+      color-scheme: light;
+      --bg: #f7f7f4;
+      --surface: #ffffff;
+      --surface-soft: #f2f2ee;
+      --border: #deded7;
+      --border-strong: #c9c9c1;
+      --text: #111111;
+      --muted: #5f5f58;
+      --muted-strong: #3f3f3a;
+      --green: #10a37f;
+      --green-soft: #e7f6f1;
+      --amber: #8a5a12;
+      --amber-soft: #f6ead6;
+      --red: #8f3a2e;
+      --red-soft: #f5e7e3;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+    }}
+    main {{
+      margin: 0 auto;
+      max-width: 880px;
+      padding: 32px 22px 42px;
+    }}
+    .panel {{
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+    }}
+    h1 {{
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0 0 18px;
+    }}
+    h2 {{
+      border-top: 1px solid var(--border);
+      font-size: 17px;
+      font-weight: 600;
+      margin: 28px 0 14px;
+      padding-top: 24px;
+    }}
+    .state {{
+      color: var(--text);
+      font-size: 34px;
+      font-weight: 560;
+      line-height: 1.12;
+      margin: 0 0 12px;
+    }}
+    .message, .note {{
+      color: var(--muted-strong);
+      line-height: 1.65;
+      margin: 0;
+    }}
+    .note {{
+      border-top: 1px solid var(--border);
+      margin-top: 28px;
+      padding-top: 18px;
+    }}
+    .actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }}
+    button {{
+      align-items: center;
+      background: var(--text);
+      border: 1px solid var(--text);
+      border-radius: 999px;
+      color: #ffffff;
+      cursor: pointer;
+      display: inline-flex;
+      font-size: 14px;
+      font-weight: 600;
+      justify-content: center;
+      line-height: 1.2;
+      min-height: 40px;
+      padding: 10px 16px;
+      transition: background .16s ease, border-color .16s ease, color .16s ease, opacity .16s ease;
+    }}
+    button:hover:not(:disabled) {{ background: #2c2c2c; border-color: #2c2c2c; }}
+    button.secondary, .provider-card-actions .provider-edit, #cancelProvider, #saveSpeed {{
+      background: var(--surface);
+      border-color: var(--border-strong);
+      color: var(--text);
+    }}
+    button.secondary:hover:not(:disabled),
+    .provider-card-actions .provider-edit:hover:not(:disabled),
+    #cancelProvider:hover:not(:disabled),
+    #saveSpeed:hover:not(:disabled) {{
+      background: var(--surface-soft);
+      border-color: var(--text);
+      color: var(--text);
+    }}
+    button.warn {{
+      background: var(--red);
+      border-color: var(--red);
+      color: #ffffff;
+    }}
+    button.warn:hover:not(:disabled) {{ background: #743126; border-color: #743126; }}
+    button:disabled {{
+      cursor: wait;
+      opacity: .58;
+    }}
+    button:focus-visible, input:focus-visible, summary:focus-visible {{
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }}
+    .danger-zone {{
+      background: var(--red-soft);
+      border: 1px solid #e7c7bf;
+      border-radius: 10px;
+      margin-top: 18px;
+      padding: 16px;
+    }}
+    .danger-zone p {{
+      color: #5f2219;
+      line-height: 1.6;
+      margin: 0 0 12px;
+    }}
+    .maintenance-panel {{
+      border-top: 1px solid var(--border);
+      margin-top: 28px;
+      padding-top: 2px;
+    }}
+    .maintenance-panel summary {{
+      align-items: center;
+      cursor: pointer;
+      display: flex;
+      gap: 14px;
+      justify-content: space-between;
+      list-style: none;
+      padding: 17px 0;
+    }}
     .maintenance-panel summary::-webkit-details-marker {{ display: none; }}
-    .summary-copy {{ display: grid; gap: 3px; min-width: 0; }}
-    .summary-copy strong {{ font-size: 17px; font-weight: 600; }}
-    .summary-copy span:last-child {{ color: #344054; font-size: 14px; overflow-wrap: anywhere; }}
-    .summary-action {{ border: 1px solid #cbd5e1; border-radius: 999px; color: #344054; flex: 0 0 auto; font-size: 13px; font-weight: 650; padding: 5px 10px; }}
-    .maintenance-body {{ border-top: 1px solid #e5e8ef; padding-top: 14px; }}
-    .provider-panel-header {{ align-items: start; display: flex; gap: 14px; justify-content: space-between; margin-bottom: 14px; }}
-    .provider-panel-header h2 {{ margin: 0; }}
-    .provider-tabs {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }}
-    .provider-tab {{ border: 1px solid #cbd5e1; border-radius: 999px; color: #344054; font-size: 13px; font-weight: 650; padding: 5px 10px; }}
-    .provider-tab.active {{ background: #111827; border-color: #111827; color: white; }}
-    .provider-list {{ display: grid; gap: 12px; }}
-    .provider-card {{ background: #f8fafc; border: 1px solid #d9dee7; border-radius: 8px; display: flex; gap: 14px; justify-content: space-between; padding: 14px; }}
-    .provider-card.current {{ background: white; border-color: #c7d2fe; box-shadow: inset 0 0 0 1px #e0e7ff; }}
-    .provider-main {{ display: flex; gap: 12px; min-width: 0; }}
-    .provider-avatar {{ align-items: center; background: #dbeafe; border-radius: 999px; color: #1d4ed8; display: inline-flex; flex: 0 0 auto; font-size: 16px; font-weight: 700; height: 36px; justify-content: center; width: 36px; }}
-    .provider-info {{ display: grid; gap: 4px; min-width: 0; }}
-    .provider-info strong {{ font-size: 16px; }}
-    .provider-url, .provider-auth-state {{ color: #344054; font-size: 13px; overflow-wrap: anywhere; }}
-    .provider-card-actions {{ align-items: center; display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }}
-    .provider-card-actions button {{ padding: 8px 12px; }}
-    .provider-card-actions .provider-edit {{ background: #344054; }}
-    .provider-editor {{ border-top: 1px solid #e5e8ef; margin-top: 16px; padding-top: 16px; }}
-    .provider-editor-title {{ align-items: center; display: flex; gap: 10px; justify-content: space-between; margin-bottom: 10px; }}
-    .provider-editor-title h3 {{ font-size: 16px; margin: 0; }}
-    .provider-summary {{ border-top: 1px solid #e5e8ef; border-bottom: 1px solid #e5e8ef; padding: 14px 0; }}
-    .provider-title {{ align-items: center; display: flex; gap: 12px; justify-content: space-between; }}
-    .provider-title strong {{ display: block; font-size: 18px; margin-top: 3px; }}
-    .muted {{ color: #667085; font-size: 13px; }}
-    .status-pill {{ border-radius: 999px; display: inline-flex; font-size: 13px; font-weight: 650; padding: 5px 10px; white-space: nowrap; }}
-    .status-pill.ok {{ background: #dcfce7; color: #166534; }}
-    .status-pill.warn {{ background: #fef3c7; color: #92400e; }}
-    .status-pill.idle {{ background: #e5e7eb; color: #344054; }}
-    dl {{ display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 14px 0 0; }}
-    dt {{ color: #667085; font-size: 13px; }}
-    dd {{ color: #17202a; font-size: 14px; margin: 3px 0 0; overflow-wrap: anywhere; }}
-    form {{ display: grid; gap: 10px; margin-top: 14px; }}
-    label {{ display: grid; gap: 6px; color: #344054; font-size: 14px; }}
-    input, select {{ border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; padding: 10px 12px; }}
-    fieldset {{ border: 0; margin: 0; padding: 0; }}
-    legend {{ color: #344054; font-size: 14px; margin-bottom: 6px; }}
+    .summary-copy {{
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }}
+    .summary-copy strong {{
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 600;
+    }}
+    .summary-copy span:last-child {{
+      color: var(--muted);
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }}
+    .summary-action {{
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      color: var(--text);
+      flex: 0 0 auto;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 7px 12px;
+    }}
+    .maintenance-body {{
+      border-top: 1px solid var(--border);
+      padding-top: 18px;
+    }}
+    .provider-panel-header {{
+      align-items: flex-start;
+      display: flex;
+      gap: 14px;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }}
+    .provider-panel-header h2 {{
+      border: 0;
+      margin: 0;
+      padding: 0;
+    }}
+    .provider-tabs {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 9px;
+    }}
+    .provider-tab {{
+      background: var(--surface-soft);
+      border: 1px solid transparent;
+      border-radius: 999px;
+      color: var(--muted-strong);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 11px;
+    }}
+    .provider-tab.active {{
+      background: var(--text);
+      border-color: var(--text);
+      color: #ffffff;
+    }}
+    .provider-list {{
+      display: grid;
+      gap: 10px;
+    }}
+    .provider-card {{
+      align-items: flex-start;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      gap: 14px;
+      justify-content: space-between;
+      padding: 14px;
+    }}
+    .provider-card.current {{
+      background: var(--green-soft);
+      border-color: rgba(16, 163, 127, .28);
+    }}
+    .provider-main {{
+      display: flex;
+      gap: 12px;
+      min-width: 0;
+    }}
+    .provider-avatar {{
+      align-items: center;
+      background: var(--text);
+      border-radius: 50%;
+      color: #ffffff;
+      display: inline-flex;
+      flex: 0 0 auto;
+      font-size: 14px;
+      font-weight: 600;
+      height: 34px;
+      justify-content: center;
+      width: 34px;
+    }}
+    .provider-info {{
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }}
+    .provider-info strong {{
+      font-size: 15px;
+      font-weight: 600;
+    }}
+    .provider-url, .provider-auth-state {{
+      color: var(--muted);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }}
+    .provider-card-actions {{
+      align-items: center;
+      display: flex;
+      flex: 0 0 auto;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }}
+    .provider-card-actions button {{
+      min-height: 34px;
+      padding: 7px 12px;
+    }}
+    .provider-editor {{
+      border-top: 1px solid var(--border);
+      margin-top: 18px;
+      padding-top: 18px;
+    }}
+    .provider-editor-title {{
+      align-items: center;
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }}
+    .provider-editor-title h3 {{
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0;
+    }}
+    .provider-summary {{
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 15px;
+    }}
+    .provider-title {{
+      align-items: center;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+    }}
+    .provider-title strong {{
+      display: block;
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 4px;
+    }}
+    .muted {{
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .status-pill {{
+      border: 1px solid transparent;
+      border-radius: 999px;
+      display: inline-flex;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 5px 10px;
+      white-space: nowrap;
+    }}
+    .status-pill.ok {{
+      background: var(--green-soft);
+      border-color: rgba(16, 163, 127, .24);
+      color: #08745d;
+    }}
+    .status-pill.warn {{
+      background: var(--amber-soft);
+      border-color: rgba(138, 90, 18, .2);
+      color: var(--amber);
+    }}
+    .status-pill.idle {{
+      background: var(--surface-soft);
+      border-color: var(--border);
+      color: var(--muted-strong);
+    }}
+    dl {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin: 14px 0 0;
+    }}
+    dt {{
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    dd {{
+      color: var(--text);
+      font-size: 14px;
+      margin: 3px 0 0;
+      overflow-wrap: anywhere;
+    }}
+    form {{
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }}
+    form button {{
+      justify-self: start;
+    }}
+    label {{
+      color: var(--muted-strong);
+      display: grid;
+      font-size: 14px;
+      gap: 7px;
+    }}
+    input, select {{
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 15px;
+      min-height: 42px;
+      padding: 10px 12px;
+    }}
+    input[type="radio"] {{
+      accent-color: var(--green);
+      min-height: auto;
+    }}
+    fieldset {{
+      border: 0;
+      margin: 0;
+      padding: 0;
+    }}
+    legend {{
+      color: var(--muted-strong);
+      font-size: 14px;
+      margin-bottom: 6px;
+    }}
     .actions.compact {{ margin-top: 4px; }}
-    .segments {{ display: flex; flex-wrap: wrap; gap: 8px; }}
-    .segments label {{ align-items: center; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; display: flex; flex: 1 1 120px; gap: 8px; padding: 10px 12px; }}
-    .segments input {{ margin: 0; padding: 0; }}
-    details {{ margin-top: 24px; border-top: 1px solid #e5e8ef; padding-top: 18px; }}
-    pre {{ background: #111827; border-radius: 8px; color: #e5e7eb; overflow: auto; padding: 16px; }}
-    @media (max-width: 640px) {{ .provider-panel-header, .provider-card {{ flex-direction: column; }} .provider-card-actions {{ justify-content: flex-start; }} }}
+    .segments {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }}
+    .segments label {{
+      align-items: center;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      flex: 1 1 140px;
+      gap: 9px;
+      min-height: 42px;
+      padding: 10px 12px;
+    }}
+    .segments label:has(input:checked) {{
+      background: var(--green-soft);
+      border-color: rgba(16, 163, 127, .36);
+      color: #075f4d;
+    }}
+    .segments input {{
+      margin: 0;
+      padding: 0;
+    }}
+    details {{
+      margin-top: 24px;
+      border-top: 1px solid var(--border);
+      padding-top: 18px;
+    }}
+    pre {{
+      background: #171717;
+      border-radius: 10px;
+      color: #eeeeee;
+      font-size: 13px;
+      line-height: 1.5;
+      overflow: auto;
+      padding: 16px;
+    }}
+    @media (max-width: 640px) {{
+      main {{ padding: 22px 14px 32px; }}
+      .panel {{ border-radius: 10px; padding: 20px; }}
+      .state {{ font-size: 28px; }}
+      .provider-panel-header, .provider-card {{ flex-direction: column; }}
+      .provider-card-actions {{ justify-content: flex-start; }}
+      button {{ width: 100%; }}
+      .provider-card-actions button, #newProvider, #cancelProvider {{ width: auto; }}
+      dl {{ grid-template-columns: 1fr; }}
+    }}
   </style>
 </head>
 <body>
