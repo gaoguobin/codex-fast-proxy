@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 
@@ -244,13 +245,30 @@ def run_uninstall(codex_home: str | None, confirm_chatgpt_direct_uninstall: bool
             "Codex 已恢复到原模型服务。请重启 Codex，重启后再次打开控制面板完成清理。",
         )
     else:
-        result["control_ui_cleanup"] = {"path": str(paths.app_home)}
+        result["control_ui_cleanup"] = control_ui_cleanup(paths, manager.source_repo_root())
         result["user_state"] = state(
             "uninstalled",
             "已清理完成",
-            "本地代理已停止，相关状态会在控制面板关闭后清理。Codex 会继续使用原模型服务。",
+            "本地代理已停止。控制面板关闭后会移除本地安装、状态、skill 和备份，Codex 会继续使用原模型服务。",
         )
     return result
+
+
+def control_ui_cleanup(paths: Any, repo_root: Path) -> dict[str, str]:
+    expected_repo = paths.codex_home / "codex-fast-proxy"
+    try:
+        deep_removal = repo_root.resolve() == expected_repo.resolve()
+    except OSError:
+        deep_removal = False
+    if not deep_removal:
+        return {"mode": "runtime_state", "path": str(paths.app_home)}
+    return {
+        "mode": "deep_install_removal",
+        "app_home": str(paths.app_home),
+        "repo_root": str(repo_root),
+        "backup_dir": str(paths.backup_dir),
+        "package": "codex-fast-proxy",
+    }
 
 
 def manager_args(manager: Any, command: str, codex_home: str | None, *args: str) -> Any:

@@ -341,6 +341,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         {{ delay: 6000, label: '正在验证模型服务...', message: '正在连接当前模型服务，首次启用可能需要几十秒。' }},
         {{ delay: 18000, label: '模型服务响应较慢...', message: '仍在等待模型服务响应，完成后页面会自动更新。' }}
       ],
+      uninstall: [
+        {{ delay: 0, label: '正在恢复直连...', message: '正在恢复 Codex 原模型服务，并准备清理本地代理。' }},
+        {{ delay: 1200, label: '正在清理...', message: '正在移除本地状态、安装文件和 skill 链接，控制面板会最后关闭。' }}
+      ],
       default: [
         {{ delay: 0, label: '处理中...', message: null }}
       ]
@@ -499,15 +503,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     function shouldReloadForSnapshot(snapshot) {{
       const userState = snapshot.user_state || {{}};
-      const action = userState.primary_action || 'diagnostics';
       const terminalState = ['cleanup_pending', 'uninstalled_deferred', 'uninstalled'].includes(userState.code);
-      const currentAction = $('primary').dataset.action || 'diagnostics';
       const hasRuntimeControls = Boolean($('update') || $('uninstall'));
       const shouldShowRuntimeControls = Boolean(snapshot.base_url) && !terminalState;
       const hasProviderPanel = Boolean($('providerPanel'));
       const shouldShowProviderPanel = Array.isArray(snapshot.providers) && snapshot.providers.length > 0 && !terminalState;
-      return currentAction !== action ||
-        hasRuntimeControls !== shouldShowRuntimeControls ||
+      return hasRuntimeControls !== shouldShowRuntimeControls ||
         hasProviderPanel !== shouldShowProviderPanel;
     }}
     function render(snapshot) {{

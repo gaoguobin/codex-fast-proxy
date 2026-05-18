@@ -31,6 +31,7 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     is_loopback_host,
     open_control_ui,
     render_page,
+    schedule_install_cleanup,
     schedule_control_ui_restart,
     schedule_path_cleanup,
     start_background_server,
@@ -261,6 +262,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("data.action.control_ui.reload_after_ms", html)
         self.assertIn("shouldReloadForSnapshot(snapshot)", html)
         self.assertIn("window.location.reload();", html)
+        self.assertNotIn("currentAction !== action", html)
 
     def test_control_page_maps_preserve_policy_to_standard_speed_mode(self) -> None:
         html = render_page(
@@ -371,6 +373,43 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(response["shutdown_control_ui"])
         self.assertEqual(response["action"]["control_ui_cleanup"]["status"], "scheduled")
 
+    def test_uninstall_control_action_schedules_deep_install_cleanup_last(self) -> None:
+        handler = object.__new__(ControlHandler)
+        handler.server = mock.Mock(
+            codex_home=str(self.codex_home),
+            provider=None,
+            server_address=("127.0.0.1", 8786),
+        )
+        handler.read_body_json = mock.Mock(return_value={})
+
+        cleanup = {
+            "mode": "deep_install_removal",
+            "app_home": str(self.paths.app_home),
+            "repo_root": str(self.codex_home / "codex-fast-proxy"),
+            "backup_dir": str(self.paths.backup_dir),
+            "package": "codex-fast-proxy",
+        }
+        with (
+            mock.patch("codex_fast_proxy.actions.run_uninstall", return_value={
+                "status": "uninstalled",
+                "control_ui_cleanup": cleanup,
+                "user_state": {"title": "已清理完成"},
+            }),
+            mock.patch("codex_fast_proxy.control_ui.schedule_install_cleanup", return_value={
+                "status": "scheduled",
+                "mode": "deep_install_removal",
+                "pid": 1234,
+                "delay_seconds": 4.0,
+            }) as schedule_cleanup,
+        ):
+            response = handler.run_action("uninstall")
+
+        schedule_cleanup.assert_called_once_with(cleanup)
+        self.assertTrue(response["shutdown_control_ui"])
+        self.assertEqual(response["shutdown_after_seconds"], 2.5)
+        self.assertEqual(response["action"]["shutdown_after_seconds"], 2.5)
+        self.assertEqual(response["action"]["control_ui_cleanup"]["mode"], "deep_install_removal")
+
     def test_uninstall_confirmation_uses_safe_chinese_copy(self) -> None:
         with mock.patch("codex_fast_proxy.manager.enabled_installation", return_value=(True, "acme")):
             with mock.patch("codex_fast_proxy.manager.uninstall_result", return_value=({
@@ -388,7 +427,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("API Key", result["user_state"]["message"])
         self.assertNotIn("401", result["user_state"]["message"])
 
-    def test_uninstall_cleanup_keeps_state_until_control_ui_shutdown(self) -> None:
+    def test_uninstall_cleanup_schedules_deep_install_removal_when_installed_repo_is_active(self) -> None:
         captured: dict[str, object] = {}
 
         def fake_uninstall(args: object) -> tuple[dict[str, object], int]:
@@ -398,6 +437,7 @@ class ControlUiTests(unittest.TestCase):
         with (
             mock.patch("codex_fast_proxy.manager.enabled_installation", return_value=(False, "acme")),
             mock.patch("codex_fast_proxy.manager.uninstall_result", side_effect=fake_uninstall),
+            mock.patch("codex_fast_proxy.manager.source_repo_root", return_value=self.codex_home / "codex-fast-proxy"),
         ):
             result = run_uninstall(str(self.codex_home))
 
@@ -405,6 +445,23 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(getattr(args, "keep_state"))
         self.assertFalse(getattr(args, "defer_stop"))
         self.assertEqual(result["user_state"]["title"], "已清理完成")
+        self.assertEqual(result["control_ui_cleanup"]["mode"], "deep_install_removal")
+        self.assertEqual(result["control_ui_cleanup"]["app_home"], str(self.paths.app_home))
+        self.assertEqual(result["control_ui_cleanup"]["repo_root"], str(self.codex_home / "codex-fast-proxy"))
+        self.assertEqual(result["control_ui_cleanup"]["backup_dir"], str(self.paths.backup_dir))
+
+    def test_uninstall_cleanup_falls_back_to_runtime_state_for_dev_repo(self) -> None:
+        with (
+            mock.patch("codex_fast_proxy.manager.enabled_installation", return_value=(False, "acme")),
+            mock.patch("codex_fast_proxy.manager.uninstall_result", return_value=({
+                "status": "uninstalled",
+                "stop_result": {"status": "stopped"},
+            }, 0)),
+            mock.patch("codex_fast_proxy.manager.source_repo_root", return_value=ROOT),
+        ):
+            result = run_uninstall(str(self.codex_home))
+
+        self.assertEqual(result["control_ui_cleanup"]["mode"], "runtime_state")
         self.assertEqual(result["control_ui_cleanup"]["path"], str(self.paths.app_home))
 
     def test_confirmation_page_hides_normal_uninstall_and_shows_danger_zone(self) -> None:
@@ -758,6 +815,32 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(command[3], str(self.paths.app_home))
         self.assertEqual(result["status"], "scheduled")
         self.assertEqual(result["pid"], 1234)
+
+    def test_schedule_install_cleanup_unlinks_skill_uninstalls_package_and_delays_removal(self) -> None:
+        cleanup = {
+            "mode": "deep_install_removal",
+            "app_home": str(self.paths.app_home),
+            "repo_root": str(self.codex_home / "codex-fast-proxy"),
+            "backup_dir": str(self.paths.backup_dir),
+            "package": "codex-fast-proxy",
+        }
+        with mock.patch("codex_fast_proxy.control_ui.subprocess.Popen") as popen:
+            popen.return_value.pid = 1234
+            result = schedule_install_cleanup(cleanup, delay=0.1)
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command[0], sys.executable)
+        self.assertEqual(command[1], "-c")
+        self.assertIn("pip", command[2])
+        self.assertIn("uninstall", command[2])
+        self.assertEqual(command[3], "0.1")
+        self.assertIn(str(self.paths.app_home), command)
+        self.assertIn(str(self.codex_home / "codex-fast-proxy"), command)
+        self.assertIn(str(self.paths.backup_dir), command)
+        self.assertIn("codex-fast-proxy", command)
+        self.assertEqual(result["status"], "scheduled")
+        self.assertEqual(result["mode"], "deep_install_removal")
+        self.assertEqual(result["delay_seconds"], 0.1)
 
     def test_schedule_control_ui_restart_reuses_current_port(self) -> None:
         with mock.patch("codex_fast_proxy.control_ui.subprocess.Popen") as popen:

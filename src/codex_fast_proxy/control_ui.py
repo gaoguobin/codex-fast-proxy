@@ -15,6 +15,7 @@ from typing import Any
 from .control_ui_render import CONTROL_TOKEN_HEADER, render_page
 from .models import paths_for
 from .ports import find_available_port
+from .skill_link import skill_namespace_path, skill_target_path
 
 
 RESERVED_PORTS = {8787}
@@ -35,6 +36,61 @@ for _ in range(80):
         break
     except OSError:
         time.sleep(0.1)
+"""
+DELAYED_INSTALL_CLEANUP_SCRIPT = """
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+def remove_tree(path):
+    for _ in range(80):
+        try:
+            shutil.rmtree(path)
+            break
+        except FileNotFoundError:
+            break
+        except OSError:
+            time.sleep(0.1)
+
+
+def remove_skill_link(path, target):
+    try:
+        if not path.exists() and not path.is_symlink():
+            return
+        if path.resolve(strict=True) != target.resolve(strict=True):
+            return
+        if path.is_symlink():
+            path.unlink()
+        else:
+            path.rmdir()
+    except OSError:
+        return
+
+
+delay = float(sys.argv[1])
+app_home = Path(sys.argv[2])
+repo_root = Path(sys.argv[3])
+backup_dir = Path(sys.argv[4])
+package = sys.argv[5]
+skill_link = Path(sys.argv[6])
+skill_target = Path(sys.argv[7])
+
+time.sleep(delay)
+remove_skill_link(skill_link, skill_target)
+subprocess.run(
+    [sys.executable, "-m", "pip", "uninstall", "-y", package],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    check=False,
+    timeout=120,
+)
+remove_tree(backup_dir)
+remove_tree(app_home)
+remove_tree(repo_root)
 """
 DELAYED_UI_RESTART_SCRIPT = """
 import http.client
@@ -123,7 +179,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             result = self.run_action(action)
             self.respond_json({"status": "ok", **result})
             if result.get("shutdown_control_ui"):
-                self.shutdown_soon()
+                self.shutdown_soon(float(result.get("shutdown_after_seconds") or 0.2))
         except Exception as exc:
             snapshot = collect_snapshot(self.server)
             snapshot["last_error"] = {"action": action, "message": str(exc)}
@@ -173,9 +229,16 @@ class ControlHandler(BaseHTTPRequestHandler):
         elif action == "uninstall":
             result = run_uninstall(self.server.codex_home, bool(body.get("confirm")))
             cleanup = result.get("control_ui_cleanup") if isinstance(result.get("control_ui_cleanup"), dict) else None
-            if cleanup and isinstance(cleanup.get("path"), str):
-                result["control_ui_cleanup"] = schedule_path_cleanup(Path(cleanup["path"]))
+            if cleanup and cleanup.get("mode") == "deep_install_removal":
+                result["control_ui_cleanup"] = schedule_install_cleanup(cleanup)
                 shutdown_control_ui = result["control_ui_cleanup"].get("status") == "scheduled"
+                if shutdown_control_ui:
+                    result["shutdown_after_seconds"] = 2.5
+            elif cleanup and isinstance(cleanup.get("path"), str):
+                result["control_ui_cleanup"] = schedule_path_cleanup(Path(cleanup["path"]), delay=3.0)
+                shutdown_control_ui = result["control_ui_cleanup"].get("status") == "scheduled"
+                if shutdown_control_ui:
+                    result["shutdown_after_seconds"] = 2.5
         else:
             raise ValueError("Unknown action.")
 
@@ -185,6 +248,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         response = {"action": result, "snapshot": snapshot}
         if shutdown_control_ui:
             response["shutdown_control_ui"] = True
+            response["shutdown_after_seconds"] = result.get("shutdown_after_seconds", 0.2)
         return response
 
     def start_replacement_control_ui(self) -> dict[str, Any]:
@@ -198,8 +262,8 @@ class ControlHandler(BaseHTTPRequestHandler):
         host, port = self.server.server_address[:2]
         return schedule_control_ui_restart(self.server.codex_home, self.server.provider, str(host), int(port))
 
-    def shutdown_soon(self) -> None:
-        timer = threading.Timer(0.2, self.server.shutdown)
+    def shutdown_soon(self, delay: float = 0.2) -> None:
+        timer = threading.Timer(delay, self.server.shutdown)
         timer.daemon = True
         timer.start()
 
@@ -425,6 +489,44 @@ def schedule_path_cleanup(path: Path, delay: float = 1.0) -> dict[str, Any]:
     except OSError as exc:
         return {"status": "error", "path": str(path), "error": str(exc)}
     return {"status": "scheduled", "path": str(path), "pid": process.pid}
+
+
+def schedule_install_cleanup(cleanup: dict[str, Any], delay: float = 4.0) -> dict[str, Any]:
+    repo_root = Path(str(cleanup["repo_root"]))
+    command = [
+        sys.executable,
+        "-c",
+        DELAYED_INSTALL_CLEANUP_SCRIPT,
+        str(delay),
+        str(cleanup["app_home"]),
+        str(repo_root),
+        str(cleanup["backup_dir"]),
+        str(cleanup["package"]),
+        str(skill_namespace_path()),
+        str(skill_target_path(repo_root)),
+    ]
+    kwargs: dict[str, Any] = {
+        "cwd": str(Path.home()),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "start_new_session": os.name != "nt",
+    }
+    try:
+        process = subprocess.Popen(command, **kwargs)
+    except OSError as exc:
+        return {"status": "error", "mode": cleanup.get("mode"), "error": str(exc)}
+    return {
+        "status": "scheduled",
+        "mode": cleanup.get("mode"),
+        "app_home": str(cleanup["app_home"]),
+        "repo_root": str(repo_root),
+        "backup_dir": str(cleanup["backup_dir"]),
+        "package": str(cleanup["package"]),
+        "pid": process.pid,
+        "delay_seconds": delay,
+    }
 
 
 def schedule_control_ui_restart(

@@ -17,13 +17,16 @@ Report the printed URL as plain text. The UI uses the manager uninstall path:
 
 - if Codex still points to the local proxy, it restores Codex config first and defers stopping the
   proxy so the current conversation is not cut off;
-- after the user restarts Codex or opens a new CLI, clicking again completes proxy state cleanup;
+- after the user restarts Codex or opens a new CLI, clicking again completes cleanup and schedules
+  removal of the local runtime state, editable package, repository checkout, skill link, and backup
+  directory;
 - if ChatGPT login is active and direct upstream may return 401, the manager returns
   `confirmation_required` before changing files.
 
-The normal Control UI path restores the user's familiar Codex model-service setup and cleans runtime
-state. It does not remove the installed repository, uninstall the Python package, or remove the skill
-link.
+The normal Control UI path restores the user's familiar Codex model-service setup first, returns a
+final success state to the page, and only then lets the Control UI shut down while a delayed cleanup
+removes the installed repository, editable Python package, skill link, runtime state, and local
+backup directory.
 
 ## CLI fallback
 
@@ -56,15 +59,9 @@ to API-key/third-party provider auth before uninstalling, or explicitly continue
 ChatGPT-login direct-upstream 401 risk.
 
 After cleanup, tell the user to restart Codex App or open a new CLI process so Codex reloads the
-restored provider config.
-
-## Deep install removal
-
-Do not remove the repository, editable Python install, or skill link unless the user explicitly asks
-for deep removal. Deep removal may delete `~/.codex/codex-fast-proxy`, uninstall the package, and
-remove the skill link under `~/.agents`; describe that scope and wait for confirmation first. If the
-user confirms deep removal after the proxy has already been disabled, use the manager-owned skill
-unlink before deleting files:
+restored provider config. If the UI cannot be used and the user explicitly asks for complete
+cleanup after the proxy has already been disabled, use the manager-owned skill unlink before
+deleting files:
 
 ```powershell
 if (Test-Path $repoRoot) {
@@ -73,6 +70,10 @@ if (Test-Path $repoRoot) {
 & $pythonCmd -m pip uninstall -y codex-fast-proxy
 if (Test-Path $repoRoot) {
     Remove-Item -LiteralPath $repoRoot -Recurse -Force
+}
+$backupDir = Join-Path (Join-Path (Join-Path $HOME '.codex') 'backups') 'codex-fast-proxy'
+if (Test-Path $backupDir) {
+    Remove-Item -LiteralPath $backupDir -Recurse -Force
 }
 ```
 
