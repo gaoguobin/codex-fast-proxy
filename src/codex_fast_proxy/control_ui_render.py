@@ -61,7 +61,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     show_maintenance = bool(snapshot.get("base_url")) and state_code not in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
     if show_maintenance:
         provider_label = html.escape(display_text(snapshot.get("provider"), "未选择"))
-        proxy_value = html.escape(display_text(snapshot.get("base_url"), "未接管"))
         upstream_value = html.escape(str(snapshot.get("upstream_base") or ""), quote=True)
         upstream_label = html.escape(display_text(snapshot.get("upstream_base"), "未设置"))
         auth_label = html.escape(upstream_auth_label(snapshot))
@@ -94,14 +93,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           <span id="providerStatus" class="status-pill {status_class}">{html.escape(status_label)}</span>
         </div>
         <dl>
-          <div><dt>本地入口</dt><dd id="providerProxy">{proxy_value}</dd></div>
-          <div><dt>服务地址</dt><dd id="providerUpstream">{upstream_label}</dd></div>
+          <div><dt>模型服务</dt><dd id="providerUpstream">{upstream_label}</dd></div>
           <div><dt>API Key</dt><dd id="providerAuth">{auth_label}</dd></div>
           <div><dt>速度模式</dt><dd id="providerSpeed">{speed_label}</dd></div>
         </dl>
       </div>
       <form id="configForm" class="provider-form">
-        <label>服务地址
+        <label>模型服务地址
           <input id="upstreamBase" autocomplete="off" value="{upstream_value}" placeholder="https://api.example.com/v1">
         </label>
         <label>API Key
@@ -238,7 +236,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const providerName = $('providerName');
       if (!providerName) return;
       providerName.textContent = displayValue(snapshot.provider, '未选择');
-      $('providerProxy').textContent = displayValue(snapshot.base_url, '未接管');
       $('providerUpstream').textContent = displayValue(snapshot.upstream_base, '未设置');
       $('providerAuth').textContent = authLabel(snapshot);
       $('providerSpeed').textContent = speedLabel(snapshot);
