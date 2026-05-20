@@ -258,6 +258,27 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(timing["first_event_ms"], 100.0)
         self.assertEqual(timing["first_output_ms"], 400.0)
 
+    def test_stream_response_records_first_output_from_sse_event_name(self) -> None:
+        delta = json.dumps({"delta": "hello"}).encode("utf-8")
+        response = FakeLineResponse([
+            b"event: response.output_text.delta\n",
+            b"data: " + delta + b"\n",
+            b"\n",
+        ])
+        writer = BytesIO()
+        timing: dict[str, float] = {}
+
+        with mock.patch("codex_fast_proxy.proxy.time.perf_counter", side_effect=[20.1, 20.2]):
+            stream_response_body(response, writer, chunked=False, line_buffered=True, started_at=20.0, timing=timing)
+
+        self.assertEqual(writer.getvalue(), b"event: response.output_text.delta\ndata: {\"delta\": \"hello\"}\n\n")
+        self.assertEqual(timing["ttfb_ms"], 100.0)
+        self.assertEqual(timing["first_event_ms"], 100.0)
+        self.assertEqual(timing["first_output_ms"], 200.0)
+
+    def test_response_output_delta_uses_sse_event_type_when_payload_type_is_missing(self) -> None:
+        self.assertEqual(response_output_delta({"delta": "hello"}, "response.output_text.delta"), "hello")
+
     def test_response_output_delta_supports_chat_completion_delta_strings(self) -> None:
         self.assertEqual(response_output_delta({"choices": [{"delta": "hello"}]}), "hello")
 

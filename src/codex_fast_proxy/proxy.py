@@ -222,10 +222,25 @@ def sse_json_from_line(line: bytes) -> Any:
         return None
 
 
-def response_output_delta(payload: Any) -> str:
+def sse_event_type_from_line(line: bytes) -> str | None:
+    stripped = line.strip()
+    if not stripped.startswith(b"event:"):
+        return None
+    event_type = stripped[6:].strip()
+    if not event_type:
+        return None
+    try:
+        return event_type.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def response_output_delta(payload: Any, event_type: str | None = None) -> str:
     if not isinstance(payload, dict):
         return ""
-    if payload.get("type") == "response.output_text.delta":
+    payload_type = payload.get("type")
+    effective_type = payload_type if isinstance(payload_type, str) else event_type
+    if effective_type == "response.output_text.delta":
         delta = payload.get("delta")
         return delta if isinstance(delta, str) else ""
     choices = payload.get("choices")
@@ -249,6 +264,7 @@ def record_response_timing(
     data: bytes,
     *,
     line_buffered: bool,
+    event_type: str | None = None,
 ) -> None:
     if not data.strip():
         return
@@ -257,7 +273,11 @@ def record_response_timing(
         first_event_ms = round((now - started_at) * 1000, 1)
         timing["first_event_ms"] = first_event_ms
         timing["ttfb_ms"] = first_event_ms
-    if line_buffered and "first_output_ms" not in timing and response_output_delta(sse_json_from_line(data)):
+    if (
+        line_buffered
+        and "first_output_ms" not in timing
+        and response_output_delta(sse_json_from_line(data), event_type)
+    ):
         timing["first_output_ms"] = round((now - started_at) * 1000, 1)
 
 
@@ -276,12 +296,25 @@ def stream_response_body(
     else:
         read = response.read
 
+    current_event_type: str | None = None
     while True:
         data = read(64 * 1024)
         if not data:
             break
         if started_at is not None and timing is not None:
-            record_response_timing(timing, started_at, data, line_buffered=line_buffered)
+            if line_buffered:
+                event_type = sse_event_type_from_line(data)
+                if event_type is not None:
+                    current_event_type = event_type
+            record_response_timing(
+                timing,
+                started_at,
+                data,
+                line_buffered=line_buffered,
+                event_type=current_event_type,
+            )
+            if line_buffered and not data.strip():
+                current_event_type = None
         if chunked:
             write_chunk(writer, data)
         else:
