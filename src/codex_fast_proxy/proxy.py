@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import http.client
 import json
 import os
 import signal
+import shutil
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -16,6 +19,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit
+
+try:
+    import zstandard
+except ImportError:  # pragma: no cover - optional local dependency
+    zstandard = None
 
 from . import __version__
 from .auth import resolve_env
@@ -156,6 +164,44 @@ def copy_response_headers(headers: Iterable[tuple[str, str]], chunked: bool) -> 
     return copied
 
 
+def decompress_zstd(body: bytes) -> bytes:
+    python_error: Exception | None = None
+
+    if zstandard is not None:
+        try:
+            with zstandard.ZstdDecompressor().stream_reader(body) as reader:
+                return reader.read()
+        except Exception as exc:
+            python_error = exc
+
+    zstd_bin = shutil.which("zstd")
+    if zstd_bin:
+        try:
+            result = subprocess.run(
+                [zstd_bin, "-dc"],
+                input=body,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
+            return result.stdout
+        except Exception as exc:
+            if python_error is not None:
+                raise python_error from exc
+            raise
+
+    if python_error is not None:
+        raise python_error
+    return body
+
+
+def compress_zstd(body: bytes) -> bytes:
+    if zstandard is None:
+        return body
+
+    return zstandard.ZstdCompressor().compress(body)
+
+
 def service_tier_patch(
     method: str,
     raw_path: str,
@@ -163,6 +209,7 @@ def service_tier_patch(
     content_type: str,
     service_tier: str,
     service_tier_policy: str = "inject_missing",
+    content_encoding: str = "",
 ) -> tuple[bytes, dict[str, Any]]:
     event = {
         "eligible": False,
@@ -171,6 +218,9 @@ def service_tier_patch(
         "service_tier_after": None,
         "stream": None,
         "json_error": None,
+        "request_body_len": len(body),
+        "request_body_magic": body[:4].hex() if body else "",
+        "request_content_encoding": content_encoding,
     }
 
     if method.upper() != "POST" or normalized_path(raw_path) != RESPONSES_PATH:
@@ -181,7 +231,14 @@ def service_tier_patch(
         return body, event
 
     try:
-        payload = json.loads(body.decode("utf-8"))
+        normalized_encoding = content_encoding.lower().strip()
+        if normalized_encoding == "gzip":
+            decoded_body = gzip.decompress(body)
+        elif normalized_encoding == "zstd" and zstandard is not None:
+            decoded_body = decompress_zstd(body)
+        else:
+            decoded_body = body
+        payload = json.loads(decoded_body.decode("utf-8"))
     except Exception as exc:
         event["json_error"] = type(exc).__name__
         return body, event
@@ -200,7 +257,13 @@ def service_tier_patch(
     event["service_tier_after"] = payload.get("service_tier", "<absent>")
     if not event["injected"]:
         return body, event
-    return compact_json(payload).encode("utf-8"), event
+
+    patched_body = compact_json(payload).encode("utf-8")
+    if normalized_encoding == "gzip":
+        return gzip.compress(patched_body), event
+    if normalized_encoding == "zstd" and zstandard is not None:
+        return compress_zstd(patched_body), event
+    return patched_body, event
 
 
 def write_chunk(writer: Any, data: bytes) -> None:
@@ -238,6 +301,35 @@ def stream_response_body(
     if chunked:
         writer.write(b"0\r\n\r\n")
     writer.flush()
+
+
+def read_chunked_request_body(reader: Any) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        size_line = reader.readline()
+        if not size_line:
+            raise ValueError("incomplete_chunked_request_body")
+
+        size_text = size_line.split(b";", 1)[0].strip()
+        try:
+            size = int(size_text, 16)
+        except ValueError as exc:
+            raise ValueError("invalid_chunked_request_body") from exc
+
+        if size == 0:
+            while True:
+                trailer_line = reader.readline()
+                if trailer_line in {b"", b"\n", b"\r\n"}:
+                    return b"".join(chunks)
+
+        chunk = reader.read(size)
+        if len(chunk) != size:
+            raise ValueError("incomplete_chunked_request_body")
+        chunks.append(chunk)
+
+        line_end = reader.readline()
+        if line_end not in {b"\n", b"\r\n"}:
+            raise ValueError("invalid_chunked_request_body")
 
 
 class FastProxyHandler(BaseHTTPRequestHandler):
@@ -285,6 +377,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             self.headers.get("Content-Type", ""),
             self.server.service_tier,
             getattr(self.server, "service_tier_effective_policy", "inject_missing"),
+            self.headers.get("Content-Encoding", ""),
         )
 
         upstream_path = upstream_request_path(
@@ -356,6 +449,10 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def read_request_body(self) -> bytes:
+        transfer_encoding = self.headers.get("Transfer-Encoding", "")
+        if "chunked" in transfer_encoding.lower():
+            return read_chunked_request_body(self.rfile)
+
         length = int(self.headers.get("Content-Length", "0") or "0")
         return self.rfile.read(length) if length > 0 else b""
 
@@ -423,6 +520,9 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "service_tier_effective_policy": getattr(self.server, "service_tier_effective_policy", "inject_missing"),
             "stream": patch_event["stream"],
             "json_error": patch_event["json_error"],
+            "request_body_len": patch_event.get("request_body_len"),
+            "request_body_magic": patch_event.get("request_body_magic"),
+            "request_content_encoding": patch_event.get("request_content_encoding"),
             "response_content_type": response_content_type,
             "error_type": error_type,
         }

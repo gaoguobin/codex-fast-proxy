@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import shutil
 import sys
@@ -27,10 +28,13 @@ from codex_fast_proxy.proxy import (  # noqa: E402
     copy_request_headers,
     dashboard_requested,
     parse_args,
+    read_chunked_request_body,
+    decompress_zstd,
     runtime_details,
     service_tier_patch,
     stream_response_body,
     upstream_request_path,
+    zstandard,
 )
 
 
@@ -136,6 +140,91 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(event["service_tier_before"], "<absent>")
         self.assertEqual(event["service_tier_after"], "<absent>")
 
+    def test_injects_missing_service_tier_in_gzip_json_body(self) -> None:
+        payload = {"model": "gpt-5.4", "stream": True}
+        raw_body = gzip.compress(json.dumps(payload).encode("utf-8"))
+        body, event = service_tier_patch(
+            "POST",
+            "/v1/responses",
+            raw_body,
+            "application/json",
+            "priority",
+            "inject_missing",
+            "gzip",
+        )
+
+        patched = json.loads(gzip.decompress(body))
+        self.assertEqual(patched["service_tier"], "priority")
+        self.assertTrue(event["injected"])
+        self.assertEqual(event["json_error"], None)
+
+    @unittest.skipIf(zstandard is None, "zstandard package is not installed")
+    def test_injects_missing_service_tier_in_zstd_json_body(self) -> None:
+        payload = {"model": "gpt-5.4", "stream": True}
+        raw_body = zstandard.ZstdCompressor().compress(json.dumps(payload).encode("utf-8"))
+        body, event = service_tier_patch(
+            "POST",
+            "/v1/responses",
+            raw_body,
+            "application/json",
+            "priority",
+            "inject_missing",
+            "zstd",
+        )
+
+        patched = json.loads(zstandard.ZstdDecompressor().decompress(body))
+        self.assertEqual(patched["service_tier"], "priority")
+        self.assertTrue(event["injected"])
+        self.assertEqual(event["json_error"], None)
+
+    @unittest.skipIf(zstandard is None, "zstandard package is not installed")
+    def test_injects_missing_service_tier_in_zstd_body_without_content_size(self) -> None:
+        payload = {"model": "gpt-5.4", "stream": True}
+        raw_body = zstandard.ZstdCompressor(write_content_size=False).compress(json.dumps(payload).encode("utf-8"))
+        body, event = service_tier_patch(
+            "POST",
+            "/v1/responses",
+            raw_body,
+            "application/json",
+            "priority",
+            "inject_missing",
+            "zstd",
+        )
+
+        patched = json.loads(decompress_zstd(body))
+        self.assertEqual(patched["service_tier"], "priority")
+        self.assertTrue(event["injected"])
+        self.assertEqual(event["json_error"], None)
+
+    @unittest.skipIf(zstandard is None or shutil.which("zstd") is None, "zstd fallback is not available")
+    def test_injects_missing_service_tier_when_python_zstd_stream_reader_fails(self) -> None:
+        payload = {"model": "gpt-5.4", "stream": True}
+        raw_body = zstandard.ZstdCompressor(write_content_size=False).compress(json.dumps(payload).encode("utf-8"))
+        original = zstandard.ZstdDecompressor
+
+        class BrokenDecompressor:
+            def stream_reader(self, _body: bytes) -> Any:
+                raise zstandard.ZstdError("forced stream failure")
+
+        try:
+            zstandard.ZstdDecompressor = BrokenDecompressor
+            body, event = service_tier_patch(
+                "POST",
+                "/v1/responses",
+                raw_body,
+                "application/json",
+                "priority",
+                "inject_missing",
+                "zstd",
+            )
+        finally:
+            zstandard.ZstdDecompressor = original
+
+        patched = json.loads(decompress_zstd(body))
+        self.assertEqual(patched["service_tier"], "priority")
+        self.assertTrue(event["injected"])
+        self.assertEqual(event["json_error"], None)
+
     def test_leaves_non_responses_paths_untouched(self) -> None:
         body = b'{"model":"gpt-5.4"}'
         patched, event = service_tier_patch("POST", "/v1/chat/completions", body, "application/json", "priority")
@@ -234,6 +323,58 @@ class ProxyPatchTests(unittest.TestCase):
         stream_response_body(response, writer, chunked=False, line_buffered=True)
 
         self.assertEqual(writer.getvalue(), b"event: response.output_text.delta\ndata: {\"x\":1}\n\n")
+
+    def test_chunked_request_body_is_dechunked_before_fast_injection(self) -> None:
+        temp_root = ROOT / ".test_tmp"
+        temp_root.mkdir(exist_ok=True)
+        temp_dir = temp_root / f"chunked-inject-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            log_path = temp_dir / "fast_proxy.jsonl"
+            raw_body = json.dumps({"model": "gpt-test", "stream": True}).encode("utf-8")
+            chunked_body = b"%X\r\n%s\r\n0\r\n\r\n" % (len(raw_body), raw_body)
+            connection = FakeConnection()
+            handler = FastProxyHandler.__new__(FastProxyHandler)
+            handler.command = "POST"
+            handler.path = "/v1/responses"
+            handler.headers = {
+                "Content-Type": "application/json",
+                "Transfer-Encoding": "chunked",
+            }
+            handler.rfile = BytesIO(chunked_body)
+            handler.server = SimpleNamespace(
+                proxy_base="/v1",
+                upstream_base_path="/v1",
+                upstream_netloc="api.example.test",
+                service_tier="priority",
+                service_tier_policy="inject_missing",
+                service_tier_effective_policy="inject_missing",
+                log_path=log_path,
+                log_lock=threading.Lock(),
+                verbose=False,
+                open_connection=lambda: connection,
+            )
+            handler.forward_response = lambda _response: None
+            handler.respond_bad_gateway = lambda: None
+
+            FastProxyHandler.proxy(handler)
+            event = json.loads(log_path.read_text(encoding="utf-8"))
+        finally:
+            shutil.rmtree(temp_dir)
+
+        forwarded = json.loads(connection.body)
+        self.assertEqual(forwarded["service_tier"], "priority")
+        self.assertEqual(connection.headers["Content-Length"], str(len(connection.body)))
+        self.assertNotIn("Transfer-Encoding", connection.headers)
+        self.assertTrue(event["service_tier_injected"])
+        self.assertEqual(event["service_tier_before"], "<absent>")
+        self.assertEqual(event["service_tier_after"], "priority")
+        self.assertIsNone(event["json_error"])
+
+    def test_read_chunked_request_body_handles_extensions_and_trailers(self) -> None:
+        body = read_chunked_request_body(BytesIO(b"5;foo=bar\r\nhello\r\n0\r\nx-test: ok\r\n\r\n"))
+
+        self.assertEqual(body, b"hello")
 
     def test_client_disconnect_during_stream_is_logged_without_bad_gateway(self) -> None:
         temp_root = ROOT / ".test_tmp"

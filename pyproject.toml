@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Codex App auth-split proxy for signing in with ChatGPT while using third-party OpenAI-compatible APIs."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "zstandard>=0.25.0",
+]
 license = { text = "MIT" }
 keywords = [
     "agent-skills",
