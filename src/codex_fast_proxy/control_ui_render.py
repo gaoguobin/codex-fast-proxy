@@ -467,16 +467,15 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
     base_url = compact_url(snapshot.get("base_url"), "未启用")
     upstream = compact_url(snapshot.get("upstream_base"), "未配置")
     return f"""
-      <details id="statusPanel" class="maintenance-panel">
-        <summary>
-          <span class="summary-copy">
+      <section id="statusPanel" class="detail-panel">
+        <div class="detail-panel-head">
+          <div>
             <span class="muted">状态</span>
-            <strong>{html.escape(proxy_status)}</strong>
-            <span>{html.escape(auth_text)}</span>
-          </span>
-          <span class="summary-action" data-open-label="收起" data-closed-label="查看">查看</span>
-        </summary>
-        <div class="maintenance-body">
+            <h2>{html.escape(proxy_status)}</h2>
+            <p>{html.escape(auth_text)}</p>
+          </div>
+        </div>
+        <div class="detail-panel-body">
           <div class="status-dashboard">
             <div class="route-map" aria-label="请求链路">
               <div class="route-node">
@@ -498,12 +497,8 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
               </div>
             </div>
           </div>
-          <h2 class="subsection-title">最近请求</h2>
-          {render_recent_events(snapshot)}
-          <h2 class="subsection-title">运行细节</h2>
-          {render_operational_signals(snapshot)}
         </div>
-      </details>
+      </section>
 """
 
 
@@ -551,16 +546,15 @@ def render_codex_config_panel(provider: dict[str, Any], terminal_state: bool) ->
     name = html.escape(str(provider.get("name") or "未选择"))
     base_url = html.escape(display_text(provider.get("base_url"), "未设置模型服务"))
     return f"""
-      <details id="codexConfigPanel" class="maintenance-panel">
-        <summary>
-          <span class="summary-copy">
+      <section id="codexConfigPanel" class="detail-panel">
+        <div class="detail-panel-head">
+          <div>
             <span class="muted">Codex 配置</span>
-            <strong>{name}</strong>
-            <span>来自 config.toml · 只读</span>
-          </span>
-          <span class="summary-action" data-open-label="收起" data-closed-label="查看">查看</span>
-        </summary>
-        <div class="maintenance-body">
+            <h2>{name}</h2>
+            <p>来自 config.toml · 只读</p>
+          </div>
+        </div>
+        <div class="detail-panel-body">
           <div class="readonly-config">
             <span>当前入口</span>
             <strong>{name}</strong>
@@ -569,7 +563,7 @@ def render_codex_config_panel(provider: dict[str, Any], terminal_state: bool) ->
           </div>
           <p class="readonly-note">启用前这里不管理 Codex 配置里的供应商；如需增删改，请继续使用你熟悉的配置工具。</p>
         </div>
-      </details>
+      </section>
 """
 
 
@@ -624,24 +618,26 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         })
         selected_provider_name = str(selected_record.get("name") or selected_provider or "")
         provider_management = f"""
-      <details id="providerPanel" class="maintenance-panel">
-        <summary>
-          <span class="summary-copy">
+      <section id="providerPanel" class="detail-panel provider-workspace">
+        <div class="detail-panel-head">
+          <div>
             <span class="muted">供应商</span>
-            <strong id="providerSummaryName">{summary_name}</strong>
-            <span id="providerSummaryUrl">{summary_url}</span>
-          </span>
-          <span class="summary-action" data-open-label="收起" data-closed-label="管理">管理</span>
-        </summary>
-        <div class="maintenance-body">
+            <h2 id="providerSummaryName">{summary_name}</h2>
+            <p id="providerSummaryUrl">{summary_url}</p>
+          </div>
+          <button id="newProvider" class="secondary" type="button">添加</button>
+        </div>
+        <p class="detail-note provider-note">已启用后，这里只管理本地代理配置；不会改写 Codex config.toml。</p>
+        <div class="provider-split">
+          <div class="provider-list-pane">
           <div class="provider-panel-header">
             <div>
-              <h2>供应商</h2>
+              <h3>已保存</h3>
             </div>
-            <button id="newProvider" type="button">添加</button>
           </div>
           <div id="providerList" class="provider-list">
             {render_provider_cards(providers, selected_provider_name)}
+          </div>
           </div>
           <div id="providerEditor" class="provider-editor" hidden>
             <div class="provider-editor-title">
@@ -678,7 +674,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             </form>
           </div>
         </div>
-      </details>
+      </section>
 """
 
     speed_controls = ""
@@ -691,16 +687,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         labels["saveSpeed"] = "保存速度模式"
         disabled_speed = "" if show_runtime_controls else " disabled"
         speed_controls = f"""
-      <details id="speedPanel" class="maintenance-panel">
-        <summary>
-          <span class="summary-copy">
+      <section id="speedPanel" class="detail-panel">
+        <div class="detail-panel-head">
+          <div>
             <span class="muted">速度模式</span>
-            <strong id="providerSpeed">{speed_label}</strong>
-            <span>当前策略</span>
-          </span>
+            <h2 id="providerSpeed">{speed_label}</h2>
+            <p>当前策略</p>
+          </div>
           <span id="providerStatus" class="status-pill {status_class}">{html.escape(status_label)}</span>
-        </summary>
-        <div class="maintenance-body">
+        </div>
+        <div class="detail-panel-body">
           <form id="speedForm" class="provider-form">
             <fieldset>
               <div class="segments">
@@ -711,11 +707,46 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             <button id="saveSpeed" type="submit"{disabled_speed}>保存速度模式</button>
           </form>
         </div>
-      </details>
+      </section>
 """
     snapshot_json = html.escape(json.dumps(snapshot, ensure_ascii=False))
     token_json = json.dumps(token)
     labels_json = json.dumps(labels, ensure_ascii=False)
+    nav_items = [
+        ("overview", "概览"),
+        ("providers", "供应商"),
+    ]
+    if speed_controls:
+        nav_items.append(("speed", "速度"))
+    nav_items.extend([
+        ("requests", "请求记录"),
+        ("advanced", "高级"),
+    ])
+    sidebar_nav = "\n".join(
+        f'<button class="nav-item{" active" if key == "overview" else ""}" type="button" data-view="{key}">{label}</button>'
+        for key, label in nav_items
+    )
+    login_hint = (
+        '<p class="hint-line">已检测到 ChatGPT 账户登录，速度控制由 Codex App 原生界面接管。</p>'
+        if snapshot.get("chatgpt_auth") and proxy_enabled else ""
+    )
+    provider_page_body = provider_management or codex_config_panel or '<p class="empty-state">还没有可管理的供应商。</p>'
+    provider_page_note = (
+        "管理本地代理使用的模型服务。"
+        if provider_management else
+        "代理启用前，这里只显示来自 Codex config.toml 的只读入口。"
+    )
+    speed_page = f"""
+        <section class="view-page" data-page="speed" hidden>
+          <div class="page-head">
+            <div>
+              <h1>速度</h1>
+              <p>选择代理写入 service_tier 的方式。</p>
+            </div>
+          </div>
+          {speed_controls}
+        </section>
+""" if speed_controls else ""
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -725,69 +756,131 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
   <style>
     :root {{
       color-scheme: light;
-      --bg: #f7f7f4;
+      --bg: #f5f5f4;
+      --sidebar: #ededec;
       --surface: #ffffff;
-      --surface-soft: #f2f2ee;
-      --border: #deded7;
-      --border-strong: #c9c9c1;
+      --surface-soft: #f7f7f6;
+      --surface-hover: #f0f0ef;
+      --border: #dededc;
+      --border-strong: #c8c8c5;
       --text: #111111;
-      --muted: #5f5f58;
-      --muted-strong: #3f3f3a;
+      --muted: #6a6a66;
+      --muted-strong: #42423f;
       --green: #10a37f;
-      --green-soft: #e7f6f1;
+      --green-soft: #eef8f4;
       --amber: #8a5a12;
-      --amber-soft: #f6ead6;
-      --red: #8f3a2e;
-      --red-soft: #f5e7e3;
+      --amber-soft: #f7efe0;
+      --red: #9a4238;
+      --red-soft: #f6e9e6;
+      --radius: 8px;
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       letter-spacing: 0;
     }}
     * {{ box-sizing: border-box; }}
+    [hidden] {{ display: none !important; }}
     body {{
       margin: 0;
       background: var(--bg);
       color: var(--text);
       font-size: 15px;
+      line-height: 1.45;
     }}
-    main {{
-      margin: 0 auto;
-      max-width: 880px;
-      padding: 32px 22px 42px;
+    .app-shell {{
+      background: var(--surface);
+      display: grid;
+      grid-template-columns: 212px minmax(0, 1fr);
+      min-height: 100vh;
     }}
-    .topbar {{
+    .sidebar {{
+      background: var(--sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      padding: 26px 14px;
+    }}
+    .brand {{
+      display: grid;
+      gap: 3px;
+      padding: 0 8px;
+    }}
+    .brand strong {{
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 620;
+    }}
+    .brand span {{
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .sidebar-nav {{
+      display: grid;
+      gap: 3px;
+    }}
+    .nav-item {{
+      align-items: center;
+      background: transparent;
+      border: 0;
+      border-radius: var(--radius);
+      color: var(--muted-strong);
+      display: flex;
+      font-size: 14px;
+      font-weight: 500;
+      justify-content: flex-start;
+      min-height: 34px;
+      padding: 8px 10px;
+      text-align: left;
+      width: 100%;
+    }}
+    .nav-item:hover:not(:disabled) {{
+      background: rgba(0, 0, 0, .045);
+      border-color: transparent;
+      color: var(--text);
+    }}
+    .nav-item.active {{
+      background: rgba(0, 0, 0, .08);
+      color: var(--text);
+      font-weight: 600;
+    }}
+    .content-shell {{
+      min-width: 0;
+      padding: 28px 36px 46px;
+    }}
+    .content-toolbar {{
       align-items: center;
       display: flex;
       gap: 16px;
       justify-content: space-between;
-      margin-bottom: 16px;
+      margin: 0 auto 28px;
+      max-width: 980px;
     }}
-    .topbar h1 {{
-      margin: 0;
-    }}
-    .topbar-actions {{
-      display: flex;
-      flex: 0 0 auto;
-      gap: 8px;
-    }}
-    .panel {{
-      --panel-pad: 28px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: var(--panel-pad);
-    }}
-    h1 {{
+    .content-toolbar span {{
       color: var(--muted);
-      font-size: 15px;
-      font-weight: 600;
-      margin: 0 0 18px;
+      font-size: 14px;
+      font-weight: 500;
     }}
-    h2 {{
-      border-top: 1px solid var(--border);
-      font-size: 17px;
-      font-weight: 600;
-      margin: 28px 0 14px;
-      padding-top: 24px;
+    .view-page {{
+      margin: 0 auto;
+      max-width: 980px;
+      min-width: 0;
+    }}
+    .page-head {{
+      align-items: flex-start;
+      display: flex;
+      gap: 16px;
+      justify-content: space-between;
+      margin-bottom: 22px;
+    }}
+    .page-head h1 {{
+      color: var(--text);
+      font-size: 30px;
+      font-weight: 560;
+      line-height: 1.15;
+      margin: 0 0 6px;
+    }}
+    .page-head p {{
+      color: var(--muted);
+      margin: 0;
     }}
     .state {{
       color: var(--text);
@@ -799,8 +892,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .hero {{
       align-items: stretch;
       display: grid;
-      gap: 24px;
-      grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+      gap: 30px;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+      margin-bottom: 28px;
     }}
     .hero-main {{
       display: flex;
@@ -810,16 +904,21 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .hero-summary {{
       background: var(--border);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius);
       display: grid;
       gap: 1px;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       overflow: hidden;
     }}
-    .message, .note {{
+    .message, .note, .hint-line {{
       color: var(--muted-strong);
-      line-height: 1.65;
+      line-height: 1.6;
       margin: 0;
+    }}
+    .hint-line {{
+      color: var(--muted);
+      font-size: 14px;
+      margin-top: 14px;
     }}
     .note {{ font-size: 14px; }}
     .actions {{
@@ -833,16 +932,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       align-items: center;
       background: var(--text);
       border: 1px solid var(--text);
-      border-radius: 999px;
+      border-radius: var(--radius);
       color: #ffffff;
       cursor: pointer;
       display: inline-flex;
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 560;
       justify-content: center;
       line-height: 1.2;
-      min-height: 40px;
-      padding: 10px 16px;
+      min-height: 38px;
+      padding: 9px 14px;
       transition: background .16s ease, border-color .16s ease, color .16s ease, opacity .16s ease;
     }}
     button:hover:not(:disabled) {{ background: #2c2c2c; border-color: #2c2c2c; }}
@@ -877,7 +976,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .danger-zone {{
       background: var(--red-soft);
       border: 1px solid #e7c7bf;
-      border-radius: 10px;
+      border-radius: var(--radius);
       margin-top: 18px;
       padding: 16px;
     }}
@@ -886,122 +985,112 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       line-height: 1.6;
       margin: 0 0 12px;
     }}
-    .maintenance-panel {{
-      border-top: 1px solid rgba(0, 0, 0, .08);
-      margin-top: 0;
-    }}
-    .control-section {{
-      --section-accent: var(--green);
-      --section-bg: #fafaf8;
-      background:
-        linear-gradient(90deg, var(--section-accent) 0 4px, transparent 4px),
-        var(--section-bg);
-      border-bottom: 1px solid var(--border);
+    .overview-section {{
       border-top: 1px solid var(--border);
-      display: grid;
-      gap: 0;
-      margin: 30px calc(var(--panel-pad) * -1) 0;
-      padding: 18px var(--panel-pad) 4px calc(var(--panel-pad) + 6px);
+      padding-top: 24px;
     }}
-    .runtime-section {{
-      --section-accent: var(--green);
-      --section-bg: #f7fbf8;
-    }}
-    .settings-section {{
-      --section-accent: #8a6b2f;
-      --section-bg: #fbfaf5;
-    }}
-    .control-section + .control-section {{ margin-top: 26px; }}
-    .control-section-title {{
+    .section-head {{
       align-items: center;
-      color: var(--text);
       display: flex;
-      font-size: 17px;
-      font-weight: 600;
-      gap: 8px;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }}
+    .section-head h2 {{
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 560;
       margin: 0;
-      padding: 0 0 10px;
     }}
-    .control-section .maintenance-panel:first-of-type {{
-      border-top: 0;
+    .detail-panel {{
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 18px;
+      min-width: 0;
+      overflow: hidden;
     }}
-    .diagnostics-section {{
-      --section-accent: var(--border-strong);
-      --section-bg: #fafafa;
-      padding-bottom: 18px;
-    }}
-    .maintenance-panel summary {{
-      align-items: center;
-      cursor: pointer;
+    .detail-panel-head {{
+      align-items: flex-start;
+      background: var(--surface-soft);
+      border-bottom: 1px solid var(--border);
       display: flex;
       gap: 14px;
       justify-content: space-between;
-      list-style: none;
-      padding: 17px 0;
+      padding: 16px 18px;
     }}
-    .maintenance-panel summary::-webkit-details-marker {{ display: none; }}
-    .summary-copy {{
-      display: grid;
-      gap: 4px;
-      min-width: 0;
-    }}
-    .summary-copy strong {{
+    .detail-panel-head h2 {{
       color: var(--text);
-      font-size: 16px;
-      font-weight: 600;
-    }}
-    .summary-copy span:last-child {{
-      color: var(--muted);
-      font-size: 14px;
+      font-size: 18px;
+      font-weight: 560;
+      line-height: 1.25;
+      margin: 3px 0 4px;
       overflow-wrap: anywhere;
     }}
-    .summary-action {{
-      background: var(--surface);
-      border: 1px solid var(--border-strong);
-      border-radius: 999px;
-      color: var(--text);
-      flex: 0 0 auto;
-      font-size: 13px;
-      font-weight: 600;
-      padding: 7px 12px;
+    .detail-panel-head p {{
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0;
+      overflow-wrap: anywhere;
     }}
-    .summary-action {{
-      min-width: 52px;
-      text-align: center;
+    .detail-panel-body {{
+      padding: 18px;
     }}
-    .maintenance-body {{
-      border-top: 1px solid var(--border);
-      padding-top: 18px;
+    .detail-note {{
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+      margin: -6px 0 16px;
+    }}
+    .provider-note {{
+      margin: 0;
+      padding: 12px 18px 14px;
+    }}
+    .provider-workspace {{
+      padding: 0;
     }}
     .provider-panel-header {{
       align-items: flex-start;
       display: flex;
       gap: 14px;
       justify-content: space-between;
-      margin-bottom: 16px;
+      margin-bottom: 12px;
     }}
-    .provider-panel-header h2 {{
-      border: 0;
+    .provider-panel-header h3 {{
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 560;
       margin: 0;
-      padding: 0;
+    }}
+    .provider-split {{
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      min-height: auto;
+    }}
+    .provider-split.editing {{
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+      min-height: 420px;
+    }}
+    .provider-list-pane {{
+      min-width: 0;
+      padding: 18px;
     }}
     .provider-list {{
       display: grid;
-      gap: 10px;
+      gap: 0;
     }}
     .provider-card {{
-      align-items: flex-start;
+      align-items: center;
       background: transparent;
-      border: 1px solid var(--border);
-      border-radius: 10px;
+      border-bottom: 1px solid var(--border);
       display: flex;
       gap: 14px;
       justify-content: space-between;
-      padding: 14px;
+      padding: 12px 0;
     }}
+    .provider-card:first-child {{ border-top: 1px solid var(--border); }}
     .provider-card.current {{
-      background: var(--green-soft);
-      border-color: rgba(16, 163, 127, .28);
+      background: transparent;
     }}
     .provider-main {{
       display: flex;
@@ -1010,16 +1099,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .provider-avatar {{
       align-items: center;
-      background: var(--text);
+      background: #2f2f2d;
       border-radius: 50%;
       color: #ffffff;
       display: inline-flex;
       flex: 0 0 auto;
-      font-size: 14px;
-      font-weight: 600;
-      height: 34px;
+      font-size: 13px;
+      font-weight: 560;
+      height: 32px;
       justify-content: center;
-      width: 34px;
+      width: 32px;
     }}
     .provider-info {{
       display: grid;
@@ -1028,7 +1117,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .provider-info strong {{
       font-size: 15px;
-      font-weight: 600;
+      font-weight: 560;
     }}
     .provider-url, .provider-auth-state {{
       color: var(--muted);
@@ -1040,12 +1129,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       display: flex;
       flex: 0 0 auto;
       flex-wrap: wrap;
-      gap: 8px;
+      gap: 6px;
       justify-content: flex-end;
     }}
     .provider-card-actions button {{
-      min-height: 34px;
-      padding: 7px 12px;
+      min-height: 32px;
+      padding: 6px 10px;
     }}
     .provider-card-actions .provider-delete {{
       background: var(--surface);
@@ -1058,44 +1147,48 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       color: var(--red);
     }}
     .provider-editor {{
-      border-top: 1px solid var(--border);
-      margin-top: 18px;
-      padding-top: 18px;
+      border-left: 1px solid var(--border);
+      margin-top: 0;
+      padding: 18px;
     }}
     .provider-editor-title {{
       align-items: center;
       display: flex;
       gap: 10px;
       justify-content: space-between;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }}
     .provider-editor-title h3 {{
-      font-size: 15px;
-      font-weight: 600;
+      font-size: 18px;
+      font-weight: 560;
       margin: 0;
     }}
     .secret-input-row {{
       align-items: center;
       display: grid;
-      gap: 8px;
-      grid-template-columns: minmax(0, 1fr) 42px;
+      grid-template-columns: minmax(0, 1fr);
+      position: relative;
     }}
     .secret-input-row input {{
       min-width: 0;
+      padding-right: 42px;
     }}
     .icon-button {{
-      background: var(--surface);
-      border-color: var(--border-strong);
-      border-radius: 10px;
-      color: var(--text);
+      background: transparent;
+      border-color: transparent;
+      border-radius: 6px;
+      color: var(--muted-strong);
       font-size: 15px;
-      min-height: 42px;
+      min-height: 30px;
       padding: 0;
-      width: 42px;
+      position: absolute;
+      right: 6px;
+      top: 6px;
+      width: 30px;
     }}
     .icon-button:hover:not(:disabled) {{
-      background: var(--surface-soft);
-      border-color: var(--text);
+      background: var(--surface-hover);
+      border-color: transparent;
       color: var(--text);
     }}
     .eye-icon {{
@@ -1121,7 +1214,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       border-radius: 999px;
       display: inline-flex;
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 560;
       padding: 5px 10px;
       white-space: nowrap;
     }}
@@ -1151,7 +1244,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .route-node {{
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius);
       display: grid;
       gap: 5px;
       min-width: 0;
@@ -1164,7 +1257,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .route-node strong {{
       display: block;
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 560;
       overflow-wrap: anywhere;
     }}
     .route-node small {{
@@ -1206,7 +1299,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       grid-template-columns: repeat(4, minmax(0, 1fr));
       overflow: hidden;
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius);
       background: var(--border);
     }}
     .status-metric {{
@@ -1224,7 +1317,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .status-metric strong {{
       color: var(--text);
       font-size: 16px;
-      font-weight: 600;
+      font-weight: 560;
       overflow-wrap: anywhere;
     }}
     .metric-mark {{
@@ -1251,7 +1344,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     form {{
       display: grid;
       gap: 12px;
-      margin-top: 14px;
+      margin-top: 0;
     }}
     form button {{
       justify-self: start;
@@ -1265,7 +1358,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     input, select {{
       background: var(--surface);
       border: 1px solid var(--border-strong);
-      border-radius: 10px;
+      border-radius: var(--radius);
       color: var(--text);
       font-size: 15px;
       min-height: 42px;
@@ -1294,7 +1387,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .segments label {{
       align-items: center;
       border: 1px solid var(--border-strong);
-      border-radius: 10px;
+      border-radius: var(--radius);
       cursor: pointer;
       display: flex;
       flex: 1 1 140px;
@@ -1334,14 +1427,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .request-table th,
     .request-table td {{
       border-bottom: 1px solid var(--surface-soft);
-      padding: 10px 6px;
+      padding: 10px 7px;
       text-align: left;
       vertical-align: middle;
       white-space: nowrap;
     }}
     .request-table th {{
       color: var(--muted);
-      font-weight: 600;
+      font-weight: 560;
     }}
     .metric-term {{
       display: inline-flex;
@@ -1351,7 +1444,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .metric-term small {{
       color: var(--muted);
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 560;
     }}
     .request-table tr:last-child td {{
       border-bottom: 0;
@@ -1379,7 +1472,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .signal-card {{
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius);
       min-width: 0;
       padding: 14px;
     }}
@@ -1393,7 +1486,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .signal-head > span {{
       color: var(--text);
       font-size: 15px;
-      font-weight: 600;
+      font-weight: 560;
     }}
     .signal-metrics {{
       display: grid;
@@ -1401,7 +1494,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       grid-template-columns: repeat(2, minmax(0, 1fr));
       overflow: hidden;
       border: 1px solid var(--border);
-      border-radius: 9px;
+      border-radius: var(--radius);
       background: var(--border);
     }}
     .signal-metric {{
@@ -1419,7 +1512,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .signal-metric strong {{
       color: var(--text);
       font-size: 15px;
-      font-weight: 600;
+      font-weight: 560;
       overflow-wrap: anywhere;
     }}
     .signal-note {{
@@ -1442,7 +1535,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .metadata-table th {{
       color: var(--muted);
-      font-weight: 600;
+      font-weight: 560;
     }}
     .metadata-table tr:last-child td {{
       border-bottom: 0;
@@ -1452,33 +1545,58 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .metadata-table th:nth-child(3), .metadata-table td:nth-child(3) {{ width: 66px; }}
     .metadata-table th:nth-child(4), .metadata-table td:nth-child(4) {{ width: 56px; }}
     details {{
-      margin-top: 24px;
       border-top: 1px solid var(--border);
-      padding-top: 18px;
+      margin: 0;
+      padding: 18px;
     }}
-    .control-section details {{
-      margin-top: 0;
-      padding-top: 0;
+    details summary {{
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 560;
+      list-style: none;
+    }}
+    details summary::-webkit-details-marker {{
+      display: none;
     }}
     pre {{
       background: #171717;
-      border-radius: 10px;
+      border-radius: var(--radius);
       color: #eeeeee;
       font-size: 13px;
       line-height: 1.5;
       overflow: auto;
       padding: 16px;
     }}
-    @media (max-width: 640px) {{
-      main {{ padding: 22px 14px 32px; }}
-      .panel {{ --panel-pad: 20px; border-radius: 10px; }}
+    @media (max-width: 860px) {{
+      .app-shell {{ grid-template-columns: 1fr; }}
+      .sidebar {{
+        border-bottom: 1px solid var(--border);
+        border-right: 0;
+        gap: 14px;
+        padding: 16px;
+      }}
+      .sidebar-nav {{
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+      }}
+      .nav-item {{
+        flex: 0 0 auto;
+        width: auto;
+      }}
+      .content-shell {{ padding: 22px 16px 34px; }}
       .state {{ font-size: 28px; }}
       .hero {{ grid-template-columns: 1fr; }}
-      .provider-panel-header, .provider-card {{ flex-direction: column; }}
+      .provider-split {{ grid-template-columns: 1fr; }}
+      .provider-editor {{
+        border-left: 0;
+        border-top: 1px solid var(--border);
+      }}
+      .provider-panel-header, .provider-card {{ align-items: stretch; flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
-      button {{ width: 100%; }}
-      .topbar {{ align-items: stretch; flex-direction: column; }}
-      .topbar-actions button, .provider-card-actions button, #newProvider, #cancelProvider {{ width: auto; }}
+      .actions button {{ width: 100%; }}
+      .content-toolbar {{ align-items: stretch; flex-direction: column; }}
+      .content-toolbar button, .provider-card-actions button, #newProvider, #cancelProvider {{ width: auto; }}
       .route-map {{ grid-template-columns: 1fr; }}
       .route-connector {{ min-height: 20px; }}
       .route-connector::before {{
@@ -1502,44 +1620,105 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
   </style>
 </head>
 <body>
-  <main>
-    <div class="topbar">
-      <h1>Codex 控制面板</h1>
-      <div class="topbar-actions">
+  <main class="app-shell">
+    <aside class="sidebar" aria-label="控制台导航">
+      <div class="brand">
+        <strong>Codex Fast Proxy</strong>
+        <span>控制台</span>
+      </div>
+      <nav class="sidebar-nav">
+        {sidebar_nav}
+      </nav>
+    </aside>
+    <section class="content-shell">
+      <div class="content-toolbar">
+        <span>Codex 控制面板</span>
         <button id="update" class="secondary" data-action="update">更新</button>
       </div>
-    </div>
-    <section class="panel">
-      <div class="hero">
-        <div class="hero-main">
-          <p id="state" class="state">{html.escape(title)}</p>
-          <p id="message" class="message">{html.escape(message)}</p>
-          <div class="actions">
-            {button}
-            {action_buttons}
+      <section class="view-page active" data-page="overview">
+        <div class="hero">
+          <div class="hero-main">
+            <p id="state" class="state">{html.escape(title)}</p>
+            <p id="message" class="message">{html.escape(message)}</p>
+            {login_hint}
+            <div class="actions">
+              {button}
+              {action_buttons}
+            </div>
+          </div>
+          {render_top_summary(snapshot)}
+        </div>
+        {danger_zone}
+        <section class="overview-section">
+          <div class="section-head">
+            <h2>运行状态</h2>
+          </div>
+          {render_status_panel(snapshot)}
+        </section>
+      </section>
+      <section class="view-page" data-page="providers" hidden>
+        <div class="page-head">
+          <div>
+            <h1>供应商</h1>
+            <p>{provider_page_note}</p>
           </div>
         </div>
-        {render_top_summary(snapshot)}
-      </div>
-      {danger_zone}
-      <div class="control-section runtime-section">
-        <h2 class="control-section-title">运行状态</h2>
-        {render_status_panel(snapshot)}
-      </div>
-      <div class="control-section settings-section">
-        <h2 class="control-section-title">供应商设置</h2>
-        {codex_config_panel}
-        {provider_management}
-        {speed_controls}
-      </div>
-      <div class="control-section diagnostics-section">
-        <h2 class="control-section-title">高级诊断</h2>
-        <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
-        <details id="diagnosticsPanel" class="diagnostics-panel">
-          <summary>查看诊断</summary>
-          <pre id="diagnostics">{snapshot_json}</pre>
-        </details>
-      </div>
+        {provider_page_body}
+      </section>
+      {speed_page}
+      <section class="view-page" data-page="requests" hidden>
+        <div class="page-head">
+          <div>
+            <h1>请求记录</h1>
+            <p>查看最近请求、Provider 检查和性能基准。</p>
+          </div>
+        </div>
+        <section class="detail-panel">
+          <div class="detail-panel-head">
+            <div>
+              <span class="muted">请求</span>
+              <h2>最近请求</h2>
+              <p>使用行业常见的 TTFB、TTFT 和 E2E 口径。</p>
+            </div>
+          </div>
+          <div class="detail-panel-body">
+            {render_recent_events(snapshot)}
+          </div>
+        </section>
+        <section class="detail-panel">
+          <div class="detail-panel-head">
+            <div>
+              <span class="muted">运行细节</span>
+              <h2>Provider 检查与性能基准</h2>
+              <p>这些记录来自本地代理日志，不包含密钥。</p>
+            </div>
+          </div>
+          <div class="detail-panel-body">
+            {render_operational_signals(snapshot)}
+          </div>
+        </section>
+      </section>
+      <section class="view-page" data-page="advanced" hidden>
+        <div class="page-head">
+          <div>
+            <h1>高级</h1>
+            <p>用于排查的原始状态和诊断信息。</p>
+          </div>
+        </div>
+        <section class="detail-panel">
+          <div class="detail-panel-head">
+            <div>
+              <span class="muted">诊断</span>
+              <h2>高级诊断</h2>
+              <p>如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
+            </div>
+          </div>
+          <details id="diagnosticsPanel" class="diagnostics-panel">
+            <summary>查看诊断</summary>
+            <pre id="diagnostics">{snapshot_json}</pre>
+          </details>
+        </section>
+      </section>
     </section>
   </main>
   <script>
@@ -1686,6 +1865,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       loadedApiKeyProvider = '';
       const editor = $('providerEditor');
       if (editor) editor.hidden = false;
+      const split = editor ? editor.closest('.provider-split') : null;
+      if (split) split.classList.add('editing');
       const editorTitle = $('providerEditorTitle');
       if (editorTitle && title) editorTitle.textContent = title;
       fillProviderForm(record);
@@ -1698,6 +1879,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function closeProviderEditor() {{
       const editor = $('providerEditor');
       if (editor) editor.hidden = true;
+      const split = editor ? editor.closest('.provider-split') : null;
+      if (split) split.classList.remove('editing');
       const editorTitle = $('providerEditorTitle');
       if (editorTitle) editorTitle.textContent = '编辑';
       const saveProvider = $('saveProvider');
@@ -1859,6 +2042,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         node.title = `UTC ${{value}}`;
       }});
     }}
+    function showView(view) {{
+      const target = view || 'overview';
+      document.querySelectorAll('.view-page[data-page]').forEach((page) => {{
+        const active = page.dataset.page === target;
+        page.hidden = !active;
+        page.classList.toggle('active', active);
+      }});
+      document.querySelectorAll('.nav-item[data-view]').forEach((item) => {{
+        item.classList.toggle('active', item.dataset.view === target);
+      }});
+    }}
     function resetSummary(snapshot) {{
       const providerSpeed = $('providerSpeed');
       if (providerSpeed) providerSpeed.textContent = speedLabel(snapshot);
@@ -1884,13 +2078,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         summaryMetrics[3].querySelector('strong').textContent = requestLabel;
         metricToneClass(summaryMetrics[3].querySelector('.metric-mark'), requestTone);
       }}
-    }}
-    function syncSummaryActions() {{
-      document.querySelectorAll('.summary-action[data-open-label][data-closed-label]').forEach((node) => {{
-        const panel = node.closest('details');
-        if (!panel) return;
-        node.textContent = panel.open ? node.dataset.openLabel : node.dataset.closedLabel;
-      }});
     }}
     function selectedSpeedMode() {{
       const selected = document.querySelector('input[name="speedMode"]:checked');
@@ -1931,15 +2118,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       resetProviderForm(snapshot);
       resetSummary(snapshot);
       resetSpeedForm(snapshot);
-      syncSummaryActions();
     }}
     renderLocalTimes();
-    document.querySelectorAll('.summary-action[data-open-label][data-closed-label]').forEach((node) => {{
-      const panel = node.closest('details');
-      if (!panel) return;
-      panel.addEventListener('toggle', syncSummaryActions);
+    document.querySelectorAll('.nav-item[data-view]').forEach((item) => {{
+      item.addEventListener('click', () => showView(item.dataset.view));
     }});
-    syncSummaryActions();
     async function requestAction(action, body) {{
       const response = await fetch('/api/actions/' + action, {{
         method: 'POST',
@@ -2017,7 +2200,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (action === 'enable') await runButton(event.currentTarget, 'enable', {{ provider: currentProviderName() || null }});
       else if (action === 'refresh') window.location.reload();
       else if (action === 'uninstall') await runButton(event.currentTarget, 'uninstall');
-      else document.querySelector('details').open = true;
+      else {{
+        showView('advanced');
+        const panel = $('diagnosticsPanel');
+        if (panel) panel.open = true;
+      }}
     }});
     if ($('update')) $('update').addEventListener('click', (event) => runButton(event.currentTarget, 'update'));
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
