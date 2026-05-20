@@ -659,7 +659,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
                 <span class="secret-input-row">
                   <input id="apiKey" type="password" autocomplete="off" aria-labelledby="apiKeyLabel" placeholder="留空则不修改已保存的 key">
                   <button id="revealApiKey" class="icon-button" type="button" aria-label="显示或隐藏 API Key" aria-controls="apiKey" aria-pressed="false" title="显示或隐藏 API Key">
-                    <span class="icon-eye" aria-hidden="true"></span>
+                    <svg class="eye-icon eye-open" data-eye-open viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                    <svg class="eye-icon eye-off" data-eye-off viewBox="0 0 24 24" aria-hidden="true" hidden>
+                      <path d="M10.73 5.08a10.74 10.74 0 0 1 11.21 6.57 1 1 0 0 1 0 .7 10.8 10.8 0 0 1-1.44 2.49"></path>
+                      <path d="M14.08 14.16a3 3 0 0 1-4.24-4.24"></path>
+                      <path d="M17.48 17.5a10.75 10.75 0 0 1-15.42-5.15 1 1 0 0 1 0-.7 10.75 10.75 0 0 1 4.45-5.14"></path>
+                      <path d="m2 2 20 20"></path>
+                    </svg>
                   </button>
                 </span>
               </label>
@@ -1089,40 +1098,19 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       border-color: var(--text);
       color: var(--text);
     }}
-    .icon-eye {{
-      border: 1.7px solid currentColor;
-      border-radius: 70% 18%;
-      display: inline-block;
-      height: 13px;
-      position: relative;
-      transform: rotate(45deg);
-      width: 18px;
+    .eye-icon {{
+      display: block;
+      fill: none;
+      height: 20px;
+      margin: 0 auto;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.9;
+      width: 20px;
     }}
-    .icon-eye::before {{
-      background: currentColor;
-      border-radius: 999px;
-      content: "";
-      height: 5px;
-      left: 50%;
-      position: absolute;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      width: 5px;
-    }}
-    .icon-eye::after {{
-      background: transparent;
-      content: "";
-      height: 2px;
-      left: -4px;
-      opacity: 0;
-      position: absolute;
-      top: 5px;
-      transform: rotate(90deg);
-      width: 25px;
-    }}
-    .icon-button[aria-pressed="true"] .icon-eye::after {{
-      background: currentColor;
-      opacity: 1;
+    .eye-icon[hidden] {{
+      display: none;
     }}
     .muted {{
       color: var(--muted);
@@ -1678,14 +1666,20 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       return '未保存';
     }}
-    function maskSecret(value) {{
-      return value === 'saved' ? '••••••••••••••••' : '';
+    function maskSecret(record) {{
+      if (!record || record.api_key !== 'saved') return '';
+      const length = Number(record.api_key_length);
+      return '•'.repeat(Number.isInteger(length) && length > 0 ? length : 16);
     }}
     function syncRevealButton(revealed) {{
       const reveal = $('revealApiKey');
       if (!reveal) return;
       reveal.setAttribute('aria-pressed', revealed ? 'true' : 'false');
       reveal.title = revealed ? '隐藏 API Key' : '显示 API Key';
+      const open = reveal.querySelector('[data-eye-open]');
+      const off = reveal.querySelector('[data-eye-off]');
+      if (open) open.toggleAttribute('hidden', revealed);
+      if (off) off.toggleAttribute('hidden', !revealed);
     }}
     function openProviderEditor(record, title) {{
       loadedApiKey = '';
@@ -1720,8 +1714,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const apiKey = $('apiKey');
       if (apiKey) {{
         apiKey.type = 'password';
-        apiKey.value = record ? maskSecret(record.api_key) : '';
+        apiKey.value = maskSecret(record);
         apiKey.dataset.masked = record && record.api_key === 'saved' ? 'true' : 'false';
+        apiKey.dataset.maskValue = apiKey.value;
         apiKey.dataset.original = '';
       }}
       syncRevealButton(false);
@@ -2041,8 +2036,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }});
     if ($('apiKey')) $('apiKey').addEventListener('input', (event) => {{
       const input = event.currentTarget;
-      if (input.dataset.masked === 'true' && input.value !== maskSecret('saved')) {{
+      if (input.dataset.masked === 'true' && input.value !== (input.dataset.maskValue || '')) {{
         input.dataset.masked = 'false';
+        input.dataset.maskValue = '';
         input.dataset.original = '';
         loadedApiKey = '';
         loadedApiKeyProvider = '';

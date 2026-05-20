@@ -437,6 +437,7 @@ class ControlUiTests(unittest.TestCase):
                     "current": True,
                     "active": True,
                     "api_key": "saved",
+                    "api_key_length": 27,
                 }, {
                     "name": "other",
                     "base_url": "https://api.other.test/v1",
@@ -468,8 +469,17 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('id="revealApiKey"', html)
         self.assertIn('aria-controls="apiKey"', html)
         self.assertIn('aria-pressed="false"', html)
+        self.assertIn('data-eye-open', html)
+        self.assertIn('data-eye-off', html)
+        self.assertNotIn('class="icon-eye"', html)
         self.assertIn("syncRevealButton(true)", html)
         self.assertIn("maskSecret", html)
+        self.assertIn('"api_key_length": 27', html)
+        self.assertIn("Number(record.api_key_length)", html)
+        self.assertIn("return '•'.repeat", html)
+        self.assertIn(".eye-icon[hidden]", html)
+        self.assertIn("open.toggleAttribute('hidden', revealed)", html)
+        self.assertNotIn("••••••••••••••••", html)
         self.assertIn("apiKeyFormValue()", html)
         self.assertIn("/api/provider-key?provider=", html)
         self.assertIn('data-provider-action="switch"', html)
@@ -536,7 +546,10 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertEqual([item["name"] for item in providers], ["acme"])
         self.assertEqual(providers[0]["base_url"], "https://api.config.test/v1")
+        self.assertEqual(providers[0]["api_key"], "saved")
+        self.assertEqual(providers[0]["api_key_length"], len("acme-secret"))
         self.assertFalse(providers[0]["deletable"])
+        self.assertNotIn("acme-secret", json.dumps(providers, ensure_ascii=False))
 
     def test_provider_inventory_allows_deleting_inactive_config_provider_saved_entry(self) -> None:
         settings = manager.ProxySettings(
@@ -561,7 +574,9 @@ class ControlUiTests(unittest.TestCase):
         providers = {item["name"]: item for item in manager.provider_inventory(str(self.codex_home))["providers"]}
 
         self.assertTrue(providers["acme"]["deletable"])
+        self.assertEqual(providers["acme"]["api_key_length"], len("acme-secret"))
         self.assertFalse(providers["other"]["deletable"])
+        self.assertEqual(providers["other"]["api_key_length"], len("other-secret"))
 
     def test_control_page_hides_maintenance_controls_before_enable(self) -> None:
         html = render_page(

@@ -383,15 +383,21 @@ def validate_provider_name(provider: str) -> str:
     return name
 
 
-def provider_auth_label(paths: ProxyPaths, provider: str, provider_config: dict[str, Any]) -> str:
-    if provider_auth_secret(paths, provider):
-        return "saved"
+def provider_auth_state(paths: ProxyPaths, provider: str, provider_config: dict[str, Any]) -> tuple[str, int | None]:
+    secret = provider_auth_secret(paths, provider)
+    if secret:
+        return "saved", len(secret)
     candidates = provider_auth_candidates(provider, provider_config, None, paths.codex_home)
     for env_name in candidates:
         source = upstream_api_key_source(paths, env_name)
         if source:
-            return f"{source}:{env_name}"
-    return "missing"
+            return f"{source}:{env_name}", None
+    return "missing", None
+
+
+def provider_auth_label(paths: ProxyPaths, provider: str, provider_config: dict[str, Any]) -> str:
+    label, _length = provider_auth_state(paths, provider, provider_config)
+    return label
 
 
 def provider_inventory(codex_home: str | Path | None, selected_provider: str | None = None) -> dict[str, Any]:
@@ -417,6 +423,7 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
     for name in sorted(names):
         provider_config = provider_config_for(config, name)
         config_base = provider_base_url(config, name)
+        api_key_label, api_key_length = provider_auth_state(paths, name, provider_config)
         proxy_enabled = bool(settings and name == settings.provider)
         current = name == current_provider
         upstream_base = (
@@ -430,7 +437,8 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
             "current": current,
             "proxy_enabled": proxy_enabled,
             "base_url": upstream_base,
-            "api_key": provider_auth_label(paths, name, provider_config),
+            "api_key": api_key_label,
+            "api_key_length": api_key_length,
             "deletable": name in saved_names and not current,
         })
 
