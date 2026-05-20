@@ -122,6 +122,7 @@ def recent_response_events(log_path: Any) -> list[dict[str, Any]]:
         "status",
         "ttfb_ms",
         "first_event_ms",
+        "ttft_ms",
         "first_output_ms",
         "duration_ms",
         "service_tier_before",

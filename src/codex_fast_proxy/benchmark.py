@@ -173,7 +173,7 @@ Benchmark constraints:
 - The benchmark is opt-in because it consumes real provider quota.
 - It compares default routing against the same request with service_tier set to priority.
 - It should use interleaved ordering so provider load and prompt cache effects are shared.
-- It should measure full response latency and first output latency, not just first event time.
+- It should measure E2E latency and TTFT, not just TTFB.
 - It should report accepted priority requests separately from observed acceleration.
 - A provider may accept priority but not echo service_tier in the response.
 - Small OK prompts are connectivity checks, not speed benchmarks.
@@ -200,7 +200,7 @@ Operational examples:
 
 Dashboard examples:
 - Recent traffic shows method, path, status, duration, service_tier before and after, injection state, and stream state.
-- The benchmark card shows default total latency, priority total latency, observed speedup, first output speedup, and sample counts.
+- The benchmark card shows default E2E latency, priority E2E latency, observed speedup, TTFT speedup, and sample counts.
 - If benchmark has not run, the dashboard shows an empty state and does not start quota-consuming work.
 - If priority requests return 200 but speedup is not material, the result should say accepted but not effective.
 - If priority requests fail, the result should say not accepted and include redacted error metadata.
@@ -444,6 +444,7 @@ class CodexCliCaptureHandler(BaseHTTPRequestHandler):
             "total_ms": round((finished - started) * 1000, 1),
             "ttfb_ms": round(((first_event_at or finished) - started) * 1000, 1),
             "first_event_ms": round(((first_event_at or finished) - started) * 1000, 1),
+            "ttft_ms": round((first_output_at - started) * 1000, 1) if first_output_at else None,
             "first_output_ms": round((first_output_at - started) * 1000, 1) if first_output_at else None,
             "output_chars": output_chars,
             "response_content_type": next(
@@ -657,14 +658,15 @@ def run_sample(
         connection.close()
 
     first_event_ms = round(((first_event_at or headers_at) - started) * 1000, 1)
-    first_output_ms = round((first_output_at - started) * 1000, 1) if first_output_at is not None else None
+    ttft_ms = round((first_output_at - started) * 1000, 1) if first_output_at is not None else None
     return {
         "tier": label,
         "status": response.status,
         "request_service_tier": target.service_tier if label == "priority" else None,
         "ttfb_ms": first_event_ms,
         "first_event_ms": first_event_ms,
-        "first_output_ms": first_output_ms,
+        "ttft_ms": ttft_ms,
+        "first_output_ms": ttft_ms,
         "total_ms": round((finished - started) * 1000, 1),
         "output_chars": output_chars,
         "response_content_type": response.getheader("Content-Type"),
@@ -688,8 +690,10 @@ def summarize_samples(samples: list[dict[str, Any]], label: str) -> dict[str, An
     ok_samples = [sample for sample in matching if is_success_status(sample.get("status"))]
     total_values = [float(sample["total_ms"]) for sample in ok_samples if sample.get("total_ms") is not None]
     ttfb_values = [float(sample["ttfb_ms"]) for sample in ok_samples if sample.get("ttfb_ms") is not None]
-    first_output_values = [
-        float(sample["first_output_ms"]) for sample in ok_samples if sample.get("first_output_ms") is not None
+    ttft_values = [
+        float(sample.get("ttft_ms", sample.get("first_output_ms")))
+        for sample in ok_samples
+        if sample.get("ttft_ms", sample.get("first_output_ms")) is not None
     ]
     output_char_values = [
         float(sample["output_chars"]) for sample in ok_samples if sample.get("output_chars") is not None
@@ -701,7 +705,8 @@ def summarize_samples(samples: list[dict[str, Any]], label: str) -> dict[str, An
         "ok": len(ok_samples),
         "median_total_ms": median(total_values),
         "median_ttfb_ms": median(ttfb_values),
-        "median_first_output_ms": median(first_output_values),
+        "median_ttft_ms": median(ttft_values),
+        "median_first_output_ms": median(ttft_values),
         "median_output_chars": median(output_char_values),
         "request_service_tiers": request_tiers,
         "response_service_tiers": tiers,
@@ -885,7 +890,7 @@ def summarize_benchmark_result(
     tier_control = service_tier_control(target, default_summary, priority_summary)
     total_speedup = speedup(default_summary["median_total_ms"], priority_summary["median_total_ms"])
     ttfb_speedup = speedup(default_summary["median_ttfb_ms"], priority_summary["median_ttfb_ms"])
-    first_output_speedup = speedup(default_summary["median_first_output_ms"], priority_summary["median_first_output_ms"])
+    ttft_speedup = speedup(default_summary["median_ttft_ms"], priority_summary["median_ttft_ms"])
     return {
         "status": "completed",
         "ts": utc_now(),
@@ -905,7 +910,8 @@ def summarize_benchmark_result(
         "service_tier_control": tier_control,
         "observed_speedup_total": total_speedup,
         "observed_speedup_ttfb": ttfb_speedup,
-        "observed_speedup_first_output": first_output_speedup,
+        "observed_speedup_ttft": ttft_speedup,
+        "observed_speedup_first_output": ttft_speedup,
         "priority_accepted": priority_accepted(priority_summary),
         "observed_priority_effective": observed_priority_effective(priority_summary, total_speedup),
         "provider_confirmed_priority": priority_confirmed(priority_summary),

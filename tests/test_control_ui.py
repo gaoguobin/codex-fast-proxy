@@ -217,8 +217,8 @@ class ControlUiTests(unittest.TestCase):
                     "method": "POST",
                     "path": "/v1/responses",
                     "status": 200,
-                    "first_event_ms": 1234.5,
-                    "first_output_ms": 2345.6,
+                    "ttfb_ms": 1234.5,
+                    "ttft_ms": 2345.6,
                     "duration_ms": 32066.3,
                     "service_tier_before": "priority",
                     "service_tier_after": "priority",
@@ -237,21 +237,47 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertIn("最近请求", html)
         self.assertIn("<th>时间</th>", html)
-        self.assertIn("<th>首包</th>", html)
-        self.assertIn("<th>首字</th>", html)
-        self.assertIn("<th>完整</th>", html)
+        self.assertIn('title="Time to first byte">TTFB</th>', html)
+        self.assertIn('title="Time to first token">TTFT</th>', html)
+        self.assertIn('title="End-to-end latency">E2E</th>', html)
         self.assertIn("<th>速度模式</th>", html)
         self.assertNotIn("<th>Tier</th>", html)
+        self.assertNotIn("<th>首包</th>", html)
+        self.assertNotIn("<th>首字</th>", html)
         self.assertIn('class="local-time" datetime="2026-05-18T11:41:19.293+00:00"', html)
         self.assertIn('title="POST /v1/responses">POST /v1/responses</td>', html)
         self.assertIn('<span class="status-pill ok">Healthy</span>', html)
-        self.assertIn("<td class=\"number-cell\">1.234s</td>", html)
-        self.assertIn("<td class=\"number-cell\">2.346s</td>", html)
+        self.assertIn("Time to first byte", html)
+        self.assertIn("Time to first token", html)
+        self.assertIn('>1.234s</td>', html)
+        self.assertIn('>2.346s</td>', html)
         self.assertIn("<td class=\"number-cell\">32.066s</td>", html)
         self.assertIn("<td>App 控制</td>", html)
         self.assertIn("overflow-x: hidden", html)
         self.assertIn("date.getFullYear()", html)
         self.assertIn("renderLocalTimes();", html)
+
+    def test_control_page_marks_ttft_as_not_applicable_when_text_delta_is_absent(self) -> None:
+        html = render_page(
+            {
+                "base_url": "http://127.0.0.1:8787/v1",
+                "config_matches": True,
+                "healthy": True,
+                "recent_response_events": [{
+                    "ts": "2026-05-18T11:41:19.293+00:00",
+                    "method": "POST",
+                    "path": "/v1/responses",
+                    "status": 200,
+                    "ttfb_ms": 1234.5,
+                    "duration_ms": 32066.3,
+                    "service_tier_effective_policy": "preserve",
+                }],
+                "user_state": {"title": "运行正常", "message": "", "primary_action": "uninstall", "primary_label": "停用并恢复"},
+            },
+            "token",
+        )
+
+        self.assertIn(">N/A</td>", html)
 
     def test_provider_management_is_collapsed_by_default(self) -> None:
         html = render_page(

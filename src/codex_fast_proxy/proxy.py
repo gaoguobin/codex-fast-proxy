@@ -275,10 +275,12 @@ def record_response_timing(
         timing["ttfb_ms"] = first_event_ms
     if (
         line_buffered
-        and "first_output_ms" not in timing
+        and "ttft_ms" not in timing
         and response_output_delta(sse_json_from_line(data), event_type)
     ):
-        timing["first_output_ms"] = round((now - started_at) * 1000, 1)
+        ttft_ms = round((now - started_at) * 1000, 1)
+        timing["ttft_ms"] = ttft_ms
+        timing["first_output_ms"] = ttft_ms
 
 
 def stream_response_body(

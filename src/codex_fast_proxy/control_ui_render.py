@@ -140,6 +140,15 @@ def format_duration(value: Any) -> str:
     return f"{duration / 1000:.3f}s"
 
 
+def format_optional_duration(value: Any) -> str:
+    rendered = format_duration(value)
+    return "N/A" if rendered == "-" else rendered
+
+
+def request_ttft_value(event: dict[str, Any]) -> Any:
+    return event.get("ttft_ms", event.get("first_output_ms"))
+
+
 def render_time_value(value: Any) -> str:
     if not isinstance(value, str) or not value:
         return "n/a"
@@ -192,8 +201,8 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
               <td class="time-cell">{render_time_value(event.get("ts"))}</td>
               <td class="request-route" title="{html.escape(method)} {html.escape(path)}">{html.escape(method)} {html.escape(path)}</td>
               <td><span class="status-pill {tone}">{html.escape(status)}</span></td>
-              <td class="number-cell">{html.escape(format_duration(event.get("first_event_ms")))}</td>
-              <td class="number-cell">{html.escape(format_duration(event.get("first_output_ms")))}</td>
+              <td class="number-cell" title="Time to first byte: first response bytes or first SSE event.">{html.escape(format_duration(event.get("ttfb_ms", event.get("first_event_ms"))))}</td>
+              <td class="number-cell" title="Time to first token: first visible output_text delta. N/A for requests without text output.">{html.escape(format_optional_duration(request_ttft_value(event)))}</td>
               <td class="number-cell">{html.escape(format_duration(event.get("duration_ms")))}</td>
               <td>{html.escape(request_speed_label(event))}</td>
             </tr>
@@ -206,9 +215,9 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
                 <th>时间</th>
                 <th>请求</th>
                 <th>状态</th>
-                <th>首包</th>
-                <th>首字</th>
-                <th>完整</th>
+                <th title="Time to first byte">TTFB</th>
+                <th title="Time to first token">TTFT</th>
+                <th title="End-to-end latency">E2E</th>
                 <th>速度模式</th>
               </tr>
             </thead>

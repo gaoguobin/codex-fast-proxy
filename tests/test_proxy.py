@@ -256,6 +256,7 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertIn(b"response.output_text.delta", writer.getvalue())
         self.assertEqual(timing["ttfb_ms"], 100.0)
         self.assertEqual(timing["first_event_ms"], 100.0)
+        self.assertEqual(timing["ttft_ms"], 400.0)
         self.assertEqual(timing["first_output_ms"], 400.0)
 
     def test_stream_response_records_first_output_from_sse_event_name(self) -> None:
@@ -274,6 +275,7 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(writer.getvalue(), b"event: response.output_text.delta\ndata: {\"delta\": \"hello\"}\n\n")
         self.assertEqual(timing["ttfb_ms"], 100.0)
         self.assertEqual(timing["first_event_ms"], 100.0)
+        self.assertEqual(timing["ttft_ms"], 200.0)
         self.assertEqual(timing["first_output_ms"], 200.0)
 
     def test_response_output_delta_uses_sse_event_type_when_payload_type_is_missing(self) -> None:
@@ -614,9 +616,9 @@ class DashboardTests(unittest.TestCase):
                     "observed_priority_effective": True,
                     "observed_speedup_total": 1.53,
                     "observed_speedup_ttfb": 1.2,
-                    "observed_speedup_first_output": 1.4,
-                    "default": {"count": 3, "ok": 3, "median_total_ms": 1200.0, "median_first_output_ms": 500.0},
-                    "priority": {"count": 3, "ok": 3, "median_total_ms": 784.3, "median_first_output_ms": 357.1},
+                    "observed_speedup_ttft": 1.4,
+                    "default": {"count": 3, "ok": 3, "median_total_ms": 1200.0, "median_ttft_ms": 500.0},
+                    "priority": {"count": 3, "ok": 3, "median_total_ms": 784.3, "median_ttft_ms": 357.1},
                     "api_key_env": "ACME_API_KEY",
                 }),
                 encoding="utf-8",
@@ -640,7 +642,8 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("<div class=\"metric-value\">1.53x</div>", html)
         self.assertIn("<div class=\"metric-value\">1.40x</div>", html)
         self.assertIn("<div class=\"metric-value\">784.3 ms</div>", html)
-        self.assertIn("default total 1200.0 ms", html)
+        self.assertIn("default E2E 1200.0 ms", html)
+        self.assertIn("TTFT 500.0 ms", html)
         self.assertIn("Last run <time class=\"local-time\"", html)
         self.assertNotIn("ACME_API_KEY", html)
 

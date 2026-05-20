@@ -22,6 +22,7 @@ EVENT_DETAIL_FIELDS = (
     "status",
     "ttfb_ms",
     "first_event_ms",
+    "ttft_ms",
     "first_output_ms",
     "duration_ms",
     "eligible",
@@ -786,15 +787,19 @@ def render_benchmark_section(benchmark: dict[str, Any] | None) -> str:
     pairs = benchmark.get("pairs")
     default_total = benchmark_summary_value(benchmark, "default", "median_total_ms")
     priority_total = benchmark_summary_value(benchmark, "priority", "median_total_ms")
-    default_first_output = benchmark_summary_value(benchmark, "default", "median_first_output_ms")
-    priority_first_output = benchmark_summary_value(benchmark, "priority", "median_first_output_ms")
+    default_ttft = benchmark_summary_value(benchmark, "default", "median_ttft_ms")
+    if default_ttft is None:
+        default_ttft = benchmark_summary_value(benchmark, "default", "median_first_output_ms")
+    priority_ttft = benchmark_summary_value(benchmark, "priority", "median_ttft_ms")
+    if priority_ttft is None:
+        priority_ttft = benchmark_summary_value(benchmark, "priority", "median_first_output_ms")
     default_ok = benchmark_summary_value(benchmark, "default", "ok")
     priority_ok = benchmark_summary_value(benchmark, "priority", "ok")
     default_count = benchmark_summary_value(benchmark, "default", "count")
     priority_count = benchmark_summary_value(benchmark, "priority", "count")
     speedup = format_speedup(benchmark.get("observed_speedup_total"))
     ttfb_speedup = format_speedup(benchmark.get("observed_speedup_ttfb"))
-    first_output_speedup = format_speedup(benchmark.get("observed_speedup_first_output"))
+    ttft_speedup = format_speedup(benchmark.get("observed_speedup_ttft", benchmark.get("observed_speedup_first_output")))
     sample_text = f"default {html_value(default_ok)}/{html_value(default_count)} / priority {html_value(priority_ok)}/{html_value(priority_count)}"
     return f"""
     <section class="panel section" aria-label="Benchmark">
@@ -815,8 +820,8 @@ def render_benchmark_section(benchmark: dict[str, Any] | None) -> str:
           <div class="metric-value">{html_value(speedup)}</div>
         </div>
         <div class="metric">
-          <div class="metric-label">First output</div>
-          <div class="metric-value">{html_value(first_output_speedup)}</div>
+          <div class="metric-label">TTFT</div>
+          <div class="metric-value">{html_value(ttft_speedup)}</div>
         </div>
         <div class="metric">
           <div class="metric-label">Priority total</div>
@@ -824,7 +829,7 @@ def render_benchmark_section(benchmark: dict[str, Any] | None) -> str:
         </div>
       </div>
       <p class="benchmark-note">
-        Last run {render_time_value(benchmark.get("ts"))} / samples {sample_text} / default total {html_value(format_duration(default_total))} / first output {html_value(format_duration(default_first_output))} -> {html_value(format_duration(priority_first_output))} / TTFB speedup {html_value(ttfb_speedup)}. Synthetic workload; not a guarantee.
+        Last run {render_time_value(benchmark.get("ts"))} / samples {sample_text} / default E2E {html_value(format_duration(default_total))} / TTFT {html_value(format_duration(default_ttft))} -> {html_value(format_duration(priority_ttft))} / TTFB speedup {html_value(ttfb_speedup)}. Synthetic workload; not a guarantee.
       </p>
     </section>
 """
