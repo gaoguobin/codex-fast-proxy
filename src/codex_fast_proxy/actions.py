@@ -10,7 +10,7 @@ SPEED_MODE_POLICIES = {
 }
 
 
-def state(code: str, title: str, message: str, primary_action: str = "refresh", primary_label: str = "重新检查") -> dict[str, str]:
+def state(code: str, title: str, message: str, primary_action: str = "refresh", primary_label: str = "刷新状态") -> dict[str, str]:
     return {
         "code": code,
         "title": title,
@@ -245,7 +245,7 @@ def run_uninstall(codex_home: str | None, confirm_chatgpt_direct_uninstall: bool
                 "建议先切回 API Key 或第三方服务登录，重启 Codex 后再回来停用。"
             ),
             "refresh",
-            "重新检查",
+            "刷新状态",
         )
     elif result.get("stop_result", {}).get("status") == "deferred":
         result["user_state"] = state(

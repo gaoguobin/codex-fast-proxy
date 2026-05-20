@@ -120,6 +120,9 @@ def recent_response_events(log_path: Any) -> list[dict[str, Any]]:
         "method",
         "path",
         "status",
+        "ttfb_ms",
+        "first_event_ms",
+        "first_output_ms",
         "duration_ms",
         "service_tier_before",
         "service_tier_after",
@@ -144,7 +147,7 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
             "已启用，重启后接管",
             "当前对话可以继续。Codex 重启后，新会话会走本地代理，并按速度模式处理请求。",
             "refresh",
-            "我已重启，重新检查",
+            "刷新状态",
         )
     elif snapshot.get("base_url") and not snapshot.get("config_matches"):
         view = (

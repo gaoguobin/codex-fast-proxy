@@ -90,37 +90,126 @@ def providers_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def status_code(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def compact_url(value: Any, fallback: str = "未启用") -> str:
+    if not isinstance(value, str) or not value:
+        return fallback
+    return value.replace("https://", "").replace("http://", "")
+
+
+def short_login_label(snapshot: dict[str, Any]) -> str:
+    if snapshot.get("chatgpt_auth"):
+        return "ChatGPT"
+    if snapshot.get("api_key_auth"):
+        return "API Key"
+    return "未知"
+
+
+def short_proxy_label(snapshot: dict[str, Any]) -> str:
+    if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
+        return "已接管"
+    if snapshot.get("config_matches") and snapshot.get("needs_restart"):
+        return "待重启"
+    if snapshot.get("base_url"):
+        return "未接管"
+    return "未启用"
+
+
+def short_speed_label(snapshot: dict[str, Any]) -> str:
+    behavior = snapshot.get("fast_behavior")
+    if behavior == "app_controlled":
+        return "App 控制"
+    if behavior == "inject_missing":
+        return "快速"
+    if behavior == "preserve":
+        return "标准"
+    return "未启用"
+
+
+def format_duration(value: Any) -> str:
+    try:
+        duration = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    return f"{duration / 1000:.3f}s"
+
+
+def render_time_value(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return "n/a"
+    text = html.escape(value)
+    return f'<time class="local-time" datetime="{text}" title="UTC {text}">{text}</time>'
+
+
+def request_status_label(event: dict[str, Any] | None) -> tuple[str, str]:
+    if not event:
+        return "No events", "idle"
+    code = status_code(event.get("status"))
+    if code is None:
+        return display_text(event.get("status"), "未知"), "warn"
+    if code >= 400:
+        return "Needs attention", "warn"
+    return "Healthy", "ok"
+
+
+def request_speed_label(event: dict[str, Any]) -> str:
+    effective_policy = event.get("service_tier_effective_policy")
+    if effective_policy == "preserve":
+        return "App 控制"
+    if effective_policy == "inject_missing":
+        return "代理加速"
+    return display_text(effective_policy, "未记录")
+
+
+def render_status_metric(label: str, value: str, tone: str = "idle") -> str:
+    return f"""
+            <div class="status-metric">
+              <span>{html.escape(label)}</span>
+              <strong>{html.escape(value)}</strong>
+              <i class="metric-mark {html.escape(tone)}" aria-hidden="true"></i>
+            </div>
+"""
+
+
 def render_recent_events(snapshot: dict[str, Any]) -> str:
     raw = snapshot.get("recent_response_events")
     events = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
     if not events:
-        return '<p class="empty-state">还没有请求记录。发一条 Codex 消息后，这里会显示最近的代理请求。</p>'
+        return '<p class="empty-state">还没有请求记录。</p>'
     rows: list[str] = []
     for event in reversed(events):
-        status = display_text(event.get("status"), "n/a")
-        duration = display_text(event.get("duration_ms"), "n/a")
-        injected = "是" if event.get("service_tier_injected") else "否"
-        tier_before = display_text(event.get("service_tier_before"), "n/a")
-        tier_after = display_text(event.get("service_tier_after"), "n/a")
+        status, tone = request_status_label(event)
+        method = display_text(event.get("method"), "POST")
+        path = display_text(event.get("path"), "n/a")
         rows.append(f"""
-          <tr>
-            <td>{html.escape(display_text(event.get("path"), "n/a"))}</td>
-            <td>{html.escape(status)}</td>
-            <td>{html.escape(duration)} ms</td>
-            <td>{html.escape(tier_before)} -> {html.escape(tier_after)}</td>
-            <td>{html.escape(injected)}</td>
-          </tr>
+            <tr>
+              <td class="time-cell">{render_time_value(event.get("ts"))}</td>
+              <td class="request-route" title="{html.escape(method)} {html.escape(path)}">{html.escape(method)} {html.escape(path)}</td>
+              <td><span class="status-pill {tone}">{html.escape(status)}</span></td>
+              <td class="number-cell">{html.escape(format_duration(event.get("first_event_ms")))}</td>
+              <td class="number-cell">{html.escape(format_duration(event.get("first_output_ms")))}</td>
+              <td class="number-cell">{html.escape(format_duration(event.get("duration_ms")))}</td>
+              <td>{html.escape(request_speed_label(event))}</td>
+            </tr>
 """)
     return f"""
-        <div class="event-table-wrap">
-          <table class="event-table">
+        <div class="request-table-wrap">
+          <table class="request-table">
             <thead>
               <tr>
-                <th>路径</th>
+                <th>时间</th>
+                <th>请求</th>
                 <th>状态</th>
-                <th>耗时</th>
-                <th>速度参数</th>
-                <th>注入</th>
+                <th>首包</th>
+                <th>首字</th>
+                <th>完整</th>
+                <th>速度模式</th>
               </tr>
             </thead>
             <tbody>{''.join(rows)}</tbody>
@@ -133,6 +222,12 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
     chatgpt_login = bool(snapshot.get("chatgpt_auth"))
     proxy_status = proxy_route_label(snapshot)
     auth_text = "ChatGPT 账户登录" if chatgpt_login else "API Key / 第三方登录"
+    recent_events = snapshot.get("recent_response_events")
+    last_event = recent_events[-1] if isinstance(recent_events, list) and recent_events else None
+    last_status, last_status_tone = request_status_label(last_event if isinstance(last_event, dict) else None)
+    provider = display_text(snapshot.get("provider"), "未选择")
+    base_url = compact_url(snapshot.get("base_url"), "未启用")
+    upstream = compact_url(snapshot.get("upstream_base"), "未配置")
     return f"""
       <details id="statusPanel" class="maintenance-panel">
         <summary>
@@ -144,30 +239,33 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
           <span class="summary-action">查看</span>
         </summary>
         <div class="maintenance-body">
-          <div class="status-grid">
-            <div>
-              <span class="muted">走本地代理</span>
-              <strong>{html.escape(boolean_label(snapshot.get("config_matches")))}</strong>
+          <div class="status-dashboard">
+            <div class="route-map" aria-label="请求链路">
+              <div class="route-node">
+                <span>Codex</span>
+                <strong>{html.escape(short_login_label(snapshot))}</strong>
+                <small>{html.escape(auth_text)}</small>
+              </div>
+              <div class="route-connector" aria-hidden="true"></div>
+              <div class="route-node proxy-node">
+                <span>本地代理</span>
+                <strong>{html.escape(short_proxy_label(snapshot))}</strong>
+                <small>{html.escape(base_url)}</small>
+              </div>
+              <div class="route-connector" aria-hidden="true"></div>
+              <div class="route-node">
+                <span>上游服务</span>
+                <strong>{html.escape(provider)}</strong>
+                <small>{html.escape(upstream)}</small>
+              </div>
             </div>
-            <div>
-              <span class="muted">ChatGPT 账户登录</span>
-              <strong>{html.escape(boolean_label(chatgpt_login))}</strong>
-            </div>
-            <div>
-              <span class="muted">当前供应商</span>
-              <strong>{html.escape(display_text(snapshot.get("provider"), "未选择"))}</strong>
-            </div>
-            <div>
-              <span class="muted">速度控制</span>
-              <strong>{html.escape(fast_behavior_label(snapshot))}</strong>
+            <div class="status-metrics">
+              {render_status_metric("代理", short_proxy_label(snapshot), "ok" if snapshot.get("config_matches") else "idle")}
+              {render_status_metric("登录", short_login_label(snapshot), "ok" if chatgpt_login else "idle")}
+              {render_status_metric("速度", short_speed_label(snapshot))}
+              {render_status_metric("最近请求", last_status, last_status_tone)}
             </div>
           </div>
-          <dl>
-            <div><dt>本地入口</dt><dd>{html.escape(display_text(snapshot.get("base_url"), "未启用"))}</dd></div>
-            <div><dt>上游服务</dt><dd>{html.escape(display_text(snapshot.get("upstream_base"), "未配置"))}</dd></div>
-            <div><dt>Codex 当前入口</dt><dd>{html.escape(display_text(snapshot.get("config_base_url"), "未配置"))}</dd></div>
-            <div><dt>登录方式</dt><dd>{html.escape(display_text(snapshot.get("login_mode"), "未知"))}</dd></div>
-          </dl>
           <h2 class="subsection-title">最近请求</h2>
           {render_recent_events(snapshot)}
         </div>
@@ -672,41 +770,104 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       border-color: var(--border);
       color: var(--muted-strong);
     }}
-    .status-grid {{
+    .status-dashboard {{
       display: grid;
-      gap: 10px;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      margin-bottom: 14px;
+      gap: 14px;
     }}
-    .status-grid > div {{
+    .route-map {{
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr) 32px minmax(0, 1fr);
+    }}
+    .route-node {{
       border: 1px solid var(--border);
       border-radius: 10px;
-      min-width: 0;
-      padding: 13px;
-    }}
-    .status-grid strong {{
-      display: block;
-      font-size: 16px;
-      font-weight: 600;
-      margin-top: 5px;
-      overflow-wrap: anywhere;
-    }}
-    dl {{
       display: grid;
-      gap: 10px;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      margin: 14px 0 0;
+      gap: 5px;
+      min-width: 0;
+      padding: 14px;
     }}
-    dt {{
+    .route-node span {{
       color: var(--muted);
       font-size: 13px;
     }}
-    dd {{
-      color: var(--text);
-      font-size: 14px;
-      margin: 3px 0 0;
+    .route-node strong {{
+      display: block;
+      font-size: 16px;
+      font-weight: 600;
       overflow-wrap: anywhere;
     }}
+    .route-node small {{
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }}
+    .proxy-node {{
+      background: var(--green-soft);
+      border-color: rgba(16, 163, 127, .26);
+    }}
+    .route-connector {{
+      min-height: 84px;
+      position: relative;
+    }}
+    .route-connector::before {{
+      background: var(--border-strong);
+      content: "";
+      height: 1px;
+      left: 0;
+      position: absolute;
+      right: 0;
+      top: 50%;
+    }}
+    .route-connector::after {{
+      border-right: 1px solid var(--border-strong);
+      border-top: 1px solid var(--border-strong);
+      content: "";
+      height: 8px;
+      position: absolute;
+      right: 0;
+      top: calc(50% - 4px);
+      transform: rotate(45deg);
+      width: 8px;
+    }}
+    .status-metrics {{
+      display: grid;
+      gap: 1px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--border);
+    }}
+    .status-metric {{
+      background: var(--surface);
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      padding: 13px;
+      position: relative;
+    }}
+    .status-metric span {{
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .status-metric strong {{
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }}
+    .metric-mark {{
+      background: var(--border-strong);
+      border-radius: 999px;
+      height: 7px;
+      position: absolute;
+      right: 13px;
+      top: 15px;
+      width: 7px;
+    }}
+    .metric-mark.ok {{ background: var(--green); }}
+    .metric-mark.warn {{ background: var(--amber); }}
     form {{
       display: grid;
       gap: 12px;
@@ -781,25 +942,45 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       line-height: 1.6;
       margin: 0;
     }}
-    .event-table-wrap {{
-      overflow-x: auto;
+    .request-table-wrap {{
+      overflow-x: hidden;
     }}
-    .event-table {{
+    .request-table {{
       border-collapse: collapse;
-      min-width: 640px;
+      font-size: 13px;
+      table-layout: fixed;
       width: 100%;
     }}
-    .event-table th,
-    .event-table td {{
+    .request-table th,
+    .request-table td {{
       border-bottom: 1px solid var(--surface-soft);
-      font-size: 13px;
-      padding: 9px 8px;
+      padding: 10px 6px;
       text-align: left;
+      vertical-align: middle;
       white-space: nowrap;
     }}
-    .event-table th {{
+    .request-table th {{
       color: var(--muted);
       font-weight: 600;
+    }}
+    .request-table tr:last-child td {{
+      border-bottom: 0;
+    }}
+    .request-table th:nth-child(1), .request-table td:nth-child(1) {{ width: 148px; }}
+    .request-table th:nth-child(2), .request-table td:nth-child(2) {{ width: 144px; }}
+    .request-table th:nth-child(3), .request-table td:nth-child(3) {{ width: 100px; }}
+    .request-table th:nth-child(4), .request-table td:nth-child(4),
+    .request-table th:nth-child(5), .request-table td:nth-child(5),
+    .request-table th:nth-child(6), .request-table td:nth-child(6) {{ width: 82px; }}
+    .request-table th:nth-child(7), .request-table td:nth-child(7) {{ width: 76px; }}
+    .request-route {{
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .number-cell {{ color: var(--text); }}
+    .local-time {{
+      color: var(--muted-strong);
+      white-space: nowrap;
     }}
     details {{
       margin-top: 24px;
@@ -824,7 +1005,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       button {{ width: 100%; }}
       .topbar {{ align-items: stretch; flex-direction: column; }}
       .topbar-actions button, .provider-card-actions button, #newProvider, #cancelProvider {{ width: auto; }}
-      dl, .status-grid {{ grid-template-columns: 1fr; }}
+      .route-map {{ grid-template-columns: 1fr; }}
+      .route-connector {{ min-height: 20px; }}
+      .route-connector::before {{
+        bottom: 0;
+        height: auto;
+        left: 18px;
+        right: auto;
+        top: 0;
+        width: 1px;
+      }}
+      .route-connector::after {{
+        bottom: 0;
+        left: 14px;
+        right: auto;
+        top: auto;
+        transform: rotate(135deg);
+      }}
+      .status-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     }}
   </style>
 </head>
@@ -1000,6 +1198,31 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (snapshot.base_url) return ['已恢复', 'idle'];
       return ['未启用', 'idle'];
     }}
+    function formatLocalTime(date) {{
+      const pad = (value) => String(value).padStart(2, '0');
+      return [
+        date.getFullYear(),
+        '-',
+        pad(date.getMonth() + 1),
+        '-',
+        pad(date.getDate()),
+        ' ',
+        pad(date.getHours()),
+        ':',
+        pad(date.getMinutes()),
+        ':',
+        pad(date.getSeconds())
+      ].join('');
+    }}
+    function renderLocalTimes() {{
+      document.querySelectorAll('time.local-time[datetime]').forEach((node) => {{
+        const value = node.getAttribute('datetime');
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return;
+        node.textContent = formatLocalTime(date);
+        node.title = `UTC ${{value}}`;
+      }});
+    }}
     function resetSummary(snapshot) {{
       const providerSpeed = $('providerSpeed');
       if (providerSpeed) providerSpeed.textContent = speedLabel(snapshot);
@@ -1040,6 +1263,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       $('state').textContent = userState.title || '需要处理';
       $('message').textContent = userState.message || '请打开诊断，或让 Codex 根据诊断结果修复。';
       $('diagnostics').textContent = JSON.stringify(snapshot, null, 2);
+      renderLocalTimes();
       const button = $('primary');
       button.dataset.action = userState.primary_action || 'diagnostics';
       button.textContent = userState.primary_label || '打开诊断';
@@ -1048,6 +1272,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       resetSummary(snapshot);
       resetSpeedForm(snapshot);
     }}
+    renderLocalTimes();
     async function requestAction(action, body) {{
       const response = await fetch('/api/actions/' + action, {{
         method: 'POST',

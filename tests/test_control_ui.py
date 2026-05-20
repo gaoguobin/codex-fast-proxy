@@ -38,7 +38,7 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     user_error_message,
 )
 from codex_fast_proxy.ports import find_available_port  # noqa: E402
-from codex_fast_proxy.state import collect_status  # noqa: E402
+from codex_fast_proxy.state import collect_status, user_state  # noqa: E402
 
 
 class ControlUiTests(unittest.TestCase):
@@ -148,6 +148,19 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(snapshot["user_state"]["title"], "已停用")
         self.assertEqual(snapshot["user_state"]["primary_action"], "enable")
 
+    def test_status_snapshot_uses_clear_refresh_label_for_restart_state(self) -> None:
+        snapshot = user_state({
+            "config_matches": True,
+            "healthy": True,
+            "needs_restart": True,
+            "provider": "acme",
+            "config_base_url": "http://127.0.0.1:18787/v1",
+        })
+
+        self.assertEqual(snapshot["code"], "restart_required")
+        self.assertEqual(snapshot["primary_action"], "refresh")
+        self.assertEqual(snapshot["primary_label"], "刷新状态")
+
     def test_control_page_is_chinese_and_warns_about_codex_embedded_browser(self) -> None:
         html = render_page(
             {
@@ -177,7 +190,11 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("保存速度模式", html)
         self.assertIn("速度模式", html)
         self.assertIn('id="statusPanel"', html)
-        self.assertIn("ChatGPT 账户登录", html)
+        self.assertIn("请求链路", html)
+        self.assertIn("route-map", html)
+        self.assertIn("status-metrics", html)
+        self.assertIn("request-table", html)
+        self.assertNotIn("Codex 当前入口", html)
         self.assertIn('name="speedMode" value="fast" checked', html)
         self.assertIn('name="speedMode" value="standard"', html)
         self.assertIn("重启 Codex 前请用外部浏览器打开此页面", html)
@@ -186,6 +203,55 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("首次启用可能需要几十秒", html)
         self.assertIn('const token = "token";', html)
         self.assertNotIn("&quot;token&quot;", html)
+
+    def test_control_page_recent_requests_are_compact_and_time_aware(self) -> None:
+        html = render_page(
+            {
+                "base_url": "http://127.0.0.1:8787/v1",
+                "config_matches": True,
+                "healthy": True,
+                "provider": "acme",
+                "upstream_base": "https://api.acme.test/v1",
+                "recent_response_events": [{
+                    "ts": "2026-05-18T11:41:19.293+00:00",
+                    "method": "POST",
+                    "path": "/v1/responses",
+                    "status": 200,
+                    "first_event_ms": 1234.5,
+                    "first_output_ms": 2345.6,
+                    "duration_ms": 32066.3,
+                    "service_tier_before": "priority",
+                    "service_tier_after": "priority",
+                    "service_tier_injected": False,
+                    "service_tier_effective_policy": "preserve",
+                }],
+                "user_state": {
+                    "title": "运行正常",
+                    "message": "Codex 已准备好继续使用当前模型服务。",
+                    "primary_action": "uninstall",
+                    "primary_label": "停用并恢复",
+                },
+            },
+            "token",
+        )
+
+        self.assertIn("最近请求", html)
+        self.assertIn("<th>时间</th>", html)
+        self.assertIn("<th>首包</th>", html)
+        self.assertIn("<th>首字</th>", html)
+        self.assertIn("<th>完整</th>", html)
+        self.assertIn("<th>速度模式</th>", html)
+        self.assertNotIn("<th>Tier</th>", html)
+        self.assertIn('class="local-time" datetime="2026-05-18T11:41:19.293+00:00"', html)
+        self.assertIn('title="POST /v1/responses">POST /v1/responses</td>', html)
+        self.assertIn('<span class="status-pill ok">Healthy</span>', html)
+        self.assertIn("<td class=\"number-cell\">1.234s</td>", html)
+        self.assertIn("<td class=\"number-cell\">2.346s</td>", html)
+        self.assertIn("<td class=\"number-cell\">32.066s</td>", html)
+        self.assertIn("<td>App 控制</td>", html)
+        self.assertIn("overflow-x: hidden", html)
+        self.assertIn("date.getFullYear()", html)
+        self.assertIn("renderLocalTimes();", html)
 
     def test_provider_management_is_collapsed_by_default(self) -> None:
         html = render_page(

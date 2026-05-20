@@ -10,6 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ from codex_fast_proxy.proxy import (  # noqa: E402
     copy_request_headers,
     dashboard_requested,
     parse_args,
+    response_output_delta,
     runtime_details,
     service_tier_patch,
     stream_response_body,
@@ -235,6 +237,30 @@ class ProxyPatchTests(unittest.TestCase):
 
         self.assertEqual(writer.getvalue(), b"event: response.output_text.delta\ndata: {\"x\":1}\n\n")
 
+    def test_stream_response_records_first_event_and_first_output_without_rewrite(self) -> None:
+        delta = json.dumps({"type": "response.output_text.delta", "delta": "hello"}).encode("utf-8")
+        response = FakeLineResponse([
+            b"event: response.created\n",
+            b"data: {\"type\":\"response.created\"}\n",
+            b"\n",
+            b"event: response.output_text.delta\n",
+            b"data: " + delta + b"\n",
+            b"\n",
+        ])
+        writer = BytesIO()
+        timing: dict[str, float] = {}
+
+        with mock.patch("codex_fast_proxy.proxy.time.perf_counter", side_effect=[10.1, 10.2, 10.3, 10.4]):
+            stream_response_body(response, writer, chunked=False, line_buffered=True, started_at=10.0, timing=timing)
+
+        self.assertIn(b"response.output_text.delta", writer.getvalue())
+        self.assertEqual(timing["ttfb_ms"], 100.0)
+        self.assertEqual(timing["first_event_ms"], 100.0)
+        self.assertEqual(timing["first_output_ms"], 400.0)
+
+    def test_response_output_delta_supports_chat_completion_delta_strings(self) -> None:
+        self.assertEqual(response_output_delta({"choices": [{"delta": "hello"}]}), "hello")
+
     def test_client_disconnect_during_stream_is_logged_without_bad_gateway(self) -> None:
         temp_root = ROOT / ".test_tmp"
         temp_root.mkdir(exist_ok=True)
@@ -263,7 +289,7 @@ class ProxyPatchTests(unittest.TestCase):
                 open_connection=lambda: connection,
             )
 
-            def raise_client_disconnect(_response: Any) -> None:
+            def raise_client_disconnect(_response: Any, **_kwargs: Any) -> None:
                 raise ConnectionAbortedError("client closed SSE")
 
             def fail_bad_gateway() -> None:

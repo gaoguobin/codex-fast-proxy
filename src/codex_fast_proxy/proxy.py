@@ -209,11 +209,66 @@ def write_chunk(writer: Any, data: bytes) -> None:
     writer.flush()
 
 
+def sse_json_from_line(line: bytes) -> Any:
+    stripped = line.strip()
+    if not stripped.startswith(b"data:"):
+        return None
+    data = stripped[5:].strip()
+    if not data or data == b"[DONE]":
+        return None
+    try:
+        return json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def response_output_delta(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    if payload.get("type") == "response.output_text.delta":
+        delta = payload.get("delta")
+        return delta if isinstance(delta, str) else ""
+    choices = payload.get("choices")
+    if not isinstance(choices, list):
+        return ""
+    parts: list[str] = []
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+            parts.append(delta["content"])
+        elif isinstance(delta, str):
+            parts.append(delta)
+    return "".join(parts)
+
+
+def record_response_timing(
+    timing: dict[str, float],
+    started_at: float,
+    data: bytes,
+    *,
+    line_buffered: bool,
+) -> None:
+    if not data.strip():
+        return
+    now = time.perf_counter()
+    if "first_event_ms" not in timing:
+        first_event_ms = round((now - started_at) * 1000, 1)
+        timing["first_event_ms"] = first_event_ms
+        timing["ttfb_ms"] = first_event_ms
+    if line_buffered and "first_output_ms" not in timing and response_output_delta(sse_json_from_line(data)):
+        timing["first_output_ms"] = round((now - started_at) * 1000, 1)
+
+
 def stream_response_body(
     response: http.client.HTTPResponse,
     writer: Any,
     chunked: bool,
     line_buffered: bool,
+    *,
+    started_at: float | None = None,
+    timing: dict[str, float] | None = None,
 ) -> None:
     read: Callable[[int], bytes]
     if line_buffered:
@@ -225,6 +280,8 @@ def stream_response_body(
         data = read(64 * 1024)
         if not data:
             break
+        if started_at is not None and timing is not None:
+            record_response_timing(timing, started_at, data, line_buffered=line_buffered)
         if chunked:
             write_chunk(writer, data)
         else:
@@ -299,6 +356,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         status = 502
         response_content_type = None
         error_type = None
+        timing: dict[str, float] = {}
         try:
             connection = self.server.open_connection()
             try:
@@ -306,7 +364,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
                 response = connection.getresponse()
                 status = response.status
                 response_content_type = response.getheader("Content-Type")
-                self.forward_response(response)
+                self.forward_response(response, started_at=started_at, timing=timing)
             finally:
                 connection.close()
         except CLIENT_DISCONNECT_ERRORS:
@@ -315,7 +373,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             error_type = type(exc).__name__
             self.respond_bad_gateway()
         finally:
-            self.write_event(request_id, started_at, status, patch_event, response_content_type, error_type)
+            self.write_event(request_id, started_at, status, patch_event, response_content_type, error_type, timing)
 
     def respond_health(self) -> None:
         payload = {
@@ -356,7 +414,13 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or "0")
         return self.rfile.read(length) if length > 0 else b""
 
-    def forward_response(self, response: http.client.HTTPResponse) -> None:
+    def forward_response(
+        self,
+        response: http.client.HTTPResponse,
+        *,
+        started_at: float,
+        timing: dict[str, float],
+    ) -> None:
         response_headers = response.getheaders()
         has_content_length = response.getheader("Content-Length") is not None
         no_body = self.command.upper() == "HEAD" or response.status in {204, 304}
@@ -378,6 +442,8 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             self.wfile,
             chunked,
             line_buffered="text/event-stream" in content_type.lower(),
+            started_at=started_at,
+            timing=timing,
         )
 
     def respond_bad_gateway(self) -> None:
@@ -404,6 +470,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         patch_event: dict[str, Any],
         response_content_type: str | None,
         error_type: str | None,
+        timing: dict[str, float],
     ) -> None:
         event = {
             "ts": utc_now(),
@@ -412,6 +479,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "path": normalized_path(self.path),
             "status": status,
             "duration_ms": round((time.perf_counter() - started_at) * 1000, 1),
+            **timing,
             "eligible": patch_event["eligible"],
             "service_tier_before": patch_event["service_tier_before"],
             "service_tier_after": patch_event["service_tier_after"],
