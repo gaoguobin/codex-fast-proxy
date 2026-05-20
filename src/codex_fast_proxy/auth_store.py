@@ -57,6 +57,18 @@ def provider_auth_provider_names(paths: Any) -> set[str]:
     return {name for name, entry in providers.items() if isinstance(name, str) and isinstance(entry, dict)}
 
 
+def delete_provider_auth_entry(paths: Any, provider: str) -> bool:
+    data = read_json(paths.provider_auth_path)
+    if not data:
+        return False
+    providers = data.get("providers")
+    if not isinstance(providers, dict) or provider not in providers:
+        return False
+    providers.pop(provider)
+    write_secret_json(paths.provider_auth_path, data)
+    return True
+
+
 def write_provider_auth_secret(paths: Any, provider: str, secret: str) -> None:
     write_provider_auth_entry(paths, provider, api_key=secret)
 

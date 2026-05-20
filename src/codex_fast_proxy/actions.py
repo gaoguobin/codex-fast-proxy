@@ -169,6 +169,20 @@ def run_save_provider(
     return result
 
 
+def run_delete_provider(codex_home: str | None, provider: str | None) -> dict[str, Any]:
+    from . import manager
+
+    if not provider:
+        raise ValueError("请选择 Provider。")
+    result = manager.delete_provider(codex_home, provider)
+    result["user_state"] = state(
+        "provider_deleted",
+        "已删除",
+        "已删除这个保存项，当前模型服务不受影响。",
+    )
+    return result
+
+
 def run_switch_provider(codex_home: str | None, provider: str | None) -> dict[str, Any]:
     from . import manager
 

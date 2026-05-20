@@ -11,6 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from .control_ui_render import CONTROL_TOKEN_HEADER, render_page
 from .models import paths_for
@@ -152,18 +153,30 @@ class ControlHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:
-        if self.path in {"/", "/index.html"}:
+        parsed = urlparse(self.path)
+        if parsed.path in {"/", "/index.html"}:
             self.respond_html(render_page(collect_snapshot(self.server), self.server.token))
             return
-        if self.path == "/api/ping":
+        if parsed.path == "/api/ping":
             self.respond_json({
                 "status": "ok",
                 "server": CONTROL_UI_SERVER,
                 **control_ui_identity(self.server.codex_home, self.server.provider),
             })
             return
-        if self.path == "/api/status":
+        if parsed.path == "/api/status":
             self.respond_json({"status": "ok", "snapshot": collect_snapshot(self.server)})
+            return
+        if parsed.path == "/api/provider-key":
+            if not self.write_allowed():
+                self.respond_json({"status": "error", "error": "forbidden"}, status=403)
+                return
+            query = parse_qs(parsed.query)
+            provider = query.get("provider", [None])[0]
+            try:
+                self.respond_json(provider_key_payload(self.server.codex_home, provider))
+            except ValueError as exc:
+                self.respond_json({"status": "error", "error": str(exc)}, status=404)
             return
         self.respond_json({"status": "error", "error": "not_found"}, status=404)
 
@@ -191,6 +204,7 @@ class ControlHandler(BaseHTTPRequestHandler):
 
     def run_action(self, action: str) -> dict[str, Any]:
         from .actions import (
+            run_delete_provider,
             run_first_run_enable,
             run_save_provider,
             run_set_speed_mode,
@@ -218,6 +232,11 @@ class ControlHandler(BaseHTTPRequestHandler):
             )
         elif action == "switch-provider":
             result = run_switch_provider(
+                self.server.codex_home,
+                body.get("provider") if isinstance(body.get("provider"), str) else None,
+            )
+        elif action == "delete-provider":
+            result = run_delete_provider(
                 self.server.codex_home,
                 body.get("provider") if isinstance(body.get("provider"), str) else None,
             )
@@ -311,6 +330,18 @@ def collect_snapshot(server: ControlServer) -> dict[str, Any]:
     return collect_status(server.codex_home, server.provider)
 
 
+def provider_key_payload(codex_home: str | None, provider: str | None) -> dict[str, str]:
+    from .auth_store import provider_auth_secret
+
+    name = provider.strip() if isinstance(provider, str) else ""
+    if not name:
+        raise ValueError("Provider 不能为空。")
+    api_key = provider_auth_secret(paths_for(codex_home), name)
+    if not api_key:
+        raise ValueError("这个 Provider 没有保存 API Key。")
+    return {"status": "ok", "provider": name, "api_key": api_key}
+
+
 def serve_control_ui(codex_home: str | None, provider: str | None, host: str, port: int) -> int:
     server = ControlServer((host, port), ControlHandler, codex_home=codex_home, provider=provider, token=secrets.token_urlsafe(24))
     try:
@@ -330,6 +361,8 @@ def user_error_message(action: str, snapshot: dict[str, Any]) -> str:
         return "没有保存。新的模型服务没有通过验证，当前设置保持不变。"
     if action == "switch-provider":
         return "没有切换。请选择已保存且可验证的 Provider。"
+    if action == "delete-provider":
+        return "没有删除。当前正在使用的 Provider 不能删除。"
     if action == "set-speed-mode":
         return "速度模式没有保存，当前设置保持不变。"
     if action == "enable":

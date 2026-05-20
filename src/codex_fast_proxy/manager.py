@@ -22,6 +22,7 @@ from .auth_prepare import (
 )
 from .auth_store import (
     chatgpt_login_report,
+    delete_provider_auth_entry,
     direct_upstream_auth_warning,
     provider_auth_base_url,
     provider_auth_provider_names,
@@ -401,8 +402,9 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
     active_provider = active_provider_name(config)
     configured = configured_providers(config)
     saved_names = provider_auth_provider_names(paths)
-    names = set(configured) | saved_names
+    names = set(configured)
     if settings:
+        names |= saved_names
         names.add(settings.provider)
         config_proxy_provider = provider_name_for_base_url(config, settings.base_url)
         if config_proxy_provider and config_proxy_provider != settings.provider and config_proxy_provider not in saved_names:
@@ -416,18 +418,20 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
         provider_config = provider_config_for(config, name)
         config_base = provider_base_url(config, name)
         proxy_enabled = bool(settings and name == settings.provider)
+        current = name == current_provider
         upstream_base = (
             settings.upstream_base
             if settings and name == settings.provider
-            else provider_auth_base_url(paths, name) or config_base
+            else (provider_auth_base_url(paths, name) if settings else None) or config_base
         )
         providers.append({
             "name": name,
             "active": name == active_provider,
-            "current": name == current_provider,
+            "current": current,
             "proxy_enabled": proxy_enabled,
             "base_url": upstream_base,
             "api_key": provider_auth_label(paths, name, provider_config),
+            "deletable": name in saved_names and not current and name != active_provider,
         })
 
     return {
@@ -524,9 +528,12 @@ def install_result(args: argparse.Namespace) -> dict[str, Any]:
     config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
     hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
     settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
+    auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
     start_result = None
     hook_result = None
     try:
+        if settings.upstream_api_key_file:
+            write_provider_auth_entry(paths, provider, base_url=settings.upstream_base)
         write_settings(paths, settings)
         start_result = start_background(paths, settings, args.verbose_proxy)
 
@@ -553,6 +560,10 @@ def install_result(args: argparse.Namespace) -> dict[str, Any]:
             paths.settings_path.unlink(missing_ok=True)
         else:
             paths.settings_path.write_bytes(settings_bytes_before)
+        if auth_bytes_before is None:
+            paths.provider_auth_path.unlink(missing_ok=True)
+        else:
+            paths.provider_auth_path.write_bytes(auth_bytes_before)
         if restore_previous_proxy and existing_settings:
             try:
                 start_background(paths, existing_settings, args.verbose_proxy)
@@ -646,6 +657,7 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
     config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
     hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
     settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
+    auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
     restart_required = False
     start_result = None
     hook_result = None
@@ -653,6 +665,8 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
     try:
         _pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, new_settings)
 
+        if new_settings.upstream_api_key_file:
+            write_provider_auth_entry(paths, new_settings.provider, base_url=new_settings.upstream_base)
         write_settings(paths, new_settings)
         if running and not args.restart:
             restart_required = bool(pending_restart or not healthy or runtime_matches is False or auth_source_requested)
@@ -693,6 +707,10 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
             paths.settings_path.unlink(missing_ok=True)
         else:
             paths.settings_path.write_bytes(settings_bytes_before)
+        if auth_bytes_before is None:
+            paths.provider_auth_path.unlink(missing_ok=True)
+        else:
+            paths.provider_auth_path.write_bytes(auth_bytes_before)
         if start_result and start_result.get("status") in {"started", "restarted"}:
             try:
                 start_background(paths, old_settings, args.verbose_proxy)
@@ -1019,6 +1037,32 @@ def switch_provider(
         "start_result": start_result,
         "config_changed": False,
         "provider_inventory": provider_inventory(paths.codex_home, name),
+        "secret_printed": False,
+    }
+
+
+def delete_provider(codex_home: str | Path | None, provider: str) -> dict[str, Any]:
+    paths = paths_for(codex_home)
+    name = validate_provider_name(provider)
+    config = load_toml_config(paths.config_path)
+    settings_data = read_json(paths.settings_path)
+    settings = settings_from_dict(settings_data) if settings_data else None
+    if settings and settings.provider == name:
+        raise ConfigError("Cannot delete the provider currently used by the proxy.")
+    if active_provider_name(config) == name:
+        raise ConfigError("Cannot delete the active Codex provider from proxy-managed storage.")
+    if not provider_auth_base_url(paths, name) and not provider_auth_secret(paths, name):
+        raise ConfigError(f"Provider {name!r} is not stored by the proxy.")
+
+    removed = delete_provider_auth_entry(paths, name)
+    if not removed:
+        raise ConfigError(f"Provider {name!r} is not stored by the proxy.")
+    return {
+        "status": "provider_deleted",
+        "provider": name,
+        "config_changed": False,
+        "restart_required": False,
+        "provider_inventory": provider_inventory(paths.codex_home, settings.provider if settings else None),
         "secret_printed": False,
     }
 

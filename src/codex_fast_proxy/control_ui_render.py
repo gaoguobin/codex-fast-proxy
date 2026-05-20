@@ -389,8 +389,8 @@ def render_provider_metadata_signal(snapshot: dict[str, Any]) -> str:
 def render_operational_signals(snapshot: dict[str, Any]) -> str:
     return f"""
           <div class="signal-grid">
-            {render_benchmark_signal(snapshot)}
             {render_provider_metadata_signal(snapshot)}
+            {render_benchmark_signal(snapshot)}
           </div>
 """
 
@@ -514,11 +514,15 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
         name_attr = html.escape(name, quote=True)
         is_current = bool(item.get("current")) or name == selected_provider
         card_class = "provider-card current" if is_current else "provider-card"
-        status_label = "使用中" if is_current else "已配置"
-        status_class = "ok" if is_current else "idle"
+        status_pill = '<span class="status-pill ok">使用中</span>' if is_current else ""
         enable_button = "" if is_current else (
             f'<button class="provider-enable" type="button" data-provider-action="switch" '
             f'data-provider="{name_attr}">启用</button>'
+        )
+        can_delete = bool(item.get("deletable"))
+        delete_button = "" if not can_delete else (
+            f'<button class="provider-delete" type="button" data-provider-action="delete" '
+            f'data-provider="{name_attr}">删除</button>'
         )
         cards.append(f"""
             <article class="{card_class}" data-provider-name="{name_attr}">
@@ -531,13 +535,42 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
                 </div>
               </div>
               <div class="provider-card-actions">
-                <span class="status-pill {status_class}">{status_label}</span>
+                {status_pill}
                 {enable_button}
-                <button class="provider-edit" type="button" data-provider-action="edit" data-provider="{name_attr}">编辑供应商</button>
+                <button class="provider-edit" type="button" data-provider-action="edit" data-provider="{name_attr}">编辑</button>
+                {delete_button}
               </div>
             </article>
 """)
     return "".join(cards)
+
+
+def render_codex_config_panel(provider: dict[str, Any], terminal_state: bool) -> str:
+    if terminal_state or not provider:
+        return ""
+    name = html.escape(str(provider.get("name") or "未选择"))
+    base_url = html.escape(display_text(provider.get("base_url"), "未设置模型服务"))
+    return f"""
+      <details id="codexConfigPanel" class="maintenance-panel">
+        <summary>
+          <span class="summary-copy">
+            <span class="muted">Codex 配置</span>
+            <strong>{name}</strong>
+            <span>来自 config.toml · 只读</span>
+          </span>
+          <span class="summary-action" data-open-label="收起" data-closed-label="查看">查看</span>
+        </summary>
+        <div class="maintenance-body">
+          <div class="readonly-config">
+            <span>当前入口</span>
+            <strong>{name}</strong>
+            <span>模型服务地址</span>
+            <strong>{base_url}</strong>
+          </div>
+          <p class="readonly-note">启用前这里不管理 Codex 配置里的供应商；如需增删改，请继续使用你熟悉的配置工具。</p>
+        </div>
+      </details>
+"""
 
 
 def render_page(snapshot: dict[str, Any], token: str) -> str:
@@ -555,6 +588,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     labels: dict[str, str] = {}
     terminal_state = state_code in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
     show_runtime_controls = bool(snapshot.get("base_url")) and not terminal_state
+    proxy_enabled = show_runtime_controls
     action_buttons = ""
     danger_zone = ""
     labels["update"] = "更新"
@@ -580,19 +614,20 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     selected_record = next((item for item in providers if item.get("name") == selected_provider), providers[0] if providers else {})
     provider_name_value = html.escape(str(selected_record.get("name") or selected_provider), quote=True)
     provider_url_value = html.escape(str(selected_record.get("base_url") or ""), quote=True)
+    codex_config_panel = render_codex_config_panel(selected_record, terminal_state) if providers and not proxy_enabled else ""
     provider_management = ""
-    if providers and not terminal_state:
+    if providers and proxy_enabled:
         summary_name = html.escape(str(selected_record.get("name") or selected_provider or "未选择"))
         summary_url = html.escape(display_text(selected_record.get("base_url"), "未设置模型服务"))
         labels.update({
-            "saveProvider": "保存供应商",
+            "saveProvider": "保存",
         })
         selected_provider_name = str(selected_record.get("name") or selected_provider or "")
         provider_management = f"""
       <details id="providerPanel" class="maintenance-panel">
         <summary>
           <span class="summary-copy">
-            <span class="muted">供应商管理</span>
+            <span class="muted">供应商</span>
             <strong id="providerSummaryName">{summary_name}</strong>
             <span id="providerSummaryUrl">{summary_url}</span>
           </span>
@@ -601,33 +636,33 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         <div class="maintenance-body">
           <div class="provider-panel-header">
             <div>
-              <h2>供应商管理</h2>
-              <div class="provider-tabs" aria-label="应用">
-                <span class="provider-tab active">Codex</span>
-              </div>
+              <h2>供应商</h2>
             </div>
-            <button id="newProvider" type="button">添加供应商</button>
+            <button id="newProvider" type="button">添加</button>
           </div>
           <div id="providerList" class="provider-list">
             {render_provider_cards(providers, selected_provider_name)}
           </div>
           <div id="providerEditor" class="provider-editor" hidden>
             <div class="provider-editor-title">
-              <h3 id="providerEditorTitle">编辑供应商</h3>
+              <h3 id="providerEditorTitle">编辑</h3>
               <button id="cancelProvider" class="provider-edit" type="button">取消</button>
             </div>
             <form id="providerForm" class="provider-form">
-              <label>供应商名称
+              <label>名称
                 <input id="providerNameInput" autocomplete="off" value="{provider_name_value}" placeholder="my-provider" required>
               </label>
               <label>模型服务地址
                 <input id="upstreamBase" autocomplete="off" value="{provider_url_value}" placeholder="https://api.example.com/v1" required>
               </label>
               <label>API Key
-                <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
+                <span class="secret-input-row">
+                  <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
+                  <button id="revealApiKey" class="icon-button" type="button" aria-label="显示 API Key" title="显示 API Key">👁</button>
+                </span>
               </label>
               <div class="actions compact">
-                <button id="saveProvider" type="submit">保存供应商</button>
+                <button id="saveProvider" type="submit">保存</button>
               </div>
             </form>
           </div>
@@ -636,7 +671,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
 """
 
     speed_controls = ""
-    if providers and not terminal_state and not snapshot.get("chatgpt_auth"):
+    if providers and proxy_enabled and not snapshot.get("chatgpt_auth"):
         status_label, status_class = provider_status(snapshot)
         speed_label = html.escape(speed_mode_label(snapshot))
         speed_mode = speed_mode_from_snapshot(snapshot)
@@ -902,26 +937,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin: 0;
       padding: 0;
     }}
-    .provider-tabs {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 9px;
-    }}
-    .provider-tab {{
-      background: var(--surface-soft);
-      border: 1px solid transparent;
-      border-radius: 999px;
-      color: var(--muted-strong);
-      font-size: 13px;
-      font-weight: 600;
-      padding: 6px 11px;
-    }}
-    .provider-tab.active {{
-      background: var(--text);
-      border-color: var(--text);
-      color: #ffffff;
-    }}
     .provider-list {{
       display: grid;
       gap: 10px;
@@ -984,6 +999,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       min-height: 34px;
       padding: 7px 12px;
     }}
+    .provider-card-actions .provider-delete {{
+      background: var(--surface);
+      border-color: var(--border-strong);
+      color: var(--red);
+    }}
+    .provider-card-actions .provider-delete:hover:not(:disabled) {{
+      background: #fff4f1;
+      border-color: var(--red);
+      color: var(--red);
+    }}
     .provider-editor {{
       border-top: 1px solid var(--border);
       margin-top: 18px;
@@ -1000,6 +1025,30 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-size: 15px;
       font-weight: 600;
       margin: 0;
+    }}
+    .secret-input-row {{
+      align-items: center;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(0, 1fr) 42px;
+    }}
+    .secret-input-row input {{
+      min-width: 0;
+    }}
+    .icon-button {{
+      background: var(--surface);
+      border-color: var(--border-strong);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 15px;
+      min-height: 42px;
+      padding: 0;
+      width: 42px;
+    }}
+    .icon-button:hover:not(:disabled) {{
+      background: var(--surface-soft);
+      border-color: var(--text);
+      color: var(--text);
     }}
     .muted {{
       color: var(--muted);
@@ -1264,7 +1313,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .signal-grid {{
       display: grid;
       gap: 12px;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1fr;
     }}
     .signal-card {{
       border: 1px solid var(--border);
@@ -1408,6 +1457,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       </div>
       {danger_zone}
       {render_status_panel(snapshot)}
+      {codex_config_panel}
       {provider_management}
       {speed_controls}
       <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
@@ -1433,6 +1483,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         {{ delay: 8000, label: '正在刷新运行时...', message: '正在重新安装并刷新代理进程，这一步可能需要十几秒。' }},
         {{ delay: 20000, label: '更新仍在继续...', message: '仍在等待本地更新完成，请保持控制面板打开。' }}
       ],
+      'save-provider': [
+        {{ delay: 0, label: '正在保存...', message: '正在保存，并验证模型服务是否可用。' }},
+        {{ delay: 6000, label: '正在验证模型服务...', message: '正在发起一次真实 Responses API 流式检查，完成后会自动更新页面。' }},
+        {{ delay: 18000, label: '模型服务响应较慢...', message: '仍在等待模型服务响应；如果验证失败，当前设置会保持不变。' }}
+      ],
+      'switch-provider': [
+        {{ delay: 0, label: '正在切换...', message: '正在切换，并验证新的模型服务。' }},
+        {{ delay: 6000, label: '正在验证模型服务...', message: '正在发起一次真实 Responses API 流式检查，完成后会自动更新页面。' }},
+        {{ delay: 18000, label: '模型服务响应较慢...', message: '仍在等待模型服务响应；如果验证失败，当前设置会保持不变。' }}
+      ],
+      'delete-provider': [
+        {{ delay: 0, label: '正在删除...', message: '正在删除保存项，当前模型服务不会受影响。' }}
+      ],
+      'set-speed-mode': [
+        {{ delay: 0, label: '正在保存...', message: '正在保存当前选择。' }},
+        {{ delay: 6000, label: '正在验证模型服务...', message: '正在确认当前模型服务仍可正常响应。' }},
+        {{ delay: 18000, label: '模型服务响应较慢...', message: '仍在等待模型服务响应；如果验证失败，当前设置会保持不变。' }}
+      ],
       uninstall: [
         {{ delay: 0, label: '正在恢复直连...', message: '正在恢复 Codex 原模型服务，并准备清理本地代理。' }},
         {{ delay: 1200, label: '正在清理...', message: '正在移除本地状态、安装文件和 skill 链接，控制面板会最后关闭。' }}
@@ -1442,6 +1510,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       ]
     }};
     let providerRecords = {json.dumps(providers, ensure_ascii=False)};
+    let loadedApiKey = '';
+    let loadedApiKeyProvider = '';
     function escapeHtml(value) {{
       return String(value).replace(/[&<>"']/g, (char) => ({{
         '&': '&amp;',
@@ -1463,9 +1533,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const name = record && record.name ? String(record.name) : '未命名';
       const baseUrl = record && record.base_url ? String(record.base_url) : '未设置模型服务';
       const isCurrent = Boolean(record && record.current) || name === currentName;
-      const statusLabel = isCurrent ? '使用中' : '已配置';
-      const statusClass = isCurrent ? 'ok' : 'idle';
+      const statusPill = isCurrent ? '<span class="status-pill ok">使用中</span>' : '';
       const enableButton = isCurrent ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">启用</button>`;
+      const deleteButton = record && record.deletable ? `<button class="provider-delete" type="button" data-provider-action="delete" data-provider="${{escapeHtml(name)}}">删除</button>` : '';
       const avatar = (name.trim().charAt(0) || '?').toUpperCase();
       return `
             <article class="provider-card${{isCurrent ? ' current' : ''}}" data-provider-name="${{escapeHtml(name)}}">
@@ -1478,9 +1548,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
                 </div>
               </div>
               <div class="provider-card-actions">
-                <span class="status-pill ${{statusClass}}">${{statusLabel}}</span>
+                ${{statusPill}}
                 ${{enableButton}}
-                <button class="provider-edit" type="button" data-provider-action="edit" data-provider="${{escapeHtml(name)}}">编辑供应商</button>
+                <button class="provider-edit" type="button" data-provider-action="edit" data-provider="${{escapeHtml(name)}}">编辑</button>
+                ${{deleteButton}}
               </div>
             </article>
 `;
@@ -1519,12 +1590,19 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       return '未保存';
     }}
+    function maskSecret(value) {{
+      return value === 'saved' ? '••••••••••••••••' : '';
+    }}
     function openProviderEditor(record, title) {{
+      loadedApiKey = '';
+      loadedApiKeyProvider = '';
       const editor = $('providerEditor');
       if (editor) editor.hidden = false;
       const editorTitle = $('providerEditorTitle');
       if (editorTitle && title) editorTitle.textContent = title;
       fillProviderForm(record);
+      const saveProvider = $('saveProvider');
+      if (saveProvider) saveProvider.textContent = record ? '更新' : '保存';
       const nameInput = $('providerNameInput');
       if (nameInput) nameInput.focus();
     }}
@@ -1532,7 +1610,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const editor = $('providerEditor');
       if (editor) editor.hidden = true;
       const editorTitle = $('providerEditorTitle');
-      if (editorTitle) editorTitle.textContent = '编辑供应商';
+      if (editorTitle) editorTitle.textContent = '编辑';
+      const saveProvider = $('saveProvider');
+      if (saveProvider) saveProvider.textContent = labels.saveProvider || '保存';
     }}
     function providerByName(name) {{
       return providerRecords.find((item) => item.name === name) || null;
@@ -1543,7 +1623,67 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const upstreamBase = $('upstreamBase');
       if (upstreamBase) upstreamBase.value = record ? record.base_url || '' : '';
       const apiKey = $('apiKey');
-      if (apiKey) apiKey.value = '';
+      if (apiKey) {{
+        apiKey.type = 'password';
+        apiKey.value = record ? maskSecret(record.api_key) : '';
+        apiKey.dataset.masked = record && record.api_key === 'saved' ? 'true' : 'false';
+        apiKey.dataset.original = '';
+      }}
+      const reveal = $('revealApiKey');
+      if (reveal) {{
+        reveal.disabled = !(record && record.api_key === 'saved');
+        reveal.textContent = '👁';
+        reveal.setAttribute('aria-label', '显示 API Key');
+        reveal.title = '显示 API Key';
+      }}
+    }}
+    async function fetchProviderKey(provider) {{
+      const response = await fetch('/api/provider-key?provider=' + encodeURIComponent(provider), {{
+        headers: {{ [headerName]: token }},
+        cache: 'no-store'
+      }});
+      const data = await response.json();
+      if (data.status !== 'ok') throw new Error(data.error || '没有读取到已保存的 API Key。');
+      return data.api_key || '';
+    }}
+    async function revealProviderKey() {{
+      const apiKey = $('apiKey');
+      const provider = $('providerNameInput').value.trim();
+      if (!apiKey || !provider) return;
+      if (apiKey.type === 'text') {{
+        apiKey.type = 'password';
+        const reveal = $('revealApiKey');
+        if (reveal) {{
+          reveal.textContent = '👁';
+          reveal.setAttribute('aria-label', '显示 API Key');
+          reveal.title = '显示 API Key';
+        }}
+        return;
+      }}
+      if (apiKey.dataset.masked === 'true') {{
+        const secret = await fetchProviderKey(provider);
+        apiKey.value = secret;
+        apiKey.dataset.masked = 'false';
+        apiKey.dataset.original = secret;
+        loadedApiKey = secret;
+        loadedApiKeyProvider = provider;
+      }}
+      apiKey.type = 'text';
+      const reveal = $('revealApiKey');
+      if (reveal) {{
+        reveal.textContent = '隐藏';
+        reveal.setAttribute('aria-label', '隐藏 API Key');
+        reveal.title = '隐藏 API Key';
+      }}
+    }}
+    function apiKeyFormValue() {{
+      const apiKey = $('apiKey');
+      if (!apiKey) return null;
+      const value = apiKey.value.trim();
+      if (!value || apiKey.dataset.masked === 'true') return null;
+      const provider = $('providerNameInput').value.trim();
+      if (provider === loadedApiKeyProvider && value === loadedApiKey) return null;
+      return value;
     }}
     function resetProviderForm(snapshot) {{
       renderProviderList(snapshot);
@@ -1680,10 +1820,15 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const hasRuntimeControls = Boolean($('update') || $('uninstall'));
       const shouldShowRuntimeControls = Boolean(snapshot.base_url) && !terminalState;
       const hasProviderPanel = Boolean($('providerPanel'));
-      const shouldShowProviderPanel = Array.isArray(snapshot.providers) && snapshot.providers.length > 0 && !terminalState;
+      const hasCodexConfigPanel = Boolean($('codexConfigPanel'));
+      const providerAvailable = Array.isArray(snapshot.providers) && snapshot.providers.length > 0;
+      const proxyEnabled = Boolean(snapshot.base_url) && !terminalState;
+      const shouldShowProviderPanel = providerAvailable && proxyEnabled;
+      const shouldShowCodexConfigPanel = providerAvailable && !proxyEnabled && !terminalState;
       const hasSpeedForm = Boolean($('speedForm'));
       const shouldShowSpeedForm = shouldShowProviderPanel && !snapshot.chatgpt_auth;
       return hasRuntimeControls !== shouldShowRuntimeControls ||
+        hasCodexConfigPanel !== shouldShowCodexConfigPanel ||
         hasProviderPanel !== shouldShowProviderPanel ||
         hasSpeedForm !== shouldShowSpeedForm;
     }}
@@ -1788,19 +1933,38 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if ($('finishCleanup')) $('finishCleanup').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
     if ($('newProvider')) $('newProvider').addEventListener('click', () => {{
-      openProviderEditor(null, '添加供应商');
+      openProviderEditor(null, '添加');
     }});
     if ($('cancelProvider')) $('cancelProvider').addEventListener('click', () => closeProviderEditor());
+    if ($('revealApiKey')) $('revealApiKey').addEventListener('click', async () => {{
+      try {{
+        await revealProviderKey();
+      }} catch (error) {{
+        $('message').textContent = (error && error.message) ? error.message : String(error);
+      }}
+    }});
+    if ($('apiKey')) $('apiKey').addEventListener('input', (event) => {{
+      const input = event.currentTarget;
+      if (input.dataset.masked === 'true' && input.value !== maskSecret('saved')) {{
+        input.dataset.masked = 'false';
+        input.dataset.original = '';
+        loadedApiKey = '';
+        loadedApiKeyProvider = '';
+      }}
+    }});
     if ($('providerList')) $('providerList').addEventListener('click', async (event) => {{
       const button = event.target.closest('button[data-provider-action]');
       if (!button) return;
       const provider = button.dataset.provider || '';
       if (button.dataset.providerAction === 'edit') {{
-        openProviderEditor(providerByName(provider), '编辑供应商');
+        openProviderEditor(providerByName(provider), '编辑');
         return;
       }}
       if (button.dataset.providerAction === 'switch') {{
         await runButton(button, 'switch-provider', {{ provider }});
+      }}
+      if (button.dataset.providerAction === 'delete') {{
+        if (window.confirm(`删除 ${{provider}}？`)) await runButton(button, 'delete-provider', {{ provider }});
       }}
     }});
     if ($('providerForm')) $('providerForm').addEventListener('submit', async (event) => {{
@@ -1808,7 +1972,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       await runButton($('saveProvider'), 'save-provider', {{
         provider: $('providerNameInput').value.trim() || null,
         upstream_base: $('upstreamBase').value.trim() || null,
-        api_key: $('apiKey').value.trim() || null
+        api_key: apiKeyFormValue()
       }});
       $('apiKey').value = '';
     }});

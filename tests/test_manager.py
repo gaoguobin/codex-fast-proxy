@@ -1381,6 +1381,55 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["verification"]["status"], "verified")
         self.assertEqual(settings["upstream_base"], "https://api.new.test/v1")
 
+    def test_set_upstream_provider_auth_file_tracks_provider_base_url(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.config_path.write_text(
+            'model = "gpt-test"\n'
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+        manager.write_settings(
+            paths,
+            manager.ProxySettings(
+                provider="acme",
+                host="127.0.0.1",
+                port=18787,
+                proxy_base="/v1",
+                upstream_base="https://api.old.test/v1",
+                service_tier="priority",
+                upstream_api_key_file=True,
+            ),
+        )
+        manager.write_provider_auth_secret(paths, "acme", "provider-secret")
+
+        with (
+            mock.patch("codex_fast_proxy.manager.proxy_runtime_state", return_value=(1234, True, {"ok": True}, True, False, True)),
+            mock.patch("codex_fast_proxy.manager.install_startup_hook", return_value={"status": "installed"}),
+        ):
+            result = manager.set_upstream_result(argparse.Namespace(
+                codex_home=str(codex_home),
+                upstream_base="https://api.new.test/v1",
+                service_tier_policy=None,
+                upstream_api_key_env=None,
+                use_provider_auth_file=False,
+                clear_upstream_api_key_env=False,
+                clear_upstream_auth=False,
+                verify=False,
+                verify_timeout=60.0,
+                restart=False,
+                verbose_proxy=False,
+            ))
+
+        stored_auth = json.loads(paths.provider_auth_path.read_text(encoding="utf-8"))
+        self.assertEqual(result["status"], "upstream_updated")
+        self.assertEqual(stored_auth["providers"]["acme"]["api_key"], "provider-secret")
+        self.assertEqual(stored_auth["providers"]["acme"]["base_url"], "https://api.new.test/v1")
+
     def test_set_upstream_verification_failure_does_not_write_settings(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)

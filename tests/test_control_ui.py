@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.actions import (  # noqa: E402
     run_configure_upstream,
+    run_delete_provider,
     run_first_run_enable,
     run_save_provider,
     run_set_speed_mode,
@@ -30,6 +31,7 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     find_existing_control_ui,
     is_loopback_host,
     open_control_ui,
+    provider_key_payload,
     render_page,
     schedule_install_cleanup,
     schedule_control_ui_restart,
@@ -164,7 +166,8 @@ class ControlUiTests(unittest.TestCase):
     def test_control_page_is_chinese_and_warns_about_codex_embedded_browser(self) -> None:
         html = render_page(
             {
-                "base_url": "http://127.0.0.1:8787/v1",
+                "provider": "acme",
+                "config_base_url": "https://api.acme.test/v1",
                 "user_state": {
                     "title": "准备启用",
                     "message": "点击启用后，会自动准备当前模型服务路径。",
@@ -178,19 +181,27 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("Codex 控制面板", html)
         self.assertIn("启用", html)
         self.assertIn("更新", html)
-        self.assertIn("停用并恢复", html)
-        self.assertIn('id="providerPanel"', html)
-        self.assertIn("供应商管理", html)
-        self.assertIn("管理", html)
-        self.assertIn('data-closed-label="管理"', html)
+        self.assertNotIn("停用并恢复", html)
+        self.assertIn('id="codexConfigPanel"', html)
+        self.assertNotIn('id="providerPanel"', html)
+        self.assertIn("Codex 配置", html)
+        self.assertIn("来自 config.toml · 只读", html)
+        self.assertIn("供应商", html)
+        self.assertIn("查看", html)
+        self.assertIn('data-closed-label="查看"', html)
         self.assertIn('data-open-label="收起"', html)
         self.assertIn("模型服务地址", html)
         self.assertNotIn("providerProxy", html)
-        self.assertIn("添加供应商", html)
-        self.assertIn("编辑供应商", html)
-        self.assertIn("保存供应商", html)
-        self.assertIn("保存速度模式", html)
-        self.assertIn("速度模式", html)
+        self.assertNotIn("provider-tabs", html)
+        self.assertNotIn("provider-tab", html)
+        self.assertNotIn('id="newProvider"', html)
+        self.assertNotIn('id="providerEditor"', html)
+        self.assertNotIn("保存</button>", html)
+        self.assertNotIn("添加供应商", html)
+        self.assertNotIn("编辑供应商", html)
+        self.assertNotIn("保存供应商", html)
+        self.assertNotIn('id="speedPanel"', html)
+        self.assertNotIn('id="speedForm"', html)
         self.assertIn('id="statusPanel"', html)
         self.assertIn("请求链路", html)
         self.assertIn("route-map", html)
@@ -200,12 +211,21 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("status-metrics", html)
         self.assertIn("request-table", html)
         self.assertNotIn("Codex 当前入口", html)
-        self.assertIn('name="speedMode" value="fast" checked', html)
-        self.assertIn('name="speedMode" value="standard"', html)
+        self.assertNotIn('name="speedMode" value="fast" checked', html)
+        self.assertNotIn('name="speedMode" value="standard"', html)
         self.assertIn("重启 Codex 前请用外部浏览器打开此页面", html)
         self.assertIn("正在准备环境", html)
         self.assertIn("正在验证模型服务", html)
         self.assertIn("首次启用可能需要几十秒", html)
+        self.assertIn("'save-provider'", html)
+        self.assertIn("正在保存，并验证模型服务是否可用。", html)
+        self.assertIn("'switch-provider'", html)
+        self.assertIn("正在切换，并验证新的模型服务。", html)
+        self.assertIn("'delete-provider'", html)
+        self.assertIn("正在删除保存项", html)
+        self.assertIn("'set-speed-mode'", html)
+        self.assertIn("正在保存当前选择。", html)
+        self.assertIn("如果验证失败，当前设置会保持不变。", html)
         self.assertIn("高级诊断", html)
         self.assertIn('id="diagnosticsPanel"', html)
         self.assertIn('const token = "token";', html)
@@ -264,6 +284,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("运行细节", html)
         self.assertIn("性能基准", html)
         self.assertIn("Provider 检查", html)
+        self.assertLess(html.index("Provider 检查"), html.index("性能基准"))
+        self.assertIn("grid-template-columns: 1fr", html)
         self.assertIn("overflow-x: hidden", html)
         self.assertIn("date.getFullYear()", html)
         self.assertIn("renderLocalTimes();", html)
@@ -405,6 +427,7 @@ class ControlUiTests(unittest.TestCase):
     def test_provider_management_is_collapsed_by_default(self) -> None:
         html = render_page(
             {
+                "base_url": "http://127.0.0.1:8787/v1",
                 "providers": [{
                     "name": "acme",
                     "base_url": "https://api.acme.test/v1",
@@ -416,6 +439,7 @@ class ControlUiTests(unittest.TestCase):
                     "base_url": "https://api.other.test/v1",
                     "current": False,
                     "active": False,
+                    "deletable": True,
                     "api_key": "missing",
                 }],
                 "provider": "acme",
@@ -434,12 +458,104 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('id="providerSummaryName">acme</strong>', html)
         self.assertIn('id="providerSummaryUrl">https://api.acme.test/v1</span>', html)
         self.assertIn('id="providerEditor" class="provider-editor" hidden', html)
-        self.assertIn("添加供应商", html)
-        self.assertIn("编辑供应商", html)
+        self.assertIn("添加", html)
+        self.assertIn("编辑", html)
+        self.assertIn("更新", html)
+        self.assertIn("删除", html)
+        self.assertIn('id="revealApiKey"', html)
+        self.assertIn("maskSecret", html)
+        self.assertIn("apiKeyFormValue()", html)
+        self.assertIn("/api/provider-key?provider=", html)
         self.assertIn('data-provider-action="switch"', html)
         self.assertIn('data-provider="other">启用</button>', html)
+        self.assertIn('data-provider="other">删除</button>', html)
+        self.assertIn('<span class="status-pill ok">使用中</span>', html)
+        self.assertNotIn("已配置", html)
         self.assertIn("https://api.other.test/v1", html)
         self.assertNotIn("providerSelect", html)
+        self.assertNotIn("provider-secret", html)
+        self.assertNotIn("添加供应商", html)
+        self.assertNotIn("编辑供应商", html)
+        self.assertNotIn("更新供应商", html)
+
+    def test_provider_management_is_hidden_before_proxy_enable(self) -> None:
+        html = render_page(
+            {
+                "providers": [{
+                    "name": "acme",
+                    "base_url": "https://api.acme.test/v1",
+                    "current": True,
+                    "active": True,
+                    "api_key": "saved",
+                }],
+                "provider": "acme",
+                "user_state": {
+                    "title": "准备启用",
+                    "message": "点击启用后，会自动准备当前模型服务路径。",
+                    "primary_action": "enable",
+                    "primary_label": "启用",
+                },
+            },
+            "token",
+        )
+
+        self.assertIn('id="codexConfigPanel"', html)
+        self.assertIn("来自 config.toml · 只读", html)
+        self.assertNotIn('id="providerPanel"', html)
+        self.assertNotIn('id="providerForm"', html)
+        self.assertNotIn('id="providerList"', html)
+        self.assertNotIn('id="newProvider"', html)
+
+    def test_provider_inventory_before_enable_is_config_read_only(self) -> None:
+        manager.write_provider_auth_entry(
+            self.paths,
+            "other",
+            api_key="other-secret",
+            base_url="https://api.other.test/v1",
+        )
+        manager.write_provider_auth_entry(
+            self.paths,
+            "acme",
+            api_key="acme-secret",
+            base_url="https://api.saved.test/v1",
+        )
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.config.test/v1"\n',
+            encoding="utf-8",
+        )
+
+        providers = manager.provider_inventory(str(self.codex_home))["providers"]
+
+        self.assertEqual([item["name"] for item in providers], ["acme"])
+        self.assertEqual(providers[0]["base_url"], "https://api.config.test/v1")
+        self.assertFalse(providers[0]["deletable"])
+
+    def test_provider_inventory_does_not_offer_delete_for_active_config_provider(self) -> None:
+        settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.other.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_secret(self.paths, "acme", "acme-secret")
+        manager.write_provider_auth_entry(self.paths, "other", api_key="other-secret", base_url="https://api.other.test/v1")
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+
+        providers = {item["name"]: item for item in manager.provider_inventory(str(self.codex_home))["providers"]}
+
+        self.assertFalse(providers["acme"]["deletable"])
+        self.assertFalse(providers["other"]["deletable"])
 
     def test_control_page_hides_maintenance_controls_before_enable(self) -> None:
         html = render_page(
@@ -499,7 +615,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('const labels = {"update": "更新"', html)
         self.assertIn('"uninstall": "停用并恢复"', html)
         self.assertIn('"confirmUninstall": "我知道可能导致模型请求失败，仍要停用"', html)
-        self.assertIn('"saveProvider": "保存供应商"', html)
+        self.assertIn('"saveProvider": "保存"', html)
+        self.assertIn("saveProvider.textContent = record ? '更新' : '保存'", html)
         self.assertIn('"saveSpeed": "保存速度模式"', html)
         self.assertIn("resetControls(userState, snapshot);", html)
         self.assertIn("resetSummary(snapshot);", html)
@@ -626,6 +743,21 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(response["shutdown_control_ui"])
         self.assertEqual(response["action"]["control_ui"]["url"], "http://127.0.0.1:8786/")
         self.assertTrue(response["action"]["control_ui"]["same_port"])
+
+    def test_provider_key_payload_returns_secret_only_on_explicit_request(self) -> None:
+        manager.write_provider_auth_secret(self.paths, "acme", "provider-secret")
+
+        payload = provider_key_payload(str(self.codex_home), "acme")
+
+        self.assertEqual(payload, {
+            "status": "ok",
+            "provider": "acme",
+            "api_key": "provider-secret",
+        })
+
+    def test_provider_key_payload_rejects_missing_secret(self) -> None:
+        with self.assertRaises(ValueError):
+            provider_key_payload(str(self.codex_home), "missing")
 
     def test_uninstall_control_action_schedules_state_cleanup(self) -> None:
         handler = object.__new__(ControlHandler)
@@ -787,6 +919,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("当前对话可以继续", result["user_state"]["message"])
         self.assertEqual(manager.provider_base_url(config, "acme"), "http://127.0.0.1:8787/v1")
         self.assertEqual(stored_auth["providers"]["acme"]["api_key"], "provider-secret")
+        self.assertEqual(stored_auth["providers"]["acme"]["base_url"], "https://api.acme.test/v1")
         self.assertNotIn("provider-secret", result_text)
 
     def test_first_run_enable_fails_before_config_change_when_provider_key_is_missing(self) -> None:
@@ -932,6 +1065,56 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(config["model_provider"], "acme")
         self.assertEqual(manager.provider_base_url(config, "acme"), settings.base_url)
         self.assertEqual(manager.provider_base_url(config, "other"), "https://api.other.test/v1")
+
+    def test_delete_provider_removes_saved_entry_without_mutating_user_config(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_secret(self.paths, "acme", "acme-secret")
+        manager.write_provider_auth_entry(self.paths, "other", api_key="other-secret", base_url="https://api.other.test/v1")
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n\n'
+            "[model_providers.other]\n"
+            'base_url = "https://api.other.test/v1"\n',
+            encoding="utf-8",
+        )
+        config_before = self.paths.config_path.read_bytes()
+
+        result = run_delete_provider(str(self.codex_home), "other")
+
+        stored_auth = json.loads(self.paths.provider_auth_path.read_text(encoding="utf-8"))
+        config = manager.load_toml_config(self.paths.config_path)
+
+        self.assertEqual(result["status"], "provider_deleted")
+        self.assertFalse(result["config_changed"])
+        self.assertEqual(self.paths.config_path.read_bytes(), config_before)
+        self.assertNotIn("other", stored_auth["providers"])
+        self.assertEqual(manager.provider_base_url(config, "other"), "https://api.other.test/v1")
+
+    def test_delete_provider_rejects_current_provider(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_secret(self.paths, "acme", "acme-secret")
+
+        with self.assertRaises(manager.ConfigError):
+            run_delete_provider(str(self.codex_home), "acme")
 
     def test_set_speed_mode_saves_standard_without_provider_change(self) -> None:
         settings = manager.ProxySettings(
