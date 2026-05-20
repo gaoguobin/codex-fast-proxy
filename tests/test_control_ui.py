@@ -203,6 +203,10 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn('id="speedPanel"', html)
         self.assertNotIn('id="speedForm"', html)
         self.assertIn('id="statusPanel"', html)
+        self.assertIn("运行状态", html)
+        self.assertIn("供应商设置", html)
+        self.assertIn("control-section runtime-section", html)
+        self.assertIn("control-section settings-section", html)
         self.assertIn("请求链路", html)
         self.assertIn("route-map", html)
         self.assertIn("hero-summary", html)
@@ -532,7 +536,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(providers[0]["base_url"], "https://api.config.test/v1")
         self.assertFalse(providers[0]["deletable"])
 
-    def test_provider_inventory_does_not_offer_delete_for_active_config_provider(self) -> None:
+    def test_provider_inventory_allows_deleting_inactive_config_provider_saved_entry(self) -> None:
         settings = manager.ProxySettings(
             provider="other",
             host="127.0.0.1",
@@ -554,7 +558,7 @@ class ControlUiTests(unittest.TestCase):
 
         providers = {item["name"]: item for item in manager.provider_inventory(str(self.codex_home))["providers"]}
 
-        self.assertFalse(providers["acme"]["deletable"])
+        self.assertTrue(providers["acme"]["deletable"])
         self.assertFalse(providers["other"]["deletable"])
 
     def test_control_page_hides_maintenance_controls_before_enable(self) -> None:
@@ -623,9 +627,22 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('value="https://api.acme.test/v1"', html)
         self.assertIn("providerSummaryName", html)
         self.assertIn("providerSummaryUrl", html)
+        self.assertIn("button[aria-busy=\"true\"]", html)
+        self.assertIn("button.setAttribute('aria-busy', 'true');", html)
+        self.assertIn("button.removeAttribute('aria-busy');", html)
+        self.assertIn("cursor: not-allowed;", html)
+        self.assertNotIn("button:disabled {\n      cursor: wait;", html)
+        self.assertIn(".control-section", html)
+        self.assertIn("--panel-pad: 28px;", html)
+        self.assertIn("calc(var(--panel-pad) * -1)", html)
+        self.assertIn("--section-accent: var(--green);", html)
+        self.assertIn("--section-accent: #8a6b2f;", html)
+        self.assertIn(".control-section + .control-section", html)
         self.assertIn("renderProviderList(snapshot);", html)
         self.assertIn("resetProviderForm(snapshot);", html)
         self.assertIn("resetSpeedForm(snapshot);", html)
+        self.assertIn("updateRevealButtonState();", html)
+        self.assertIn("reveal.disabled = !apiKey.value.trim();", html)
         self.assertIn("'set-speed-mode'", html)
         self.assertIn("reloadWhenControlUiReady", html)
         self.assertIn("new URL('/api/ping', url)", html)
@@ -689,6 +706,16 @@ class ControlUiTests(unittest.TestCase):
         )
 
         self.assertEqual(message, "没有保存。新的模型服务没有通过验证，当前仍在使用：https://api.acme.test/v1")
+
+    def test_switch_provider_error_includes_specific_reason(self) -> None:
+        message = user_error_message(
+            "switch-provider",
+            {},
+            "Responses API side-path verification returned HTTP 403.",
+        )
+
+        self.assertIn("没有切换。请选择已保存且可验证的 Provider。", message)
+        self.assertIn("HTTP 403", message)
         self.assertNotIn("HTTP 404", message)
 
     def test_update_action_reports_already_current_without_reload_prompt(self) -> None:
@@ -1115,6 +1142,34 @@ class ControlUiTests(unittest.TestCase):
 
         with self.assertRaises(manager.ConfigError):
             run_delete_provider(str(self.codex_home), "acme")
+
+    def test_delete_provider_allows_inactive_config_provider_saved_entry(self) -> None:
+        settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.other.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(self.paths, "acme", api_key="acme-secret", base_url="https://api.acme.test/v1")
+        manager.write_provider_auth_entry(self.paths, "other", api_key="other-secret", base_url="https://api.other.test/v1")
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+
+        result = run_delete_provider(str(self.codex_home), "acme")
+
+        stored_auth = json.loads(self.paths.provider_auth_path.read_text(encoding="utf-8"))
+        config = manager.load_toml_config(self.paths.config_path)
+        self.assertEqual(result["status"], "provider_deleted")
+        self.assertNotIn("acme", stored_auth["providers"])
+        self.assertEqual(manager.provider_base_url(config, "acme"), settings.base_url)
 
     def test_set_speed_mode_saves_standard_without_provider_change(self) -> None:
         settings = manager.ProxySettings(

@@ -759,10 +759,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       gap: 8px;
     }}
     .panel {{
+      --panel-pad: 28px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 28px;
+      padding: var(--panel-pad);
     }}
     h1 {{
       color: var(--muted);
@@ -858,9 +859,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     button.warn:hover:not(:disabled) {{ background: #743126; border-color: #743126; }}
     button:disabled {{
-      cursor: wait;
+      cursor: not-allowed;
       opacity: .58;
     }}
+    button[aria-busy="true"] {{ cursor: wait; }}
     button:focus-visible, input:focus-visible, summary:focus-visible {{
       outline: 2px solid var(--green);
       outline-offset: 2px;
@@ -878,9 +880,43 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin: 0 0 12px;
     }}
     .maintenance-panel {{
+      border-top: 1px solid rgba(0, 0, 0, .08);
+      margin-top: 0;
+    }}
+    .control-section {{
+      --section-accent: var(--green);
+      --section-bg: #fafaf8;
+      background:
+        linear-gradient(90deg, var(--section-accent) 0 4px, transparent 4px),
+        var(--section-bg);
+      border-bottom: 1px solid var(--border);
       border-top: 1px solid var(--border);
-      margin-top: 28px;
-      padding-top: 2px;
+      display: grid;
+      gap: 0;
+      margin: 30px calc(var(--panel-pad) * -1) 0;
+      padding: 18px var(--panel-pad) 4px calc(var(--panel-pad) + 6px);
+    }}
+    .runtime-section {{
+      --section-accent: var(--green);
+      --section-bg: #f7fbf8;
+    }}
+    .settings-section {{
+      --section-accent: #8a6b2f;
+      --section-bg: #fbfaf5;
+    }}
+    .control-section + .control-section {{ margin-top: 26px; }}
+    .control-section-title {{
+      align-items: center;
+      color: var(--text);
+      display: flex;
+      font-size: 13px;
+      font-weight: 600;
+      gap: 8px;
+      margin: 0;
+      padding: 0 0 8px;
+    }}
+    .control-section .maintenance-panel:first-of-type {{
+      border-top: 0;
     }}
     .maintenance-panel summary {{
       align-items: center;
@@ -1394,6 +1430,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       border-top: 1px solid var(--border);
       padding-top: 18px;
     }}
+    .control-section details {{
+      margin-top: 0;
+      padding-top: 0;
+    }}
     pre {{
       background: #171717;
       border-radius: 10px;
@@ -1405,7 +1445,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     @media (max-width: 640px) {{
       main {{ padding: 22px 14px 32px; }}
-      .panel {{ border-radius: 10px; padding: 20px; }}
+      .panel {{ --panel-pad: 20px; border-radius: 10px; }}
       .state {{ font-size: 28px; }}
       .hero {{ grid-template-columns: 1fr; }}
       .provider-panel-header, .provider-card {{ flex-direction: column; }}
@@ -1456,10 +1496,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         {render_top_summary(snapshot)}
       </div>
       {danger_zone}
-      {render_status_panel(snapshot)}
-      {codex_config_panel}
-      {provider_management}
-      {speed_controls}
+      <div class="control-section runtime-section">
+        <h2 class="control-section-title">运行状态</h2>
+        {render_status_panel(snapshot)}
+      </div>
+      <div class="control-section settings-section">
+        <h2 class="control-section-title">供应商设置</h2>
+        {codex_config_panel}
+        {provider_management}
+        {speed_controls}
+      </div>
       <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
       <details id="diagnosticsPanel" class="diagnostics-panel">
         <summary>高级诊断</summary>
@@ -1601,6 +1647,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const editorTitle = $('providerEditorTitle');
       if (editorTitle && title) editorTitle.textContent = title;
       fillProviderForm(record);
+      updateRevealButtonState();
       const saveProvider = $('saveProvider');
       if (saveProvider) saveProvider.textContent = record ? '更新' : '保存';
       const nameInput = $('providerNameInput');
@@ -1631,11 +1678,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       const reveal = $('revealApiKey');
       if (reveal) {{
-        reveal.disabled = !(record && record.api_key === 'saved');
         reveal.textContent = '👁';
         reveal.setAttribute('aria-label', '显示 API Key');
         reveal.title = '显示 API Key';
       }}
+      updateRevealButtonState();
+    }}
+    function updateRevealButtonState() {{
+      const apiKey = $('apiKey');
+      const reveal = $('revealApiKey');
+      if (!apiKey || !reveal) return;
+      reveal.disabled = !apiKey.value.trim();
     }}
     async function fetchProviderKey(provider) {{
       const response = await fetch('/api/provider-key?provider=' + encodeURIComponent(provider), {{
@@ -1648,8 +1701,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     async function revealProviderKey() {{
       const apiKey = $('apiKey');
-      const provider = $('providerNameInput').value.trim();
-      if (!apiKey || !provider) return;
+      if (!apiKey) return;
       if (apiKey.type === 'text') {{
         apiKey.type = 'password';
         const reveal = $('revealApiKey');
@@ -1661,6 +1713,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         return;
       }}
       if (apiKey.dataset.masked === 'true') {{
+        const provider = $('providerNameInput').value.trim();
+        if (!provider) return;
         const secret = await fetchProviderKey(provider);
         apiKey.value = secret;
         apiKey.dataset.masked = 'false';
@@ -1908,6 +1962,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     async function runButton(button, action, body) {{
       button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
       const oldText = button.textContent;
       const stopProgress = startActionProgress(button, action);
       try {{
@@ -1915,10 +1970,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }} catch (error) {{
         $('state').textContent = '需要处理';
         $('message').textContent = (error && error.message) ? error.message : String(error);
-        button.disabled = false;
-        button.textContent = oldText;
       }} finally {{
         stopProgress();
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        button.textContent = oldText;
       }}
     }}
     $('primary').addEventListener('click', async (event) => {{
@@ -1951,6 +2007,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         loadedApiKey = '';
         loadedApiKeyProvider = '';
       }}
+      updateRevealButtonState();
     }});
     if ($('providerList')) $('providerList').addEventListener('click', async (event) => {{
       const button = event.target.closest('button[data-provider-action]');

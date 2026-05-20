@@ -198,7 +198,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             snapshot["last_error"] = {"action": action, "message": str(exc)}
             self.respond_json({
                 "status": "error",
-                "error": user_error_message(action, snapshot),
+                "error": user_error_message(action, snapshot, str(exc)),
                 "snapshot": snapshot,
             }, status=400)
 
@@ -353,18 +353,19 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
     return 0
 
 
-def user_error_message(action: str, snapshot: dict[str, Any]) -> str:
+def user_error_message(action: str, snapshot: dict[str, Any], detail: str | None = None) -> str:
+    suffix = f" 原因：{detail}" if detail else ""
     if action in {"save-provider", "configure-upstream"}:
         upstream = snapshot.get("upstream_base")
         if isinstance(upstream, str) and upstream:
-            return f"没有保存。新的模型服务没有通过验证，当前仍在使用：{upstream}"
-        return "没有保存。新的模型服务没有通过验证，当前设置保持不变。"
+            return f"没有保存。新的模型服务没有通过验证，当前仍在使用：{upstream}{suffix}"
+        return f"没有保存。新的模型服务没有通过验证，当前设置保持不变。{suffix}"
     if action == "switch-provider":
-        return "没有切换。请选择已保存且可验证的 Provider。"
+        return f"没有切换。请选择已保存且可验证的 Provider。{suffix}"
     if action == "delete-provider":
-        return "没有删除。当前正在使用的 Provider 不能删除。"
+        return f"没有删除。当前正在使用的 Provider 不能删除。{suffix}"
     if action == "set-speed-mode":
-        return "速度模式没有保存，当前设置保持不变。"
+        return f"速度模式没有保存，当前设置保持不变。{suffix}"
     if action == "enable":
         return "启用没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
     if action == "update":

@@ -431,7 +431,7 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
             "proxy_enabled": proxy_enabled,
             "base_url": upstream_base,
             "api_key": provider_auth_label(paths, name, provider_config),
-            "deletable": name in saved_names and not current and name != active_provider,
+            "deletable": name in saved_names and not current,
         })
 
     return {
@@ -1044,13 +1044,10 @@ def switch_provider(
 def delete_provider(codex_home: str | Path | None, provider: str) -> dict[str, Any]:
     paths = paths_for(codex_home)
     name = validate_provider_name(provider)
-    config = load_toml_config(paths.config_path)
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
     if settings and settings.provider == name:
         raise ConfigError("Cannot delete the provider currently used by the proxy.")
-    if active_provider_name(config) == name:
-        raise ConfigError("Cannot delete the active Codex provider from proxy-managed storage.")
     if not provider_auth_base_url(paths, name) and not provider_auth_secret(paths, name):
         raise ConfigError(f"Provider {name!r} is not stored by the proxy.")
 
