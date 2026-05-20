@@ -6,7 +6,6 @@ from typing import Any
 from .auth import detect_login_mode
 from .auth_store import chatgpt_login_report, upstream_auth_status
 from .config import active_provider_name, configured_providers, load_toml_config, provider_base_url, provider_name_for_base_url
-from .dashboard import is_response_event, read_recent_events
 from .hooks import fast_proxy_hook_trust_status
 from .models import paths_for, settings_from_dict
 from .proxy import RUNTIME_ID
@@ -14,6 +13,7 @@ from .runtime_process import is_port_available, proxy_runtime_state
 from .runtime_status import runtime_status
 from .status_rules import effective_service_tier_policy, fast_behavior, status_diagnosis
 from .storage import read_json
+from .telemetry import read_benchmark_result, recent_provider_metadata_events, recent_response_events
 
 
 SCHEMA_VERSION = 1
@@ -107,32 +107,13 @@ def collect_status(
         "stdout": str(paths.stdout_path),
         "stderr": str(paths.stderr_path),
         "recent_response_events": recent_response_events(paths.log_path),
+        "recent_provider_metadata_events": recent_provider_metadata_events(paths.log_path),
+        "benchmark_result": read_benchmark_result(paths.log_path),
     }
     from .manager import provider_inventory
 
     snapshot.update(provider_inventory(paths.codex_home, selected_provider))
     return {**snapshot, "user_state": user_state(snapshot)}
-
-
-def recent_response_events(log_path: Any) -> list[dict[str, Any]]:
-    fields = (
-        "ts",
-        "method",
-        "path",
-        "status",
-        "ttfb_ms",
-        "first_event_ms",
-        "ttft_ms",
-        "first_output_ms",
-        "duration_ms",
-        "service_tier_before",
-        "service_tier_after",
-        "service_tier_injected",
-        "service_tier_effective_policy",
-        "stream",
-    )
-    events = [event for event in read_recent_events(log_path, limit=32) if is_response_event(event)]
-    return [{key: event.get(key) for key in fields if key in event} for event in events[-5:]]
 
 
 def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:

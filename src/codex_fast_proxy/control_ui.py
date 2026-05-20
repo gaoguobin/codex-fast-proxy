@@ -534,7 +534,7 @@ def schedule_control_ui_restart(
     provider: str | None,
     host: str,
     port: int,
-    delay: float = 0.5,
+    delay: float = 0.1,
 ) -> dict[str, Any]:
     command = [
         sys.executable,
@@ -572,7 +572,8 @@ def schedule_control_ui_restart(
         "url": f"http://{host}:{port}/",
         "same_port": True,
         "pid": process.pid,
-        "reload_after_ms": 1200,
+        "reload_after_ms": 120,
+        "reload_timeout_ms": 8000,
     }
 
 

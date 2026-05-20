@@ -253,16 +253,132 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn("<th>首字</th>", html)
         self.assertIn('class="local-time" datetime="2026-05-18T11:41:19.293+00:00"', html)
         self.assertIn('title="POST /v1/responses">POST /v1/responses</td>', html)
-        self.assertIn('<span class="status-pill ok">Healthy</span>', html)
+        self.assertIn('<span class="status-pill ok"', html)
+        self.assertIn(">正常</span>", html)
         self.assertIn("首响应（TTFB）", html)
         self.assertIn("首文本（TTFT）", html)
         self.assertIn('>1.234s</td>', html)
         self.assertIn('>2.346s</td>', html)
         self.assertIn("<td class=\"number-cell\">32.066s</td>", html)
-        self.assertIn("<td>App 控制</td>", html)
+        self.assertIn(">App 控制</td>", html)
+        self.assertIn("运行细节", html)
+        self.assertIn("性能基准", html)
+        self.assertIn("Provider 检查", html)
         self.assertIn("overflow-x: hidden", html)
         self.assertIn("date.getFullYear()", html)
         self.assertIn("renderLocalTimes();", html)
+
+    def test_control_page_renders_migrated_dashboard_signals_without_secrets(self) -> None:
+        html = render_page(
+            {
+                "base_url": "http://127.0.0.1:8787/v1",
+                "config_matches": True,
+                "healthy": True,
+                "benchmark_result": {
+                    "status": "completed",
+                    "ts": "2026-04-27T06:00:00.000+00:00",
+                    "provider": "acme",
+                    "model": "gpt-test",
+                    "benchmark_mode": "codex-cli",
+                    "profile": "full",
+                    "pairs": 3,
+                    "priority_accepted": True,
+                    "observed_priority_effective": True,
+                    "observed_speedup_total": 1.53,
+                    "observed_speedup_ttft": 1.4,
+                    "default": {"count": 3, "ok": 3, "median_total_ms": 1200.0, "median_ttft_ms": 500.0},
+                    "priority": {"count": 3, "ok": 3, "median_total_ms": 784.3, "median_ttft_ms": 357.1},
+                },
+                "recent_provider_metadata_events": [{
+                    "ts": "2026-05-05T06:10:41.000+00:00",
+                    "method": "GET",
+                    "path": "/v1/models",
+                    "status": 503,
+                    "duration_ms": 20,
+                }],
+                "recent_response_events": [{
+                    "ts": "2026-05-18T11:41:19.293+00:00",
+                    "request_id": "req-demo",
+                    "method": "POST",
+                    "path": "/v1/responses",
+                    "status": 502,
+                    "duration_ms": 24501.2,
+                    "ttfb_ms": 123.4,
+                    "service_tier_before": "<absent>",
+                    "service_tier_after": "priority",
+                    "service_tier_injected": True,
+                    "service_tier_effective_policy": "inject_missing",
+                    "stream": True,
+                    "error_type": "client_disconnected",
+                }],
+                "user_state": {
+                    "title": "运行正常",
+                    "message": "Codex 已准备好继续使用当前模型服务。",
+                    "primary_action": "uninstall",
+                    "primary_label": "停用并恢复",
+                },
+            },
+            "token",
+        )
+
+        self.assertIn("运行细节", html)
+        self.assertIn("总耗时收益", html)
+        self.assertIn("1.53x", html)
+        self.assertIn("首文本收益", html)
+        self.assertIn("1.40x", html)
+        self.assertIn("优先耗时", html)
+        self.assertIn("0.784s", html)
+        self.assertIn("0.500s -&gt; 0.357s", html)
+        self.assertIn("样本 default 3/3，priority 3/3", html)
+        self.assertIn("GET /v1/models", html)
+        self.assertIn(">异常</span>", html)
+        self.assertIn("request_id: req-demo", html)
+        self.assertIn("error_type: client_disconnected", html)
+        self.assertNotIn("api_key_env", html)
+
+    def test_status_snapshot_feeds_control_page_with_sanitized_telemetry(self) -> None:
+        self.paths.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.paths.log_path.write_text(
+            json.dumps({
+                "ts": "2026-05-18T11:41:19.293+00:00",
+                "request_id": "req-demo",
+                "method": "POST",
+                "path": "/v1/responses",
+                "status": 502,
+                "duration_ms": 24501.2,
+                "eligible": True,
+                "service_tier_before": "<absent>",
+                "service_tier_after": "priority",
+                "service_tier_injected": True,
+                "service_tier_effective_policy": "inject_missing",
+                "stream": True,
+                "error_type": "client_disconnected",
+                "Authorization": "Bearer should-not-render",
+                "input": "prompt should-not-render",
+            })
+            + "\n",
+            encoding="utf-8",
+        )
+        self.paths.benchmark_path.write_text(
+            json.dumps({
+                "status": "completed",
+                "provider": "acme",
+                "model": "gpt-test",
+                "observed_priority_effective": True,
+                "api_key_env": "ACME_API_KEY",
+                "priority": {"median_total_ms": 784.3},
+            }),
+            encoding="utf-8",
+        )
+
+        html = render_page(collect_status(str(self.codex_home)), "token")
+
+        self.assertIn("request_id: req-demo", html)
+        self.assertIn("client_disconnected", html)
+        self.assertIn("0.784s", html)
+        self.assertNotIn("Bearer should-not-render", html)
+        self.assertNotIn("prompt should-not-render", html)
+        self.assertNotIn("ACME_API_KEY", html)
 
     def test_control_page_marks_ttft_as_not_applicable_when_text_delta_is_absent(self) -> None:
         html = render_page(
@@ -394,8 +510,10 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("resetProviderForm(snapshot);", html)
         self.assertIn("resetSpeedForm(snapshot);", html)
         self.assertIn("'set-speed-mode'", html)
-        self.assertIn("window.location.href = data.action.control_ui.url;", html)
-        self.assertIn("data.action.control_ui.reload_after_ms", html)
+        self.assertIn("reloadWhenControlUiReady", html)
+        self.assertIn("new URL('/api/ping', url)", html)
+        self.assertIn("window.location.href = url;", html)
+        self.assertIn("controlUi.reload_after_ms", html)
         self.assertIn("shouldReloadForSnapshot(snapshot)", html)
         self.assertIn("window.location.reload();", html)
         self.assertNotIn("currentAction !== action", html)
@@ -1061,6 +1179,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["status"], "scheduled")
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertTrue(result["same_port"])
+        self.assertLessEqual(result["reload_after_ms"], 200)
+        self.assertEqual(result["reload_timeout_ms"], 8000)
 
     def test_find_available_port_skips_reserved_proxy_port(self) -> None:
         bound_ports: list[int] = []

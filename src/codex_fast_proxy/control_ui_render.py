@@ -34,6 +34,10 @@ def display_text(value: Any, fallback: str = "未配置") -> str:
     return str(value) if isinstance(value, str) and value else fallback
 
 
+def display_value(value: Any, fallback: str = "-") -> str:
+    return str(value) if value is not None else fallback
+
+
 def boolean_label(value: Any) -> str:
     return "是" if value else "否"
 
@@ -190,13 +194,13 @@ def render_time_value(value: Any) -> str:
 
 def request_status_label(event: dict[str, Any] | None) -> tuple[str, str]:
     if not event:
-        return "No events", "idle"
+        return "暂无", "idle"
     code = status_code(event.get("status"))
     if code is None:
         return display_text(event.get("status"), "未知"), "warn"
     if code >= 400:
-        return "Needs attention", "warn"
-    return "Healthy", "ok"
+        return "异常", "warn"
+    return "正常", "ok"
 
 
 def request_speed_label(event: dict[str, Any]) -> str:
@@ -206,6 +210,189 @@ def request_speed_label(event: dict[str, Any]) -> str:
     if effective_policy == "inject_missing":
         return "代理加速"
     return display_text(effective_policy, "未记录")
+
+
+def event_detail(event: dict[str, Any]) -> str:
+    fields = (
+        "request_id",
+        "status",
+        "duration_ms",
+        "ttfb_ms",
+        "ttft_ms",
+        "first_event_ms",
+        "first_output_ms",
+        "service_tier_before",
+        "service_tier_after",
+        "service_tier_injected",
+        "service_tier_effective_policy",
+        "stream",
+        "response_content_type",
+        "json_error",
+        "error_type",
+    )
+    lines = [f"{field}: {event[field]}" for field in fields if event.get(field) is not None]
+    return "\n".join(lines)
+
+
+def title_attr(value: str) -> str:
+    return f' title="{html.escape(value, quote=True)}"' if value else ""
+
+
+def render_status_pill(label: str, tone: str, detail: str = "") -> str:
+    return f'<span class="status-pill {html.escape(tone)}"{title_attr(detail)}>{html.escape(label)}</span>'
+
+
+def format_speedup(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}x"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def benchmark_summary_value(benchmark: dict[str, Any], tier: str, key: str) -> Any:
+    summary = benchmark.get(tier)
+    if not isinstance(summary, dict):
+        return None
+    return summary.get(key)
+
+
+def benchmark_ttft_value(benchmark: dict[str, Any], tier: str) -> Any:
+    value = benchmark_summary_value(benchmark, tier, "median_ttft_ms")
+    if value is None:
+        value = benchmark_summary_value(benchmark, tier, "median_first_output_ms")
+    return value
+
+
+def benchmark_label(benchmark: dict[str, Any] | None) -> tuple[str, str]:
+    if not benchmark:
+        return "未运行", "idle"
+    if benchmark.get("observed_priority_effective") is True:
+        return "有效", "ok"
+    if benchmark.get("priority_accepted") is True:
+        return "已接受", "ok"
+    if benchmark.get("provider_confirmed_priority") is True:
+        return "已确认", "ok"
+    if benchmark.get("priority_accepted") is False:
+        return "未接受", "warn"
+    return "未知", "idle"
+
+
+def render_signal_metric(label: str, value: str) -> str:
+    return f"""
+              <div class="signal-metric">
+                <span>{html.escape(label)}</span>
+                <strong>{html.escape(value)}</strong>
+              </div>
+"""
+
+
+def render_benchmark_signal(snapshot: dict[str, Any]) -> str:
+    raw = snapshot.get("benchmark_result")
+    benchmark = raw if isinstance(raw, dict) else None
+    label, tone = benchmark_label(benchmark)
+    if not benchmark:
+        return f"""
+            <section class="signal-card" aria-label="性能基准">
+              <div class="signal-head">
+                <span>性能基准</span>
+                {render_status_pill(label, tone)}
+              </div>
+              <p class="empty-state">尚未运行 benchmark。</p>
+            </section>
+"""
+
+    provider = display_text(benchmark.get("provider"), "未知 Provider")
+    model = display_text(benchmark.get("model"), "未知模型")
+    mode = display_text(benchmark.get("benchmark_mode"), "未知模式")
+    profile = display_text(benchmark.get("profile"), "未知负载")
+    pairs = display_value(benchmark.get("pairs"), "未知")
+    default_ok = benchmark_summary_value(benchmark, "default", "ok")
+    default_count = benchmark_summary_value(benchmark, "default", "count")
+    priority_ok = benchmark_summary_value(benchmark, "priority", "ok")
+    priority_count = benchmark_summary_value(benchmark, "priority", "count")
+    priority_total = benchmark_summary_value(benchmark, "priority", "median_total_ms")
+    default_ttft = benchmark_ttft_value(benchmark, "default")
+    priority_ttft = benchmark_ttft_value(benchmark, "priority")
+    note = (
+        f"{provider} / {model} / {mode} / {profile} / {pairs} 组；"
+        f"样本 default {display_value(default_ok)}/{display_value(default_count)}，"
+        f"priority {display_value(priority_ok)}/{display_value(priority_count)}。"
+    )
+    return f"""
+            <section class="signal-card" aria-label="性能基准">
+              <div class="signal-head">
+                <span>性能基准</span>
+                {render_status_pill(label, tone)}
+              </div>
+              <div class="signal-metrics">
+                {render_signal_metric("总耗时收益", format_speedup(benchmark.get("observed_speedup_total")))}
+                {render_signal_metric("首文本收益", format_speedup(benchmark.get("observed_speedup_ttft", benchmark.get("observed_speedup_first_output"))))}
+                {render_signal_metric("优先耗时", format_duration(priority_total))}
+                {render_signal_metric("首文本", f"{format_optional_duration(default_ttft)} -> {format_optional_duration(priority_ttft)}")}
+              </div>
+              <p class="signal-note">最近运行 {render_time_value(benchmark.get("ts"))}；{html.escape(note)}</p>
+            </section>
+"""
+
+
+def render_provider_metadata_signal(snapshot: dict[str, Any]) -> str:
+    raw = snapshot.get("recent_provider_metadata_events")
+    events = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+    last_event = events[-1] if events else None
+    label, tone = request_status_label(last_event)
+    if not events:
+        return f"""
+            <section class="signal-card" aria-label="Provider 检查">
+              <div class="signal-head">
+                <span>Provider 检查</span>
+                {render_status_pill("暂无", "idle")}
+              </div>
+              <p class="empty-state">还没有 /v1/models 检查记录。</p>
+            </section>
+"""
+
+    rows = []
+    for event in reversed(events):
+        status, status_tone = request_status_label(event)
+        method = display_text(event.get("method"), "GET")
+        path = display_text(event.get("path"), "n/a")
+        detail = event_detail(event)
+        rows.append(f"""
+                <tr>
+                  <td class="time-cell">{render_time_value(event.get("ts"))}</td>
+                  <td class="request-route" title="{html.escape(method)} {html.escape(path)}">{html.escape(method)} {html.escape(path)}</td>
+                  <td>{render_status_pill(status, status_tone, detail)}</td>
+                  <td class="number-cell">{html.escape(format_duration(event.get("duration_ms")))}</td>
+                </tr>
+""")
+    return f"""
+            <section class="signal-card" aria-label="Provider 检查">
+              <div class="signal-head">
+                <span>Provider 检查</span>
+                {render_status_pill(label, tone, event_detail(last_event))}
+              </div>
+              <table class="metadata-table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>检查</th>
+                    <th>状态</th>
+                    <th>耗时</th>
+                  </tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+              </table>
+            </section>
+"""
+
+
+def render_operational_signals(snapshot: dict[str, Any]) -> str:
+    return f"""
+          <div class="signal-grid">
+            {render_benchmark_signal(snapshot)}
+            {render_provider_metadata_signal(snapshot)}
+          </div>
+"""
 
 
 def render_status_metric(label: str, value: str, tone: str = "idle") -> str:
@@ -240,15 +427,16 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
         status, tone = request_status_label(event)
         method = display_text(event.get("method"), "POST")
         path = display_text(event.get("path"), "n/a")
+        detail = event_detail(event)
         rows.append(f"""
             <tr>
               <td class="time-cell">{render_time_value(event.get("ts"))}</td>
               <td class="request-route" title="{html.escape(method)} {html.escape(path)}">{html.escape(method)} {html.escape(path)}</td>
-              <td><span class="status-pill {tone}">{html.escape(status)}</span></td>
+              <td>{render_status_pill(status, tone, detail)}</td>
               <td class="number-cell" title="首响应（TTFB）：收到上游第一个响应字节或第一个 SSE 事件。">{html.escape(format_duration(event.get("ttfb_ms", event.get("first_event_ms"))))}</td>
               <td class="number-cell" title="首文本（TTFT）：收到第一个可见文本 token。没有文本输出的请求显示 N/A。">{html.escape(format_optional_duration(request_ttft_value(event)))}</td>
               <td class="number-cell">{html.escape(format_duration(event.get("duration_ms")))}</td>
-              <td>{html.escape(request_speed_label(event))}</td>
+              <td title="{html.escape(detail, quote=True)}">{html.escape(request_speed_label(event))}</td>
             </tr>
 """)
     return f"""
@@ -312,6 +500,8 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
           </div>
           <h2 class="subsection-title">最近请求</h2>
           {render_recent_events(snapshot)}
+          <h2 class="subsection-title">运行细节</h2>
+          {render_operational_signals(snapshot)}
         </div>
       </details>
 """
@@ -1071,6 +1261,85 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       color: var(--muted-strong);
       white-space: nowrap;
     }}
+    .signal-grid {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }}
+    .signal-card {{
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      min-width: 0;
+      padding: 14px;
+    }}
+    .signal-head {{
+      align-items: center;
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }}
+    .signal-head > span {{
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 600;
+    }}
+    .signal-metrics {{
+      display: grid;
+      gap: 1px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--border);
+    }}
+    .signal-metric {{
+      background: var(--surface);
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+      padding: 10px;
+    }}
+    .signal-metric span,
+    .signal-note {{
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .signal-metric strong {{
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }}
+    .signal-note {{
+      line-height: 1.55;
+      margin: 11px 0 0;
+    }}
+    .metadata-table {{
+      border-collapse: collapse;
+      font-size: 13px;
+      table-layout: fixed;
+      width: 100%;
+    }}
+    .metadata-table th,
+    .metadata-table td {{
+      border-bottom: 1px solid var(--surface-soft);
+      padding: 9px 6px;
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+    }}
+    .metadata-table th {{
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    .metadata-table tr:last-child td {{
+      border-bottom: 0;
+    }}
+    .metadata-table th:nth-child(1), .metadata-table td:nth-child(1) {{ width: 118px; }}
+    .metadata-table th:nth-child(2), .metadata-table td:nth-child(2) {{ width: 96px; }}
+    .metadata-table th:nth-child(3), .metadata-table td:nth-child(3) {{ width: 66px; }}
+    .metadata-table th:nth-child(4), .metadata-table td:nth-child(4) {{ width: 56px; }}
     details {{
       margin-top: 24px;
       border-top: 1px solid var(--border);
@@ -1113,6 +1382,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         transform: rotate(135deg);
       }}
       .status-metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .signal-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -1456,10 +1726,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       render(data.snapshot);
       if (data.action && data.action.control_ui && data.action.control_ui.url) {{
-        window.setTimeout(() => {{
-          window.location.href = data.action.control_ui.url;
-        }}, data.action.control_ui.reload_after_ms || 500);
+        await reloadWhenControlUiReady(data.action.control_ui);
       }}
+    }}
+    async function reloadWhenControlUiReady(controlUi) {{
+      const url = controlUi.url;
+      const delay = controlUi.reload_after_ms || 120;
+      const timeout = controlUi.reload_timeout_ms || 8000;
+      await new Promise((resolve) => window.setTimeout(resolve, delay));
+      const deadline = Date.now() + timeout;
+      while (Date.now() < deadline) {{
+        try {{
+          const response = await fetch(new URL('/api/ping', url), {{ cache: 'no-store' }});
+          if (response.ok) {{
+            window.location.href = url;
+            return;
+          }}
+        }} catch (error) {{
+        }}
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+      }}
+      window.location.href = url;
     }}
     function startActionProgress(button, action) {{
       const timers = [];
