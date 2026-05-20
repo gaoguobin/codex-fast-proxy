@@ -199,7 +199,6 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn("保存</button>", html)
         self.assertNotIn("添加供应商", html)
         self.assertNotIn("编辑供应商", html)
-        self.assertNotIn("保存供应商", html)
         self.assertNotIn('id="speedPanel"', html)
         self.assertNotIn('id="speedForm"', html)
         self.assertIn('id="statusPanel"', html)
@@ -467,6 +466,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("更新", html)
         self.assertIn("删除", html)
         self.assertIn('id="revealApiKey"', html)
+        self.assertIn('aria-controls="apiKey"', html)
+        self.assertIn('aria-pressed="false"', html)
+        self.assertIn("syncRevealButton(true)", html)
         self.assertIn("maskSecret", html)
         self.assertIn("apiKeyFormValue()", html)
         self.assertIn("/api/provider-key?provider=", html)
@@ -575,7 +577,6 @@ class ControlUiTests(unittest.TestCase):
         )
 
         self.assertNotIn("停用并恢复", html)
-        self.assertNotIn("保存并验证", html)
         self.assertNotIn("速度模式", html)
 
     def test_control_page_cleanup_state_offers_reenable_and_finish_cleanup(self) -> None:
@@ -599,7 +600,6 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('id="finishCleanup"', html)
         self.assertIn("完成清理", html)
         self.assertIn("else if (action === 'uninstall') await runButton", html)
-        self.assertNotIn("保存并验证", html)
         self.assertNotIn("停用并恢复", html)
 
     def test_control_page_restores_maintenance_button_labels_after_action(self) -> None:
@@ -622,6 +622,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('"saveProvider": "保存"', html)
         self.assertIn("saveProvider.textContent = record ? '更新' : '保存'", html)
         self.assertIn('"saveSpeed": "保存速度模式"', html)
+        self.assertIn("正在保存并验证...", html)
         self.assertIn("resetControls(userState, snapshot);", html)
         self.assertIn("resetSummary(snapshot);", html)
         self.assertIn('value="https://api.acme.test/v1"', html)
@@ -647,9 +648,17 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("reloadWhenControlUiReady", html)
         self.assertIn("new URL('/api/ping', url)", html)
         self.assertIn("window.location.href = url;", html)
+        self.assertIn("wait_for_disconnect", html)
+        self.assertIn("const delay = controlUi.reload_after_ms ?? 120;", html)
+        self.assertIn("const replacementPid = Number(controlUi.pid);", html)
+        self.assertIn("ping.pid === replacementPid", html)
+        self.assertIn("let disconnected = !waitForDisconnect;", html)
         self.assertIn("controlUi.reload_after_ms", html)
         self.assertIn("shouldReloadForSnapshot(snapshot)", html)
         self.assertIn("window.location.reload();", html)
+        self.assertIn("正在等待新版界面...", html)
+        self.assertIn("查看诊断", html)
+        self.assertIn("diagnostics-section", html)
         self.assertNotIn("currentAction !== action", html)
 
     def test_control_page_maps_preserve_policy_to_standard_speed_mode(self) -> None:
@@ -763,6 +772,8 @@ class ControlUiTests(unittest.TestCase):
                 "status": "scheduled",
                 "url": "http://127.0.0.1:8786/",
                 "same_port": True,
+                "pid": 4321,
+                "wait_for_disconnect": True,
             }),
         ):
             response = handler.run_action("update")
@@ -770,6 +781,20 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(response["shutdown_control_ui"])
         self.assertEqual(response["action"]["control_ui"]["url"], "http://127.0.0.1:8786/")
         self.assertTrue(response["action"]["control_ui"]["same_port"])
+        self.assertEqual(response["action"]["control_ui"]["pid"], 4321)
+        self.assertTrue(response["action"]["control_ui"]["wait_for_disconnect"])
+
+    def test_scheduled_control_ui_restart_waits_for_old_port_to_close(self) -> None:
+        with mock.patch("subprocess.Popen") as popen:
+            popen.return_value.pid = 4321
+
+            result = schedule_control_ui_restart(str(self.codex_home), None, "127.0.0.1", 8786)
+
+        self.assertEqual(result["status"], "scheduled")
+        self.assertEqual(result["pid"], 4321)
+        self.assertTrue(result["wait_for_disconnect"])
+        self.assertEqual(result["reload_after_ms"], 0)
+        self.assertEqual(result["reload_timeout_ms"], 8000)
 
     def test_provider_key_payload_returns_secret_only_on_explicit_request(self) -> None:
         manager.write_provider_auth_secret(self.paths, "acme", "provider-secret")
@@ -1417,8 +1442,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["status"], "scheduled")
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertTrue(result["same_port"])
-        self.assertLessEqual(result["reload_after_ms"], 200)
+        self.assertEqual(result["reload_after_ms"], 0)
         self.assertEqual(result["reload_timeout_ms"], 8000)
+        self.assertTrue(result["wait_for_disconnect"])
 
     def test_find_available_port_skips_reserved_proxy_port(self) -> None:
         bound_ports: list[int] = []

@@ -161,6 +161,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             self.respond_json({
                 "status": "ok",
                 "server": CONTROL_UI_SERVER,
+                "pid": os.getpid(),
                 **control_ui_identity(self.server.codex_home, self.server.provider),
             })
             return
@@ -606,8 +607,9 @@ def schedule_control_ui_restart(
         "url": f"http://{host}:{port}/",
         "same_port": True,
         "pid": process.pid,
-        "reload_after_ms": 120,
+        "reload_after_ms": 0,
         "reload_timeout_ms": 8000,
+        "wait_for_disconnect": True,
     }
 
 

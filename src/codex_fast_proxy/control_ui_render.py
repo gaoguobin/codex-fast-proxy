@@ -655,10 +655,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
               <label>模型服务地址
                 <input id="upstreamBase" autocomplete="off" value="{provider_url_value}" placeholder="https://api.example.com/v1" required>
               </label>
-              <label>API Key
+              <label id="apiKeyLabel">API Key
                 <span class="secret-input-row">
-                  <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
-                  <button id="revealApiKey" class="icon-button" type="button" aria-label="显示 API Key" title="显示 API Key">👁</button>
+                  <input id="apiKey" type="password" autocomplete="off" aria-labelledby="apiKeyLabel" placeholder="留空则不修改已保存的 key">
+                  <button id="revealApiKey" class="icon-button" type="button" aria-label="显示或隐藏 API Key" aria-controls="apiKey" aria-pressed="false" title="显示或隐藏 API Key">
+                    <span class="icon-eye" aria-hidden="true"></span>
+                  </button>
                 </span>
               </label>
               <div class="actions compact">
@@ -810,11 +812,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       line-height: 1.65;
       margin: 0;
     }}
-    .note {{
-      border-top: 1px solid var(--border);
-      margin-top: 28px;
-      padding-top: 18px;
-    }}
+    .note {{ font-size: 14px; }}
     .actions {{
       display: flex;
       flex-wrap: wrap;
@@ -909,14 +907,19 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       align-items: center;
       color: var(--text);
       display: flex;
-      font-size: 13px;
+      font-size: 17px;
       font-weight: 600;
       gap: 8px;
       margin: 0;
-      padding: 0 0 8px;
+      padding: 0 0 10px;
     }}
     .control-section .maintenance-panel:first-of-type {{
       border-top: 0;
+    }}
+    .diagnostics-section {{
+      --section-accent: var(--border-strong);
+      --section-bg: #fafafa;
+      padding-bottom: 18px;
     }}
     .maintenance-panel summary {{
       align-items: center;
@@ -1085,6 +1088,41 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       background: var(--surface-soft);
       border-color: var(--text);
       color: var(--text);
+    }}
+    .icon-eye {{
+      border: 1.7px solid currentColor;
+      border-radius: 70% 18%;
+      display: inline-block;
+      height: 13px;
+      position: relative;
+      transform: rotate(45deg);
+      width: 18px;
+    }}
+    .icon-eye::before {{
+      background: currentColor;
+      border-radius: 999px;
+      content: "";
+      height: 5px;
+      left: 50%;
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 5px;
+    }}
+    .icon-eye::after {{
+      background: transparent;
+      content: "";
+      height: 2px;
+      left: -4px;
+      opacity: 0;
+      position: absolute;
+      top: 5px;
+      transform: rotate(90deg);
+      width: 25px;
+    }}
+    .icon-button[aria-pressed="true"] .icon-eye::after {{
+      background: currentColor;
+      opacity: 1;
     }}
     .muted {{
       color: var(--muted);
@@ -1506,11 +1544,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         {provider_management}
         {speed_controls}
       </div>
-      <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
-      <details id="diagnosticsPanel" class="diagnostics-panel">
-        <summary>高级诊断</summary>
-        <pre id="diagnostics">{snapshot_json}</pre>
-      </details>
+      <div class="control-section diagnostics-section">
+        <h2 class="control-section-title">高级诊断</h2>
+        <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
+        <details id="diagnosticsPanel" class="diagnostics-panel">
+          <summary>查看诊断</summary>
+          <pre id="diagnostics">{snapshot_json}</pre>
+        </details>
+      </div>
     </section>
   </main>
   <script>
@@ -1527,10 +1568,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       update: [
         {{ delay: 0, label: '正在更新...', message: '正在拉取更新并刷新本地代理，页面会在完成后自动恢复。' }},
         {{ delay: 8000, label: '正在刷新运行时...', message: '正在重新安装并刷新代理进程，这一步可能需要十几秒。' }},
-        {{ delay: 20000, label: '更新仍在继续...', message: '仍在等待本地更新完成，请保持控制面板打开。' }}
+        {{ delay: 20000, label: '更新仍在继续...', message: '仍在等待本地更新完成，请保持控制面板打开。' }},
+        {{ delay: 30000, label: '正在等待新版界面...', message: '更新已完成后会自动切换到新版控制面板，请不要手动刷新。' }}
       ],
       'save-provider': [
-        {{ delay: 0, label: '正在保存...', message: '正在保存，并验证模型服务是否可用。' }},
+        {{ delay: 0, label: '正在保存并验证...', message: '正在保存，并验证模型服务是否可用。' }},
         {{ delay: 6000, label: '正在验证模型服务...', message: '正在发起一次真实 Responses API 流式检查，完成后会自动更新页面。' }},
         {{ delay: 18000, label: '模型服务响应较慢...', message: '仍在等待模型服务响应；如果验证失败，当前设置会保持不变。' }}
       ],
@@ -1639,6 +1681,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function maskSecret(value) {{
       return value === 'saved' ? '••••••••••••••••' : '';
     }}
+    function syncRevealButton(revealed) {{
+      const reveal = $('revealApiKey');
+      if (!reveal) return;
+      reveal.setAttribute('aria-pressed', revealed ? 'true' : 'false');
+      reveal.title = revealed ? '隐藏 API Key' : '显示 API Key';
+    }}
     function openProviderEditor(record, title) {{
       loadedApiKey = '';
       loadedApiKeyProvider = '';
@@ -1676,12 +1724,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         apiKey.dataset.masked = record && record.api_key === 'saved' ? 'true' : 'false';
         apiKey.dataset.original = '';
       }}
-      const reveal = $('revealApiKey');
-      if (reveal) {{
-        reveal.textContent = '👁';
-        reveal.setAttribute('aria-label', '显示 API Key');
-        reveal.title = '显示 API Key';
-      }}
+      syncRevealButton(false);
       updateRevealButtonState();
     }}
     function updateRevealButtonState() {{
@@ -1704,12 +1747,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (!apiKey) return;
       if (apiKey.type === 'text') {{
         apiKey.type = 'password';
-        const reveal = $('revealApiKey');
-        if (reveal) {{
-          reveal.textContent = '👁';
-          reveal.setAttribute('aria-label', '显示 API Key');
-          reveal.title = '显示 API Key';
-        }}
+        syncRevealButton(false);
         return;
       }}
       if (apiKey.dataset.masked === 'true') {{
@@ -1723,12 +1761,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         loadedApiKeyProvider = provider;
       }}
       apiKey.type = 'text';
-      const reveal = $('revealApiKey');
-      if (reveal) {{
-        reveal.textContent = '隐藏';
-        reveal.setAttribute('aria-label', '隐藏 API Key');
-        reveal.title = '隐藏 API Key';
-      }}
+      syncRevealButton(true);
     }}
     function apiKeyFormValue() {{
       const apiKey = $('apiKey');
@@ -1923,25 +1956,32 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         if (data.snapshot) render(data.snapshot);
         throw new Error(data.error || '操作没有完成。');
       }}
-      render(data.snapshot);
       if (data.action && data.action.control_ui && data.action.control_ui.url) {{
         await reloadWhenControlUiReady(data.action.control_ui);
+        return;
       }}
+      render(data.snapshot);
     }}
     async function reloadWhenControlUiReady(controlUi) {{
       const url = controlUi.url;
-      const delay = controlUi.reload_after_ms || 120;
-      const timeout = controlUi.reload_timeout_ms || 8000;
+      const delay = controlUi.reload_after_ms ?? 120;
+      const timeout = controlUi.reload_timeout_ms ?? 8000;
+      const waitForDisconnect = Boolean(controlUi.wait_for_disconnect);
+      const replacementPid = Number(controlUi.pid);
       await new Promise((resolve) => window.setTimeout(resolve, delay));
       const deadline = Date.now() + timeout;
+      let disconnected = !waitForDisconnect;
       while (Date.now() < deadline) {{
         try {{
           const response = await fetch(new URL('/api/ping', url), {{ cache: 'no-store' }});
-          if (response.ok) {{
+          const ping = response.ok ? await response.json() : {{}};
+          const replacementReady = Number.isFinite(replacementPid) && ping.pid === replacementPid;
+          if (response.ok && (disconnected || replacementReady)) {{
             window.location.href = url;
             return;
           }}
         }} catch (error) {{
+          disconnected = true;
         }}
         await new Promise((resolve) => window.setTimeout(resolve, 120));
       }}
