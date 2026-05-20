@@ -85,9 +85,9 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
         result["user_state"] = state(
             "update_blocked",
             "更新被暂停",
-            str(result.get("next_user_action") or "当前安装状态不能安全更新，请打开诊断。"),
+            str(result.get("next_user_action") or "当前安装状态不能安全更新，请打开高级诊断。"),
             "diagnostics",
-            "打开诊断",
+            "打开高级诊断",
         )
         return result
 

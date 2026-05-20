@@ -196,7 +196,7 @@ def update_installation(
                 "repo": str(repo_path),
                 "branch": selected_branch,
                 "check_update": check,
-                "next_user_action": "当前安装不是可安全快进的状态，请让 Codex 查看诊断后再处理。",
+                "next_user_action": "当前安装不是可安全快进的状态，请让 Codex 查看高级诊断后再处理。",
             }
         if check["relation"] == "same":
             after_commit = before_commit

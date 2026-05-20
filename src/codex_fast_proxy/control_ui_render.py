@@ -132,6 +132,33 @@ def short_speed_label(snapshot: dict[str, Any]) -> str:
     return "未启用"
 
 
+def proxy_summary_tone(snapshot: dict[str, Any]) -> str:
+    if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
+        return "ok"
+    if snapshot.get("config_matches"):
+        return "warn"
+    return "idle"
+
+
+def login_summary_tone(snapshot: dict[str, Any]) -> str:
+    return "ok" if snapshot.get("chatgpt_auth") or snapshot.get("api_key_auth") else "idle"
+
+
+def speed_summary_tone(snapshot: dict[str, Any]) -> str:
+    return "ok" if short_speed_label(snapshot) != "未启用" else "idle"
+
+
+def recent_request_summary(snapshot: dict[str, Any]) -> tuple[str, str]:
+    events = snapshot.get("recent_response_events")
+    event = events[-1] if isinstance(events, list) and events else None
+    if not isinstance(event, dict):
+        return "暂无", "idle"
+    code = status_code(event.get("status"))
+    if code is None or code >= 400:
+        return "异常", "warn"
+    return "正常", "ok"
+
+
 def format_duration(value: Any) -> str:
     try:
         duration = float(value)
@@ -147,6 +174,11 @@ def format_optional_duration(value: Any) -> str:
 
 def request_ttft_value(event: dict[str, Any]) -> Any:
     return event.get("ttft_ms", event.get("first_output_ms"))
+
+
+def timing_header(label: str, term: str, description: str) -> str:
+    title = f"{label}（{term} / {description}）"
+    return f'<span class="metric-term" title="{html.escape(title, quote=True)}">{html.escape(label)}<small>（{html.escape(term)}）</small></span>'
 
 
 def render_time_value(value: Any) -> str:
@@ -186,6 +218,18 @@ def render_status_metric(label: str, value: str, tone: str = "idle") -> str:
 """
 
 
+def render_top_summary(snapshot: dict[str, Any]) -> str:
+    request_label, request_tone = recent_request_summary(snapshot)
+    return f"""
+      <div class="hero-summary" aria-label="当前状态摘要">
+        {render_status_metric("代理", short_proxy_label(snapshot), proxy_summary_tone(snapshot))}
+        {render_status_metric("登录", short_login_label(snapshot), login_summary_tone(snapshot))}
+        {render_status_metric("速度", short_speed_label(snapshot), speed_summary_tone(snapshot))}
+        {render_status_metric("最近请求", request_label, request_tone)}
+      </div>
+"""
+
+
 def render_recent_events(snapshot: dict[str, Any]) -> str:
     raw = snapshot.get("recent_response_events")
     events = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
@@ -201,8 +245,8 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
               <td class="time-cell">{render_time_value(event.get("ts"))}</td>
               <td class="request-route" title="{html.escape(method)} {html.escape(path)}">{html.escape(method)} {html.escape(path)}</td>
               <td><span class="status-pill {tone}">{html.escape(status)}</span></td>
-              <td class="number-cell" title="Time to first byte: first response bytes or first SSE event.">{html.escape(format_duration(event.get("ttfb_ms", event.get("first_event_ms"))))}</td>
-              <td class="number-cell" title="Time to first token: first visible output_text delta. N/A for requests without text output.">{html.escape(format_optional_duration(request_ttft_value(event)))}</td>
+              <td class="number-cell" title="首响应（TTFB）：收到上游第一个响应字节或第一个 SSE 事件。">{html.escape(format_duration(event.get("ttfb_ms", event.get("first_event_ms"))))}</td>
+              <td class="number-cell" title="首文本（TTFT）：收到第一个可见文本 token。没有文本输出的请求显示 N/A。">{html.escape(format_optional_duration(request_ttft_value(event)))}</td>
               <td class="number-cell">{html.escape(format_duration(event.get("duration_ms")))}</td>
               <td>{html.escape(request_speed_label(event))}</td>
             </tr>
@@ -215,9 +259,9 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
                 <th>时间</th>
                 <th>请求</th>
                 <th>状态</th>
-                <th title="Time to first byte">TTFB</th>
-                <th title="Time to first token">TTFT</th>
-                <th title="End-to-end latency">E2E</th>
+                <th>{timing_header("首响应", "TTFB", "Time to first byte")}</th>
+                <th>{timing_header("首文本", "TTFT", "Time to first token")}</th>
+                <th>{timing_header("完整耗时", "E2E", "End-to-end latency")}</th>
                 <th>速度模式</th>
               </tr>
             </thead>
@@ -231,9 +275,6 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
     chatgpt_login = bool(snapshot.get("chatgpt_auth"))
     proxy_status = proxy_route_label(snapshot)
     auth_text = "ChatGPT 账户登录" if chatgpt_login else "API Key / 第三方登录"
-    recent_events = snapshot.get("recent_response_events")
-    last_event = recent_events[-1] if isinstance(recent_events, list) and recent_events else None
-    last_status, last_status_tone = request_status_label(last_event if isinstance(last_event, dict) else None)
     provider = display_text(snapshot.get("provider"), "未选择")
     base_url = compact_url(snapshot.get("base_url"), "未启用")
     upstream = compact_url(snapshot.get("upstream_base"), "未配置")
@@ -245,7 +286,7 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
             <strong>{html.escape(proxy_status)}</strong>
             <span>{html.escape(auth_text)}</span>
           </span>
-          <span class="summary-action">查看</span>
+          <span class="summary-action" data-open-label="收起" data-closed-label="查看">查看</span>
         </summary>
         <div class="maintenance-body">
           <div class="status-dashboard">
@@ -267,12 +308,6 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
                 <strong>{html.escape(provider)}</strong>
                 <small>{html.escape(upstream)}</small>
               </div>
-            </div>
-            <div class="status-metrics">
-              {render_status_metric("代理", short_proxy_label(snapshot), "ok" if snapshot.get("config_matches") else "idle")}
-              {render_status_metric("登录", short_login_label(snapshot), "ok" if chatgpt_login else "idle")}
-              {render_status_metric("速度", short_speed_label(snapshot))}
-              {render_status_metric("最近请求", last_status, last_status_tone)}
             </div>
           </div>
           <h2 class="subsection-title">最近请求</h2>
@@ -319,13 +354,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     user_state = snapshot.get("user_state", {})
     state_code = str(user_state.get("code") or "")
     title = str(user_state.get("title") or "需要处理")
-    message = str(user_state.get("message") or "请打开诊断，或让 Codex 根据诊断结果修复。")
+    message = str(user_state.get("message") or "请打开高级诊断，或让 Codex 根据诊断结果修复。")
     primary_action = user_state.get("primary_action")
     primary_label = str(user_state.get("primary_label") or "刷新")
     button = (
         f'<button id="primary" data-action="{html.escape(str(primary_action))}">{html.escape(primary_label)}</button>'
         if primary_action in {"enable", "refresh", "uninstall"}
-        else '<button id="primary" class="secondary" data-action="diagnostics">打开诊断</button>'
+        else '<button id="primary" class="secondary" data-action="diagnostics">打开高级诊断</button>'
     )
     labels: dict[str, str] = {}
     terminal_state = state_code in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
@@ -371,7 +406,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             <strong id="providerSummaryName">{summary_name}</strong>
             <span id="providerSummaryUrl">{summary_url}</span>
           </span>
-          <span class="summary-action">管理</span>
+          <span class="summary-action" data-open-label="收起" data-closed-label="管理">管理</span>
         </summary>
         <div class="maintenance-body">
           <div class="provider-panel-header">
@@ -524,6 +559,26 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       line-height: 1.12;
       margin: 0 0 12px;
     }}
+    .hero {{
+      align-items: stretch;
+      display: grid;
+      gap: 24px;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+    }}
+    .hero-main {{
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }}
+    .hero-summary {{
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: grid;
+      gap: 1px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      overflow: hidden;
+    }}
     .message, .note {{
       color: var(--muted-strong);
       line-height: 1.65;
@@ -538,7 +593,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
-      margin-top: 22px;
+      margin-top: auto;
+      padding-top: 22px;
     }}
     button {{
       align-items: center;
@@ -635,6 +691,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-size: 13px;
       font-weight: 600;
       padding: 7px 12px;
+    }}
+    .summary-action {{
+      min-width: 52px;
+      text-align: center;
     }}
     .maintenance-body {{
       border-top: 1px solid var(--border);
@@ -875,8 +935,18 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       top: 15px;
       width: 7px;
     }}
-    .metric-mark.ok {{ background: var(--green); }}
-    .metric-mark.warn {{ background: var(--amber); }}
+    .metric-mark.ok {{
+      background: var(--green);
+      box-shadow: 0 0 0 3px rgba(16, 163, 127, .14), 0 0 12px rgba(16, 163, 127, .34);
+    }}
+    .metric-mark.warn {{
+      background: var(--red);
+      box-shadow: 0 0 0 3px rgba(143, 58, 46, .12), 0 0 12px rgba(143, 58, 46, .3);
+    }}
+    .metric-mark.idle {{
+      background: var(--border-strong);
+      box-shadow: 0 0 0 3px rgba(17, 17, 17, .05);
+    }}
     form {{
       display: grid;
       gap: 12px;
@@ -972,6 +1042,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       color: var(--muted);
       font-weight: 600;
     }}
+    .metric-term {{
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 3px;
+    }}
+    .metric-term small {{
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }}
     .request-table tr:last-child td {{
       border-bottom: 0;
     }}
@@ -1009,6 +1089,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       main {{ padding: 22px 14px 32px; }}
       .panel {{ border-radius: 10px; padding: 20px; }}
       .state {{ font-size: 28px; }}
+      .hero {{ grid-template-columns: 1fr; }}
       .provider-panel-header, .provider-card {{ flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
       button {{ width: 100%; }}
@@ -1044,19 +1125,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       </div>
     </div>
     <section class="panel">
-      <p id="state" class="state">{html.escape(title)}</p>
-      <p id="message" class="message">{html.escape(message)}</p>
-      <div class="actions">
-        {button}
-        {action_buttons}
+      <div class="hero">
+        <div class="hero-main">
+          <p id="state" class="state">{html.escape(title)}</p>
+          <p id="message" class="message">{html.escape(message)}</p>
+          <div class="actions">
+            {button}
+            {action_buttons}
+          </div>
+        </div>
+        {render_top_summary(snapshot)}
       </div>
       {danger_zone}
       {render_status_panel(snapshot)}
       {provider_management}
       {speed_controls}
       <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
-      <details>
-        <summary>诊断</summary>
+      <details id="diagnosticsPanel" class="diagnostics-panel">
+        <summary>高级诊断</summary>
         <pre id="diagnostics">{snapshot_json}</pre>
       </details>
     </section>
@@ -1212,6 +1298,50 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (snapshot.base_url) return ['已恢复', 'idle'];
       return ['未启用', 'idle'];
     }}
+    function shortLoginLabel(snapshot) {{
+      if (snapshot.chatgpt_auth) return 'ChatGPT';
+      if (snapshot.api_key_auth) return 'API Key';
+      return '未知';
+    }}
+    function shortProxyLabel(snapshot) {{
+      if (snapshot.config_matches && snapshot.healthy && !snapshot.needs_restart) return '已接管';
+      if (snapshot.config_matches && snapshot.needs_restart) return '待重启';
+      if (snapshot.base_url) return '未接管';
+      return '未启用';
+    }}
+    function shortSpeedLabel(snapshot) {{
+      if (snapshot.fast_behavior === 'app_controlled') return 'App 控制';
+      if (snapshot.fast_behavior === 'inject_missing') return '快速';
+      if (snapshot.fast_behavior === 'preserve') return '标准';
+      return '未启用';
+    }}
+    function proxySummaryTone(snapshot) {{
+      if (snapshot.config_matches && snapshot.healthy && !snapshot.needs_restart) return 'ok';
+      if (snapshot.config_matches) return 'warn';
+      return 'idle';
+    }}
+    function loginSummaryTone(snapshot) {{
+      return snapshot.chatgpt_auth || snapshot.api_key_auth ? 'ok' : 'idle';
+    }}
+    function speedSummaryTone(snapshot) {{
+      return shortSpeedLabel(snapshot) === '未启用' ? 'idle' : 'ok';
+    }}
+    function recentRequestSummary(snapshot) {{
+      const events = Array.isArray(snapshot.recent_response_events) ? snapshot.recent_response_events : [];
+      const event = events.length ? events[events.length - 1] : null;
+      if (!event) return ['暂无', 'idle'];
+      const status = Number(event.status);
+      if (!Number.isFinite(status) || status >= 400) return ['异常', 'warn'];
+      return ['正常', 'ok'];
+    }}
+    function compactUrl(value, fallback) {{
+      if (typeof value !== 'string' || !value) return fallback;
+      return value.replace('https://', '').replace('http://', '');
+    }}
+    function metricToneClass(node, tone) {{
+      if (!node) return;
+      node.className = `metric-mark ${{tone || 'idle'}}`;
+    }}
     function formatLocalTime(date) {{
       const pad = (value) => String(value).padStart(2, '0');
       return [
@@ -1250,6 +1380,25 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (summaryName) summaryName.textContent = currentProviderName(snapshot) || '未选择';
       const summaryUrl = $('providerSummaryUrl');
       if (summaryUrl) summaryUrl.textContent = displayValue((providerByName(currentProviderName(snapshot)) || {{}}).base_url, '未设置模型服务');
+      const summaryMetrics = document.querySelectorAll('.hero-summary .status-metric');
+      if (summaryMetrics.length >= 4) {{
+        summaryMetrics[0].querySelector('strong').textContent = shortProxyLabel(snapshot);
+        metricToneClass(summaryMetrics[0].querySelector('.metric-mark'), proxySummaryTone(snapshot));
+        summaryMetrics[1].querySelector('strong').textContent = shortLoginLabel(snapshot);
+        metricToneClass(summaryMetrics[1].querySelector('.metric-mark'), loginSummaryTone(snapshot));
+        summaryMetrics[2].querySelector('strong').textContent = shortSpeedLabel(snapshot);
+        metricToneClass(summaryMetrics[2].querySelector('.metric-mark'), speedSummaryTone(snapshot));
+        const [requestLabel, requestTone] = recentRequestSummary(snapshot);
+        summaryMetrics[3].querySelector('strong').textContent = requestLabel;
+        metricToneClass(summaryMetrics[3].querySelector('.metric-mark'), requestTone);
+      }}
+    }}
+    function syncSummaryActions() {{
+      document.querySelectorAll('.summary-action[data-open-label][data-closed-label]').forEach((node) => {{
+        const panel = node.closest('details');
+        if (!panel) return;
+        node.textContent = panel.open ? node.dataset.openLabel : node.dataset.closedLabel;
+      }});
     }}
     function selectedSpeedMode() {{
       const selected = document.querySelector('input[name="speedMode"]:checked');
@@ -1275,18 +1424,25 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       const userState = snapshot.user_state || {{}};
       $('state').textContent = userState.title || '需要处理';
-      $('message').textContent = userState.message || '请打开诊断，或让 Codex 根据诊断结果修复。';
+      $('message').textContent = userState.message || '请打开高级诊断，或让 Codex 根据诊断结果修复。';
       $('diagnostics').textContent = JSON.stringify(snapshot, null, 2);
       renderLocalTimes();
       const button = $('primary');
       button.dataset.action = userState.primary_action || 'diagnostics';
-      button.textContent = userState.primary_label || '打开诊断';
+      button.textContent = userState.primary_label || '打开高级诊断';
       resetControls(userState, snapshot);
       resetProviderForm(snapshot);
       resetSummary(snapshot);
       resetSpeedForm(snapshot);
+      syncSummaryActions();
     }}
     renderLocalTimes();
+    document.querySelectorAll('.summary-action[data-open-label][data-closed-label]').forEach((node) => {{
+      const panel = node.closest('details');
+      if (!panel) return;
+      panel.addEventListener('toggle', syncSummaryActions);
+    }});
+    syncSummaryActions();
     async function requestAction(action, body) {{
       const response = await fetch('/api/actions/' + action, {{
         method: 'POST',

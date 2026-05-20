@@ -333,12 +333,12 @@ def user_error_message(action: str, snapshot: dict[str, Any]) -> str:
     if action == "set-speed-mode":
         return "速度模式没有保存，当前设置保持不变。"
     if action == "enable":
-        return "启用没有完成，当前设置保持不变。请打开诊断，或让 Codex 检查原因。"
+        return "启用没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
     if action == "update":
-        return "更新没有完成。请打开诊断，或让 Codex 检查原因。"
+        return "更新没有完成。请打开高级诊断，或让 Codex 检查原因。"
     if action == "uninstall":
-        return "停用没有完成，当前设置保持不变。请打开诊断，或让 Codex 检查原因。"
-    return "操作没有完成，当前设置保持不变。请打开诊断，或让 Codex 检查原因。"
+        return "停用没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
+    return "操作没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
 
 
 def open_control_ui(
@@ -372,7 +372,7 @@ def open_control_ui(
             "status": "error",
             "code": "control_ui_start_failed",
             "url": url,
-            "error": f"控制面板未能在 {url} 启动，请让 Codex 查看诊断后重试。",
+            "error": f"控制面板未能在 {url} 启动，请让 Codex 查看高级诊断后重试。",
             "open_instruction": None,
             "start": start_result,
         }
@@ -381,7 +381,7 @@ def open_control_ui(
             "status": "error",
             "code": "control_ui_start_failed",
             "url": url,
-            "error": f"控制面板未能在 {url} 启动，请让 Codex 查看诊断后重试。",
+            "error": f"控制面板未能在 {url} 启动，请让 Codex 查看高级诊断后重试。",
             "open_instruction": None,
             "start": start_result,
         }

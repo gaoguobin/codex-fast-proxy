@@ -170,9 +170,9 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
         view = (
             "needs_attention",
             "需要处理",
-            "当前环境还不能直接完成启用。请打开诊断，或让 Codex 根据诊断结果修复。",
+            "当前环境还不能直接完成启用。请打开高级诊断，或让 Codex 根据诊断结果修复。",
             "diagnostics",
-            "打开诊断",
+            "打开高级诊断",
         )
     code, title, message, primary_action, primary_label = view
     return {
