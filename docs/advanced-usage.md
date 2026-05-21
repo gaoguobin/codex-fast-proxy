@@ -49,8 +49,9 @@ The UI is a lightweight Python SSR page with native JavaScript. It supports:
 - Chinese, English, and Japanese locale switching. Chinese is the default.
 - System, light, and dark appearance.
 - Overview, Providers, Requests, Advanced, and Settings pages.
-- Settings stays in the lower-left navigation area on desktop and controls language, appearance,
-  update checks, and updates.
+- Settings stays in the lower-left navigation area on desktop, uses segmented language and
+  appearance controls, and exposes one software-update action that checks first and updates only
+  when a release is available.
 - Provider management after the proxy is enabled.
 - Provider availability checks from the Providers page.
 - Masked API keys with explicit reveal.
@@ -255,7 +256,8 @@ Follow the remote update workflow:
 Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md
 ```
 
-The Control UI `更新` button delegates to `python -m codex_fast_proxy update`. The update path owns
+The Settings page software-update action checks first. When a release is available, the same button
+switches to update and delegates to `python -m codex_fast_proxy update`. The update path owns
 `git pull --ff-only`, editable reinstall, skill link refresh, enabled-runtime refresh, and final
 status reporting.
 

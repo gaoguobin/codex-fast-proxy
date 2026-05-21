@@ -70,7 +70,8 @@ Pages:
   edit, switch, delete, and masked API-key reveal.
 - `请求记录`: recent `/v1/responses` records, provider checks, and quick/strict benchmark results.
 - `高级`: status summary, log paths, self-check, copy diagnostics, and diagnostic file export.
-- `设置`: language, appearance, update checks, and updates from the lower-left settings entry.
+- `设置`: segmented language and appearance controls, plus a single software-update row that checks
+  first and turns into update only when a release is available.
 
 When Codex is signed in with ChatGPT, proxy-side speed controls are hidden because speed selection
 is controlled by Codex App's native UI. The summary shows `App 控制` for that state.

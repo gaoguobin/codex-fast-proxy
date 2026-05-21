@@ -49,12 +49,13 @@ if (-not $hasManagerUpdate) {
 If the gate ran `update`, report the returned update JSON. That bootstrap is the update; after it
 succeeds, tell the user future updates should use the Control UI.
 
-If the gate opened the Control UI, report the printed URL and ask the user to click `更新`. Do not
-run another UI command in the same turn.
+If the gate opened the Control UI, report the printed URL and ask the user to open Settings and use
+the software-update action. It starts as `检查更新` and turns into `立即更新` only when a release is
+available. Do not run another UI command in the same turn.
 
 ## Normal path
 
-Open the Control UI and let the user click `更新`:
+Open the Control UI and let the user use Settings -> software update:
 
 ```powershell
 python -m codex_fast_proxy ui
@@ -77,8 +78,9 @@ steps in chat. If local changes exist, the update must stop with `status=blocked
 After an update, reopen or reload the Control UI and verify the visible user state. The current UI
 uses pages for Overview, Providers, Requests, Advanced, and Settings. The Advanced page should
 expose status summary, log paths, self-check, copy diagnostics, and diagnostic file export. The
-Settings page should expose language, appearance, check-update, and update controls from the
-lower-left navigation entry.
+Settings page should expose segmented language and appearance controls from the lower-left
+navigation entry, plus one software-update action that checks first and switches to update only when
+a release is available.
 
 ## Check only
 

@@ -154,7 +154,8 @@ The installed Control UI pages are:
   after enable, with masked key reveal.
 - `请求记录`: recent requests, provider checks, and benchmark summary.
 - `高级`: status summary, log paths, self-check, copy diagnostics, and diagnostic file export.
-- `设置`: lower-left settings entry for language, appearance, update checks, and updates.
+- `设置`: lower-left settings entry with segmented language and appearance controls, plus one
+  software-update action that checks first and updates only when a release is available.
 
 When ChatGPT account login is detected, proxy-side speed controls are hidden because speed selection
 is handled by the Codex App native UI.

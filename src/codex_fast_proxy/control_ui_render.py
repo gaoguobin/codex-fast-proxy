@@ -24,6 +24,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav.settings": "设置",
         "button.update": "更新",
         "button.checkUpdate": "检查更新",
+        "button.updateNow": "立即更新",
+        "button.recheckUpdate": "重新检查",
         "button.checkProvider": "检查",
         "button.runBenchmark": "运行基准测试",
         "button.confirmBenchmark": "运行快速测试",
@@ -211,6 +213,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.updates": "版本更新",
         "settings.updatesDescription": "先检查远端状态，再决定是否更新本地代理。",
         "settings.updateIdle": "还没有检查更新。",
+        "settings.updateTitleIdle": "软件更新",
         "settings.updateNote": "检查更新是只读操作；更新会拉取代码并刷新本地运行时。",
         "danger.eyebrow": "停用确认",
         "danger.title": "先确认登录路径",
@@ -277,6 +280,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav.settings": "Settings",
         "button.update": "Update",
         "button.checkUpdate": "Check for updates",
+        "button.updateNow": "Update now",
+        "button.recheckUpdate": "Check again",
         "button.checkProvider": "Check",
         "button.runBenchmark": "Run benchmark",
         "button.confirmBenchmark": "Run quick test",
@@ -464,6 +469,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.updates": "Version updates",
         "settings.updatesDescription": "Check remote status before updating the local proxy.",
         "settings.updateIdle": "Updates have not been checked yet.",
+        "settings.updateTitleIdle": "Software update",
         "settings.updateNote": "Checking is read-only. Updating pulls code and refreshes the local runtime.",
         "danger.eyebrow": "Disable confirmation",
         "danger.title": "Check the login path first",
@@ -530,6 +536,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav.settings": "設定",
         "button.update": "更新",
         "button.checkUpdate": "更新を確認",
+        "button.updateNow": "今すぐ更新",
+        "button.recheckUpdate": "再確認",
         "button.checkProvider": "確認",
         "button.runBenchmark": "ベンチマーク実行",
         "button.confirmBenchmark": "クイックテスト",
@@ -717,6 +725,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.updates": "バージョン更新",
         "settings.updatesDescription": "ローカルプロキシを更新する前に、リモート状態を確認します。",
         "settings.updateIdle": "更新確認はまだ実行していません。",
+        "settings.updateTitleIdle": "ソフトウェア更新",
         "settings.updateNote": "更新確認は読み取り専用です。更新はコードを取得し、ローカルランタイムを更新します。",
         "danger.eyebrow": "無効化の確認",
         "danger.title": "先にログイン経路を確認",
@@ -3045,9 +3054,78 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-size: 14px;
       font-weight: 500;
     }}
-    .settings-row select {{
+    .segmented-control {{
+      background: var(--surface-soft);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: grid;
+      gap: 2px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       justify-self: end;
-      min-width: 180px;
+      min-width: min(360px, 100%);
+      padding: 2px;
+    }}
+    .segmented-control label {{
+      cursor: pointer;
+      display: block;
+      font-size: 14px;
+      min-width: 0;
+      position: relative;
+    }}
+    .segmented-control input {{
+      cursor: pointer;
+      height: 100%;
+      inset: 0;
+      margin: 0;
+      opacity: 0;
+      padding: 0;
+      position: absolute;
+      width: 100%;
+    }}
+    .segmented-control label > span {{
+      align-items: center;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--muted-strong);
+      display: flex;
+      font-size: 14px;
+      font-weight: 460;
+      justify-content: center;
+      min-height: 32px;
+      padding: 6px 10px;
+      text-align: center;
+      transition: background .16s ease, border-color .16s ease, color .16s ease;
+      white-space: nowrap;
+    }}
+    .segmented-control input:checked + span {{
+      background: var(--surface);
+      border-color: var(--border-strong);
+      color: var(--text);
+    }}
+    .segmented-control input:focus-visible + span {{
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }}
+    .software-update {{
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: grid;
+      gap: 16px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      padding: 14px;
+    }}
+    .software-update strong {{
+      color: var(--text);
+      display: block;
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 460;
+      margin-bottom: 4px;
+    }}
+    .software-update button {{
+      min-width: 112px;
     }}
     .settings-note {{
       margin: 10px 0 0;
@@ -3149,7 +3227,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .provider-panel-header, .provider-card {{ align-items: stretch; flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
       .actions button {{ width: 100%; }}
-      .provider-card-actions button, #newProvider, #cancelProvider, #checkUpdate, #update {{ width: auto; }}
+      .provider-card-actions button, #newProvider, #cancelProvider, #updatePrimary {{ width: auto; }}
       .status-row {{
         align-items: flex-start;
         gap: 4px;
@@ -3171,10 +3249,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         align-items: flex-start;
         grid-template-columns: 1fr;
       }}
-      .settings-row select {{
+      .segmented-control {{
         justify-self: stretch;
         min-width: 0;
         width: 100%;
+      }}
+      .software-update {{
+        align-items: stretch;
+        grid-template-columns: 1fr;
+      }}
+      .software-update button {{
+        justify-self: start;
       }}
       .diagnostic-row strong {{
         justify-self: start;
@@ -3405,22 +3490,40 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           </div>
           <div class="detail-panel-body">
             <div class="settings-list">
-              <label class="settings-row">
+              <div class="settings-row">
                 <span data-i18n="toolbar.language">语言</span>
-                <select id="languageSelect" aria-label="语言" data-i18n-aria-label="toolbar.language">
-                  <option value="zh">中文</option>
-                  <option value="en">English</option>
-                  <option value="ja">日本語</option>
-                </select>
-              </label>
-              <label class="settings-row">
+                <div class="segmented-control" role="radiogroup" aria-label="语言" data-i18n-aria-label="toolbar.language">
+                  <label>
+                    <input type="radio" name="languageChoice" value="zh">
+                    <span>中文</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="languageChoice" value="en">
+                    <span>English</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="languageChoice" value="ja">
+                    <span>日本語</span>
+                  </label>
+                </div>
+              </div>
+              <div class="settings-row">
                 <span data-i18n="toolbar.theme">外观</span>
-                <select id="themeSelect" aria-label="外观" data-i18n-aria-label="toolbar.theme">
-                  <option value="system" data-i18n="theme.system">跟随系统</option>
-                  <option value="light" data-i18n="theme.light">浅色</option>
-                  <option value="dark" data-i18n="theme.dark">深色</option>
-                </select>
-              </label>
+                <div class="segmented-control" role="radiogroup" aria-label="外观" data-i18n-aria-label="toolbar.theme">
+                  <label>
+                    <input type="radio" name="themeChoice" value="system">
+                    <span data-i18n="theme.system">跟随系统</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="themeChoice" value="light">
+                    <span data-i18n="theme.light">浅色</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="themeChoice" value="dark">
+                    <span data-i18n="theme.dark">深色</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -3431,13 +3534,15 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
               <h2 data-i18n="settings.updates">版本更新</h2>
               <p data-i18n="settings.updatesDescription">先检查远端状态，再决定是否更新本地代理。</p>
             </div>
-            <div class="panel-actions">
-              <button id="checkUpdate" class="secondary" type="button" data-i18n="button.checkUpdate">检查更新</button>
-              <button id="update" class="secondary" data-action="update" data-i18n="button.update">更新</button>
-            </div>
           </div>
           <div class="detail-panel-body">
-            <p id="settingsUpdateFeedback" class="inline-feedback" role="status" aria-live="polite" data-i18n="settings.updateIdle">还没有检查更新。</p>
+            <div class="software-update">
+              <div>
+                <strong id="settingsUpdateTitle" data-i18n="settings.updateTitleIdle">软件更新</strong>
+                <p id="settingsUpdateFeedback" class="inline-feedback" role="status" aria-live="polite" data-i18n="settings.updateIdle">还没有检查更新。</p>
+              </div>
+              <button id="updatePrimary" class="secondary" type="button" data-update-action="check-update" data-i18n="button.checkUpdate">检查更新</button>
+            </div>
             <p class="detail-note settings-note" data-i18n="settings.updateNote">检查更新是只读操作；更新会拉取代码并刷新本地运行时。</p>
           </div>
         </section>
@@ -3542,12 +3647,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         message: stateText.message || state.message || t('advanced.description', '请打开高级诊断，或让 Codex 根据诊断结果修复。')
       }};
     }}
+    function syncPreferenceControls() {{
+      const languageInput = document.querySelector(`input[name="languageChoice"][value="${{currentLocale}}"]`);
+      if (languageInput) languageInput.checked = true;
+      const themeInput = document.querySelector(`input[name="themeChoice"][value="${{currentTheme}}"]`);
+      if (themeInput) themeInput.checked = true;
+    }}
     function applyTheme() {{
       const systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
       const resolved = currentTheme === 'system' ? (systemDark ? 'dark' : 'light') : currentTheme;
       document.documentElement.dataset.theme = resolved;
-      const selector = $('themeSelect');
-      if (selector) selector.value = currentTheme;
+      syncPreferenceControls();
     }}
     function buttonLabel(id, fallback = '') {{
       const keys = {{
@@ -3575,8 +3685,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function updateStaticTranslations() {{
       document.documentElement.lang = localeLang[currentLocale] || 'zh-CN';
       document.title = t('page.title', 'Codex 控制面板');
-      const languageSelect = $('languageSelect');
-      if (languageSelect) languageSelect.value = currentLocale;
       document.querySelectorAll('[data-i18n]').forEach((node) => {{
         const key = node.getAttribute('data-i18n');
         node.textContent = t(key, node.textContent);
@@ -3593,6 +3701,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         const key = node.getAttribute('data-i18n-aria-label');
         node.setAttribute('aria-label', t(key, node.getAttribute('aria-label') || ''));
       }});
+      syncPreferenceControls();
     }}
     function updateStateText(snapshot) {{
       const userState = snapshot.user_state || {{}};
@@ -4007,17 +4116,29 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     function updateSettingsWorkspace(snapshot) {{
       const feedback = $('settingsUpdateFeedback');
-      if (!feedback) return;
+      const title = $('settingsUpdateTitle');
+      const action = $('updatePrimary');
+      if (!feedback || !title || !action) return;
       const state = snapshot.user_state || {{}};
       const updateCodes = ['update_checked_dirty', 'update_available', 'already_current', 'update_blocked', 'updated'];
       if (updateCodes.includes(state.code)) {{
         const text = translatedState(state);
+        title.textContent = text.title || t('settings.updateTitleIdle', '软件更新');
+        title.removeAttribute('data-i18n');
         feedback.textContent = text.message || text.title;
         feedback.removeAttribute('data-i18n');
       }} else {{
+        title.dataset.i18n = 'settings.updateTitleIdle';
+        title.textContent = t('settings.updateTitleIdle', '软件更新');
         feedback.dataset.i18n = 'settings.updateIdle';
         feedback.textContent = t('settings.updateIdle', '还没有检查更新。');
       }}
+      const canUpdate = state.code === 'update_available';
+      const checked = ['already_current', 'updated', 'update_checked_dirty', 'update_blocked'].includes(state.code);
+      action.dataset.updateAction = canUpdate ? 'update' : 'check-update';
+      action.dataset.i18n = canUpdate ? 'button.updateNow' : (checked ? 'button.recheckUpdate' : 'button.checkUpdate');
+      action.textContent = t(action.dataset.i18n, canUpdate ? '立即更新' : '检查更新');
+      action.classList.toggle('secondary', !canUpdate);
     }}
     function diagnosticExportText() {{
       const payload = {{
@@ -4310,18 +4431,20 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if ($('copyDiagnostics')) $('copyDiagnostics').addEventListener('click', () => copyDiagnostics());
     if ($('downloadDiagnostics')) $('downloadDiagnostics').addEventListener('click', () => downloadDiagnostics());
     if ($('refreshDiagnostics')) $('refreshDiagnostics').addEventListener('click', () => window.location.reload());
-    if ($('languageSelect')) $('languageSelect').addEventListener('change', (event) => {{
+    document.querySelectorAll('input[name="languageChoice"]').forEach((input) => input.addEventListener('change', (event) => {{
+      if (!event.currentTarget.checked) return;
       const value = event.currentTarget.value;
       currentLocale = supportedLocales.includes(value) ? value : 'zh';
       window.localStorage.setItem(localeStorageKey, currentLocale);
       applyLocale(currentSnapshot);
-    }});
-    if ($('themeSelect')) $('themeSelect').addEventListener('change', (event) => {{
+    }}));
+    document.querySelectorAll('input[name="themeChoice"]').forEach((input) => input.addEventListener('change', (event) => {{
+      if (!event.currentTarget.checked) return;
       const value = event.currentTarget.value;
       currentTheme = supportedThemes.includes(value) ? value : 'system';
       window.localStorage.setItem(themeStorageKey, currentTheme);
       applyTheme();
-    }});
+    }}));
     if (window.matchMedia) {{
       const themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
       const onSystemThemeChange = () => {{
@@ -4427,8 +4550,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         if (panel) panel.open = true;
       }}
     }});
-    if ($('update')) $('update').addEventListener('click', (event) => runButton(event.currentTarget, 'update'));
-    if ($('checkUpdate')) $('checkUpdate').addEventListener('click', (event) => runButton(event.currentTarget, 'check-update'));
+    if ($('updatePrimary')) $('updatePrimary').addEventListener('click', (event) => runButton(event.currentTarget, event.currentTarget.dataset.updateAction || 'check-update'));
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('finishCleanup')) $('finishCleanup').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
