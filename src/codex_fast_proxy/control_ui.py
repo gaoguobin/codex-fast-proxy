@@ -386,8 +386,17 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
     return 0
 
 
+def user_error_detail(detail: str | None) -> str | None:
+    if not detail:
+        return None
+    if "could not find an api key" in detail.lower():
+        return "没有可用于验证的接口密钥；请填写接口密钥，或确认该 Provider 已保存 key。"
+    return detail
+
+
 def user_error_message(action: str, snapshot: dict[str, Any], detail: str | None = None) -> str:
-    suffix = f" 原因：{detail}" if detail else ""
+    friendly_detail = user_error_detail(detail)
+    suffix = f" 原因：{friendly_detail}" if friendly_detail else ""
     if action in {"save-provider", "configure-upstream"}:
         upstream = snapshot.get("upstream_base")
         if isinstance(upstream, str) and upstream:

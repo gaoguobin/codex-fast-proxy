@@ -535,6 +535,12 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('id="providerSummaryName">acme</h2>', html)
         self.assertIn('id="providerSummaryUrl">https://api.acme.test/v1</p>', html)
         self.assertIn('id="providerEditor" class="provider-editor" hidden', html)
+        self.assertIn('id="providerFormFeedback"', html)
+        self.assertIn("providerFormValidationError", html)
+        self.assertIn("provider.form.invalidUrl", html)
+        self.assertIn("renderErrorSnapshot: false", html)
+        self.assertIn("feedbackElement: $('providerFormFeedback')", html)
+        self.assertIn("if (result.ok && $('apiKey')) $('apiKey').value = '';", html)
         self.assertIn("添加", html)
         self.assertIn("编辑", html)
         self.assertIn("更新", html)
@@ -732,6 +738,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("button[aria-busy=\"true\"]", html)
         self.assertIn("button.setAttribute('aria-busy', 'true');", html)
         self.assertIn("button.removeAttribute('aria-busy');", html)
+        self.assertIn("return { ok, error: caughtError, renderedSnapshot };", html)
         self.assertIn("cursor: not-allowed;", html)
         self.assertNotIn("button:disabled {\n      cursor: wait;", html)
         self.assertIn(".app-shell", html)
@@ -854,6 +861,16 @@ class ControlUiTests(unittest.TestCase):
         )
 
         self.assertEqual(message, "没有保存。新的模型服务没有通过验证，当前仍在使用：https://api.acme.test/v1")
+
+    def test_provider_save_error_hides_internal_benchmark_detail(self) -> None:
+        message = user_error_message(
+            "save-provider",
+            {"upstream_base": "https://api.acme.test/v1"},
+            "Benchmark could not find an API key in provider config.",
+        )
+
+        self.assertIn("没有可用于验证的接口密钥", message)
+        self.assertNotIn("Benchmark", message)
 
     def test_switch_provider_error_includes_specific_reason(self) -> None:
         message = user_error_message(

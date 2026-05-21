@@ -112,6 +112,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.hideKey": "隐藏接口密钥",
         "provider.editor.edit": "编辑",
         "provider.editor.add": "添加",
+        "provider.form.invalidName": "先填写供应商名称。",
+        "provider.form.invalidUrl": "模型服务地址需要是 http 或 https URL。",
         "speed.inlineHint": "快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。",
         "requests.title": "请求记录",
         "requests.description": "查看最近请求、Provider 检查和性能基准。",
@@ -368,6 +370,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.hideKey": "Hide key",
         "provider.editor.edit": "Edit",
         "provider.editor.add": "Add",
+        "provider.form.invalidName": "Enter a provider name first.",
+        "provider.form.invalidUrl": "The model service address must be an http or https URL.",
         "speed.inlineHint": "Fast uses priority when the request does not specify service_tier; Standard keeps the original request.",
         "requests.title": "Requests",
         "requests.description": "Review recent requests, provider checks, and benchmarks.",
@@ -624,6 +628,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.hideKey": "キーを隠す",
         "provider.editor.edit": "編集",
         "provider.editor.add": "追加",
+        "provider.form.invalidName": "先にプロバイダー名を入力してください。",
+        "provider.form.invalidUrl": "モデルサービスアドレスは http または https URL にしてください。",
         "speed.inlineHint": "高速はリクエストに service_tier がない場合に priority を使います。標準は元のリクエストを維持します。",
         "requests.title": "リクエスト",
         "requests.description": "最近のリクエスト、プロバイダー確認、ベンチマークを確認します。",
@@ -1753,6 +1759,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
               <div class="actions compact">
                 <button id="saveProvider" type="submit" data-i18n="button.saveProvider">保存</button>
               </div>
+              <p id="providerFormFeedback" class="inline-feedback provider-form-feedback" role="status" aria-live="polite"></p>
             </form>
           </div>
         </div>
@@ -2473,6 +2480,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-family: var(--font-display);
       font-weight: 460;
       margin: 0;
+    }}
+    .provider-form-feedback {{
+      color: var(--red);
+      margin-top: 1px;
     }}
     .readonly-config {{
       background: var(--border);
@@ -3856,6 +3867,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function openProviderEditor(record, titleKey) {{
       loadedApiKey = '';
       loadedApiKeyProvider = '';
+      setProviderFormFeedback('');
       const editor = $('providerEditor');
       if (editor) editor.hidden = false;
       const split = editor ? editor.closest('.provider-split') : null;
@@ -3876,6 +3888,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (nameInput) nameInput.focus();
     }}
     function closeProviderEditor() {{
+      setProviderFormFeedback('');
       const editor = $('providerEditor');
       if (editor) editor.hidden = true;
       const split = editor ? editor.closest('.provider-split') : null;
@@ -3915,6 +3928,22 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const reveal = $('revealApiKey');
       if (!apiKey || !reveal) return;
       reveal.disabled = !apiKey.value.trim();
+    }}
+    function setProviderFormFeedback(message) {{
+      const feedback = $('providerFormFeedback');
+      if (feedback) feedback.textContent = message || '';
+    }}
+    function providerFormValidationError() {{
+      const provider = $('providerNameInput') ? $('providerNameInput').value.trim() : '';
+      const upstreamBase = $('upstreamBase') ? $('upstreamBase').value.trim() : '';
+      if (!provider) return t('provider.form.invalidName', '先填写供应商名称。');
+      try {{
+        const url = new URL(upstreamBase);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error('unsupported protocol');
+      }} catch (_error) {{
+        return t('provider.form.invalidUrl', '模型服务地址需要是 http 或 https URL。');
+      }}
+      return '';
     }}
     async function fetchProviderKey(provider) {{
       const response = await fetch('/api/provider-key?provider=' + encodeURIComponent(provider), {{
@@ -4453,7 +4482,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (themeQuery.addEventListener) themeQuery.addEventListener('change', onSystemThemeChange);
       else if (themeQuery.addListener) themeQuery.addListener(onSystemThemeChange);
     }}
-    async function requestAction(action, body) {{
+    async function requestAction(action, body, options = {{}}) {{
       const response = await fetch('/api/actions/' + action, {{
         method: 'POST',
         headers: {{ [headerName]: token, 'Content-Type': 'application/json' }},
@@ -4461,9 +4490,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }});
       const data = await response.json();
       if (data.status !== 'ok') {{
-        if (data.snapshot) render(data.snapshot);
+        const shouldRenderErrorSnapshot = data.snapshot && options.renderErrorSnapshot !== false;
+        if (shouldRenderErrorSnapshot) render(data.snapshot);
         const error = new Error(data.error || '操作没有完成。');
-        error.renderedSnapshot = Boolean(data.snapshot);
+        error.renderedSnapshot = Boolean(shouldRenderErrorSnapshot);
         throw error;
       }}
       if (data.action && data.action.control_ui && data.action.control_ui.url) {{
@@ -4517,20 +4547,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }});
       return () => timers.forEach((timer) => window.clearTimeout(timer));
     }}
-    async function runButton(button, action, body) {{
+    async function runButton(button, action, body, options = {{}}) {{
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
       const oldText = button.textContent;
       const stopProgress = startActionProgress(button, action);
       let renderedSnapshot = false;
+      let ok = false;
+      let caughtError = null;
       try {{
-        const data = await requestAction(action, body);
+        const data = await requestAction(action, body, options);
         renderedSnapshot = Boolean(data && data.renderedSnapshot);
+        ok = true;
       }} catch (error) {{
+        caughtError = error;
         renderedSnapshot = Boolean(error && error.renderedSnapshot);
         if (!renderedSnapshot) {{
           $('state').textContent = t('value.needsAttention', '需要处理');
           $('message').textContent = (error && error.message) ? error.message : String(error);
+        }}
+        if (options.feedbackElement) {{
+          options.feedbackElement.textContent = (error && error.message) ? error.message : String(error);
         }}
       }} finally {{
         stopProgress();
@@ -4538,6 +4575,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         button.removeAttribute('aria-busy');
         if (!renderedSnapshot) button.textContent = oldText;
       }}
+      return {{ ok, error: caughtError, renderedSnapshot }};
     }}
     $('primary').addEventListener('click', async (event) => {{
       const action = event.currentTarget.dataset.action;
@@ -4613,12 +4651,21 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if ($('confirmStrictBenchmark')) $('confirmStrictBenchmark').addEventListener('click', confirmBenchmark);
     if ($('providerForm')) $('providerForm').addEventListener('submit', async (event) => {{
       event.preventDefault();
-      await runButton($('saveProvider'), 'save-provider', {{
+      const validationError = providerFormValidationError();
+      if (validationError) {{
+        setProviderFormFeedback(validationError);
+        return;
+      }}
+      setProviderFormFeedback('');
+      const result = await runButton($('saveProvider'), 'save-provider', {{
         provider: $('providerNameInput').value.trim() || null,
         upstream_base: $('upstreamBase').value.trim() || null,
         api_key: apiKeyFormValue()
+      }}, {{
+        feedbackElement: $('providerFormFeedback'),
+        renderErrorSnapshot: false
       }});
-      $('apiKey').value = '';
+      if (result.ok && $('apiKey')) $('apiKey').value = '';
     }});
     if ($('speedForm')) $('speedForm').addEventListener('submit', async (event) => {{
       event.preventDefault();
