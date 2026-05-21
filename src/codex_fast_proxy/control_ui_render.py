@@ -192,6 +192,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.provider_base_url": "模型服务地址",
         "advanced.check.runtime_source": "运行时来源",
         "advanced.check.login_mode": "登录方式",
+        "advanced.check.user_file_permissions": "用户文件权限",
         "advanced.check.proxy_settings": "代理设置",
         "advanced.check.config_points_to_proxy": "配置指向代理",
         "advanced.check.upstream_saved": "上游服务已保存",
@@ -436,6 +437,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.provider_base_url": "Model service URL",
         "advanced.check.runtime_source": "Runtime source",
         "advanced.check.login_mode": "Login method",
+        "advanced.check.user_file_permissions": "User file permissions",
         "advanced.check.proxy_settings": "Proxy settings",
         "advanced.check.config_points_to_proxy": "Config points to proxy",
         "advanced.check.upstream_saved": "Upstream saved",
@@ -680,6 +682,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.provider_base_url": "モデルサービス URL",
         "advanced.check.runtime_source": "ランタイムソース",
         "advanced.check.login_mode": "ログイン方式",
+        "advanced.check.user_file_permissions": "ユーザーファイル権限",
         "advanced.check.proxy_settings": "プロキシ設定",
         "advanced.check.config_points_to_proxy": "設定がプロキシを指す",
         "advanced.check.upstream_saved": "上流サービス保存済み",
@@ -3792,6 +3795,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         const state = detail.upstream_api_key_available === false ? t('value.missing', '未保存') : t('value.saved', '已保存');
         return [source, state].filter(Boolean).join(' · ');
       }}
+      if (Array.isArray(detail.loose)) {{
+        return detail.loose.length ? `${{detail.loose.length}} loose path(s)` : `${{detail.checked || 0}} checked`;
+      }}
       if (detail.ok !== undefined || detail.pid || detail.upstream_base) {{
         return [
           detail.pid ? `pid ${{detail.pid}}` : '',
@@ -3815,10 +3821,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         ].filter(Boolean).join(' · ') || doctorBoolean(false);
       }}
       if (detail.hooks !== undefined || detail.codex_hooks !== undefined) {{
-        return [
-          `hooks ${{detail.hooks ? 'on' : 'off'}}`,
-          `codex_hooks ${{detail.codex_hooks ? 'on' : 'off'}}`,
-        ].join(' · ');
+        const parts = [`hooks ${{detail.hooks ? 'on' : 'off'}}`];
+        if (detail.codex_hooks !== undefined) parts.push(`legacy ${{detail.codex_hooks ? 'on' : 'off'}}`);
+        return parts.join(' · ');
       }}
       const parts = Object.entries(detail)
         .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))

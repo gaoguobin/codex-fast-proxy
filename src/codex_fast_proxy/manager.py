@@ -89,7 +89,7 @@ from .skill_link import (
     skill_target_path,
     unlink_skill_namespace,
 )
-from .storage import json_line, read_json, sha256_file, write_json
+from .storage import copy_private_file, ensure_private_dir, json_line, read_json, sha256_file, write_json, write_private_text
 from .updater import (
     check_update,
     commit_exists_locally,
@@ -332,11 +332,11 @@ def create_synthetic_upstream_backup(paths: ProxyPaths, provider: str, settings:
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     backup_path = paths.backup_dir / f"config.toml.{timestamp}.bak"
     if paths.config_path.exists():
-        shutil.copy2(paths.config_path, backup_path)
+        copy_private_file(paths.config_path, backup_path)
         set_provider_base_url(backup_path, provider, settings.upstream_base)
         remove_hook_feature_flags(backup_path)
     else:
-        backup_path.write_text("", encoding="utf-8")
+        write_private_text(backup_path, "")
     return backup_path
 
 
@@ -358,9 +358,9 @@ def choose_config_backup(paths: ProxyPaths, provider: str, settings: ProxySettin
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     backup_path = paths.backup_dir / f"config.toml.{timestamp}.bak"
     if paths.config_path.exists():
-        shutil.copy2(paths.config_path, backup_path)
+        copy_private_file(paths.config_path, backup_path)
     else:
-        backup_path.write_text("", encoding="utf-8")
+        write_private_text(backup_path, "")
     return backup_path
 
 
@@ -514,9 +514,10 @@ def install_result(args: argparse.Namespace) -> dict[str, Any]:
         selected_port, port_selection = auto_select_proxy_port(settings.host, requested_port)
     settings = replace(settings, port=selected_port, upstream_base=upstream_base)
 
-    paths.app_home.mkdir(parents=True, exist_ok=True)
-    paths.state_dir.mkdir(parents=True, exist_ok=True)
-    paths.backup_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(paths.app_home)
+    ensure_private_dir(paths.state_dir)
+    ensure_private_dir(paths.backup_dir.parent)
+    ensure_private_dir(paths.backup_dir)
     require_upstream_auth_available(paths, settings)
 
     if args.prepare_only and args.start:
@@ -674,7 +675,8 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
     if verify_requested:
         verification = verify_upstream_responses(paths, config, new_settings, verify_timeout)
 
-    paths.backup_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(paths.backup_dir.parent)
+    ensure_private_dir(paths.backup_dir)
     backup_path = choose_config_backup(paths, config_provider, new_settings, config)
     config_hash_before = sha256_file(backup_path)
     config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
@@ -1118,7 +1120,35 @@ def command_autostart(args: argparse.Namespace) -> int:
         append_autostart_event(paths, result)
     if not args.quiet:
         print(json_line(result))
+    elif getattr(args, "hook_summary", False):
+        hook_context = autostart_hook_context(result)
+        if hook_context:
+            print(hook_context)
     return 0
+
+
+def autostart_hook_context(result: dict[str, Any]) -> str | None:
+    proxy = result.get("proxy") if isinstance(result.get("proxy"), dict) else result
+    control_ui = result.get("control_ui") if isinstance(result.get("control_ui"), dict) else {}
+    proxy_status = str(proxy.get("status") or result.get("status") or "unknown")
+    ui_status = str(control_ui.get("status") or "")
+    provider = proxy.get("provider")
+    provider_text = f" for {provider}" if isinstance(provider, str) and provider else ""
+    ui_url = control_ui.get("url")
+    ui_text = f"; Control UI {ui_url}" if isinstance(ui_url, str) and ui_url else ""
+
+    if proxy_status == "error":
+        return "Codex Model Gateway autostart failed; open Control UI diagnostics for details."
+    if ui_status == "error":
+        return "Codex Model Gateway proxy is available, but Control UI autostart failed; open diagnostics when convenient."
+    if proxy.get("needs_restart"):
+        return f"Codex Model Gateway is running with an older runtime{provider_text}; restart Codex or run update/start when convenient{ui_text}."
+    if proxy_status in {"started", "restarted"}:
+        action = "started" if proxy_status == "started" else "restarted"
+        return f"Codex Model Gateway {action}{provider_text}{ui_text}."
+    if control_ui.get("started_background_process"):
+        return f"Codex Model Gateway proxy is already running{provider_text}; Control UI started at {ui_url}."
+    return None
 
 
 def command_stop(args: argparse.Namespace) -> int:
@@ -1164,6 +1194,50 @@ def command_ui(args: argparse.Namespace) -> int:
     return 2 if result.get("status") == "error" else 0
 
 
+def user_file_permission_report(paths: ProxyPaths) -> dict[str, Any]:
+    candidates = [
+        paths.codex_home,
+        paths.config_path,
+        paths.codex_home / "auth.json",
+        paths.hooks_path,
+        paths.backup_dir.parent,
+        paths.backup_dir,
+        paths.app_home,
+        paths.settings_path,
+        paths.provider_auth_path,
+        paths.manifest_path,
+        paths.state_dir,
+        paths.log_path,
+        paths.stdout_path,
+        paths.stderr_path,
+        paths.benchmark_path,
+        paths.state_dir / "fast_proxy.autostart.jsonl",
+        paths.state_dir / "control_ui.pid",
+        paths.state_dir / "control_ui.stdout.log",
+        paths.state_dir / "control_ui.stderr.log",
+    ]
+    if paths.backup_dir.exists():
+        candidates.extend(sorted(paths.backup_dir.glob("config.toml.*.bak")))
+    entries: list[dict[str, Any]] = []
+    for path in candidates:
+        try:
+            mode = path.stat().st_mode & 0o777
+        except FileNotFoundError:
+            continue
+        group_or_other = mode & 0o077
+        entries.append({
+            "path": str(path),
+            "mode": oct(mode),
+            "owner_only": group_or_other == 0,
+        })
+    loose = [entry for entry in entries if not entry["owner_only"]]
+    return {
+        "ok": not loose,
+        "checked": len(entries),
+        "loose": loose,
+    }
+
+
 def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     config = load_toml_config(paths.config_path)
     settings_data = read_json(paths.settings_path)
@@ -1177,6 +1251,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     login = detect_login_mode(paths.codex_home)
     auth = upstream_auth_status(paths, settings)
     effective_policy = effective_service_tier_policy(settings, login) if settings else None
+    file_permissions = user_file_permission_report(paths)
+    needs_restart = bool(pending_restart or (healthy and runtime_matches is False))
 
     checks = [
         {"name": "python", "ok": sys.version_info >= (3, 11), "detail": sys.version.split()[0]},
@@ -1185,6 +1261,7 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
         {"name": "provider_base_url", "ok": bool(upstream_base), "detail": upstream_base},
         {"name": "runtime_source", "ok": True, "detail": runtime_status(paths, health)},
         {"name": "login_mode", "ok": True, "detail": login.login_mode},
+        {"name": "user_file_permissions", "ok": file_permissions["ok"], "detail": file_permissions},
     ]
     if settings_data:
         checks.extend([
@@ -1202,8 +1279,11 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
                 "detail": auth,
             },
             {"name": "proxy_health", "ok": not running or healthy or pending_restart, "detail": health},
-            {"name": "proxy_pending_restart", "ok": True, "detail": pending_restart},
-            {"name": "proxy_runtime", "ok": not healthy or runtime_matches, "detail": health.get("runtime_id") if health else None},
+            {"name": "proxy_pending_restart", "ok": True, "detail": needs_restart},
+            {"name": "proxy_runtime", "ok": not healthy or runtime_matches is not False, "detail": {
+                "current": health.get("runtime_id") if health else None,
+                "expected": RUNTIME_ID,
+            }},
             {
                 "name": "hooks_enabled",
                 "ok": hooks_enabled,
@@ -1403,7 +1483,7 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             restore_status = "already_restored"
             can_stop = True
         elif current_hash == manifest.get("config_hash_after"):
-            shutil.copy2(backup_path, config_path)
+            copy_private_file(Path(backup_path), config_path)
             restore_status = "restored"
             can_stop = True
         else:
@@ -1420,7 +1500,7 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 restore_status = "already_restored_base_url"
                 can_stop = True
             elif args.force:
-                shutil.copy2(backup_path, config_path)
+                copy_private_file(Path(backup_path), config_path)
                 restore_status = "restored"
                 can_stop = True
             else:
@@ -1536,6 +1616,7 @@ def build_parser() -> argparse.ArgumentParser:
     autostart = subparsers.add_parser("autostart", help="Start proxy and Control UI from a Codex SessionStart hook if enabled.")
     add_shared_options(autostart)
     autostart.add_argument("--quiet", action="store_true")
+    autostart.add_argument("--hook-summary", action="store_true")
     autostart.add_argument("--verbose-proxy", action="store_true")
 
     stop = subparsers.add_parser("stop", help="Stop the background proxy.")

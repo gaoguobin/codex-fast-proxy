@@ -24,6 +24,7 @@ from .config import (
     write_toml_lines,
 )
 from .core import ConfigError
+from .storage import write_json
 
 
 HOOK_EVENT = "SessionStart"
@@ -40,8 +41,8 @@ def hooks_feature_enabled(config: dict[str, Any]) -> bool:
 
 
 def set_hooks_feature_flag(config_path: Path) -> None:
-    for key in HOOK_FEATURE_KEYS:
-        set_feature_flag(config_path, key, True)
+    set_feature_flag(config_path, HOOK_FEATURE_KEY, True)
+    remove_feature_flag(config_path, LEGACY_HOOK_FEATURE_KEY)
 
 
 def remove_hook_feature_flags(config_path: Path) -> None:
@@ -71,6 +72,7 @@ def command_for_hook(paths: Any) -> str:
         "--codex-home",
         str(paths.codex_home),
         "--quiet",
+        "--hook-summary",
     ]
     if os.name == "nt":
         return subprocess.list2cmdline(args)
@@ -82,6 +84,7 @@ def hook_handler(paths: Any) -> dict[str, Any]:
         "type": "command",
         "command": command_for_hook(paths),
         "timeout": HOOK_TIMEOUT_SECONDS,
+        "statusMessage": "Checking Codex Model Gateway",
     }
 
 
@@ -258,8 +261,7 @@ def read_hooks(path: Path) -> dict[str, Any]:
 
 
 def write_hooks(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json(path, value)
 
 
 def install_startup_hook(paths: Any) -> dict[str, Any]:

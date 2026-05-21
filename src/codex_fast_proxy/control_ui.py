@@ -17,6 +17,7 @@ from .control_ui_render import CONTROL_TOKEN_HEADER, render_page
 from .models import paths_for
 from .ports import find_available_port
 from .skill_link import skill_namespace_path, skill_target_path
+from .storage import ensure_private_dir, open_private_append, write_private_text
 
 
 RESERVED_PORTS = {8787}
@@ -498,9 +499,10 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
         command.extend(["--provider", provider])
 
     stdout_path, stderr_path, pid_path = control_ui_runtime_paths(codex_home)
-    stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    stdout = stdout_path.open("ab")
-    stderr = stderr_path.open("ab")
+    ensure_private_dir(stdout_path.parent.parent)
+    ensure_private_dir(stdout_path.parent)
+    stdout = open_private_append(stdout_path, binary=True)
+    stderr = open_private_append(stderr_path, binary=True)
     kwargs: dict[str, Any] = {
         "cwd": str(Path.cwd()),
         "stdout": stdout,
@@ -521,7 +523,7 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
     finally:
         stdout.close()
         stderr.close()
-    pid_path.write_text(f"{process.pid}\n", encoding="utf-8")
+    write_private_text(pid_path, f"{process.pid}\n")
     return {
         "status": "started",
         "pid": process.pid,

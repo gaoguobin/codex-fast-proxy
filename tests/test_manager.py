@@ -982,7 +982,7 @@ class ManagerConfigTests(unittest.TestCase):
         command = session_start[0]["hooks"][0]["command"]
 
         self.assertTrue(config["features"]["hooks"])
-        self.assertTrue(config["features"]["codex_hooks"])
+        self.assertNotIn("codex_hooks", config["features"])
         self.assertTrue(has_startup_hook(paths))
         hook_status = manager.fast_proxy_hook_trust_status(paths)
         self.assertTrue(hook_status["feature_enabled"])
@@ -997,7 +997,21 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn("codex_fast_proxy", command)
         self.assertIn("autostart", command)
         self.assertIn("--quiet", command)
+        self.assertIn("--hook-summary", command)
         self.assertEqual(session_start[0]["hooks"][0]["timeout"], 20)
+        self.assertEqual(session_start[0]["hooks"][0]["statusMessage"], "Checking Codex Model Gateway")
+        backup_path = Path(json.loads(paths.manifest_path.read_text(encoding="utf-8"))["backup_path"])
+        for path in (
+            paths.config_path,
+            paths.hooks_path,
+            paths.backup_dir.parent,
+            paths.backup_dir,
+            paths.settings_path,
+            paths.manifest_path,
+            backup_path,
+        ):
+            self.assertEqual(path.stat().st_mode & 0o077, 0, str(path))
+        self.assertEqual(paths.state_dir.stat().st_mode & 0o077, 0)
 
     def test_hooks_feature_detection_accepts_current_and_legacy_keys(self) -> None:
         self.assertTrue(manager.hooks_feature_enabled({"features": {"hooks": True}}))
@@ -1052,6 +1066,7 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["status"], "updated")
         self.assertEqual(len(hooks), 1)
         self.assertIn("--codex-home", hooks[0]["command"])
+        self.assertIn("--hook-summary", hooks[0]["command"])
         self.assertTrue(has_startup_hook(paths))
 
     def test_modified_startup_hook_is_not_reported_as_usable(self) -> None:
@@ -3511,6 +3526,44 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertTrue(event_path.exists())
         self.assertIn('"status":"restarted"', event_path.read_text(encoding="utf-8"))
 
+    def test_hook_summary_prints_only_for_notable_quiet_autostart(self) -> None:
+        quiet_noop = {
+            "status": "already_running",
+            "proxy": {"status": "already_running", "pid": 1234},
+            "control_ui": {"status": "ready", "url": "http://127.0.0.1:8786/", "reused_existing": True},
+        }
+        self.assertIsNone(manager.autostart_hook_context(quiet_noop))
+
+        started_ui = {
+            "status": "already_running",
+            "proxy": {"status": "already_running", "pid": 1234},
+            "control_ui": {
+                "status": "ready",
+                "url": "http://127.0.0.1:8786/",
+                "started_background_process": True,
+            },
+        }
+        self.assertIn("Control UI started", manager.autostart_hook_context(started_ui) or "")
+
+        restarted = {"status": "restarted", "proxy": {"status": "restarted", "reason": "runtime_changed"}}
+        self.assertIn("restarted", manager.autostart_hook_context(restarted) or "")
+
+    def test_quiet_autostart_hook_summary_writes_context_for_hook(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        args = argparse.Namespace(codex_home=str(codex_home), quiet=True, hook_summary=True, verbose_proxy=False)
+
+        with (
+            mock.patch("codex_fast_proxy.manager.autostart_proxy", return_value={"status": "started"}),
+            mock.patch("codex_fast_proxy.manager.autostart_control_ui", return_value={
+                "status": "ready",
+                "url": "http://127.0.0.1:8786/",
+            }),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(manager.command_autostart(args), 0)
+
+        self.assertIn("Codex Model Gateway started", output.getvalue())
+
     def test_autostart_also_starts_control_ui_when_proxy_is_active(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
@@ -3870,6 +3923,42 @@ class ManagerConfigTests(unittest.TestCase):
         )
         report = doctor_report(paths_for(codex_home), None)
         self.assertFalse(report["ok"])
+
+    def test_doctor_reports_runtime_mismatch_as_pending_restart(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+        manager.write_settings(
+            paths,
+            manager.ProxySettings(
+                provider="acme",
+                host="127.0.0.1",
+                port=18787,
+                proxy_base="/v1",
+                upstream_base="https://api.acme.test/v1",
+                service_tier="priority",
+            ),
+        )
+        install_startup_hook(paths)
+
+        with mock.patch(
+            "codex_fast_proxy.manager.proxy_runtime_state",
+            return_value=(1234, True, {"ok": True, "runtime_id": "old-runtime"}, True, False, False),
+        ):
+            report = doctor_report(paths, None)
+
+        checks = {check["name"]: check for check in report["checks"]}
+        self.assertFalse(report["ok"])
+        self.assertTrue(checks["proxy_pending_restart"]["detail"])
+        self.assertFalse(checks["proxy_runtime"]["ok"])
+        self.assertEqual(checks["proxy_runtime"]["detail"]["current"], "old-runtime")
+        self.assertEqual(checks["proxy_runtime"]["detail"]["expected"], manager.RUNTIME_ID)
 
 
 if __name__ == "__main__":

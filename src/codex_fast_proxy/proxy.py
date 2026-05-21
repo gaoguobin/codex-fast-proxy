@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from .auth import resolve_env
 from .status_rules import EFFECTIVE_SERVICE_TIER_POLICIES, SERVICE_TIER_POLICIES
+from .storage import append_private_text, ensure_private_dir, write_private_text
 
 
 HOP_BY_HOP_HEADERS = {
@@ -498,8 +499,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         }
 
         with self.server.log_lock:
-            with self.server.log_path.open("a", encoding="utf-8") as log_file:
-                log_file.write(compact_json(event) + "\n")
+            append_private_text(self.server.log_path, compact_json(event) + "\n")
 
         if self.server.verbose:
             print(
@@ -593,7 +593,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     log_dir = Path(args.log_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(log_dir)
     log_path = log_dir / "fast_proxy.jsonl"
     pid_path = log_dir / "fast_proxy.pid"
 
@@ -609,7 +609,7 @@ def main(argv: list[str] | None = None) -> int:
         args.upstream_api_key_source,
         args.verbose,
     )
-    pid_path.write_text(str(os.getpid()), encoding="utf-8")
+    write_private_text(pid_path, f"{os.getpid()}\n")
 
     print(f"codex-fast-proxy listening on http://{args.host}:{args.port}{server.proxy_base}", flush=True)
     print(f"upstream: {args.upstream_base}", flush=True)

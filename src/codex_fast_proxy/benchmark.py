@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 from .core import is_success_status
 from .proxy import compact_json, join_paths
+from .storage import write_private_text
 
 
 ConnectionFactory = Callable[[str, str, int | None, float], http.client.HTTPConnection]
@@ -1211,5 +1212,4 @@ def run_benchmark(
 
 
 def save_benchmark_result(path: Path, result: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_private_text(path, json.dumps(result, ensure_ascii=False, indent=2) + "\n")

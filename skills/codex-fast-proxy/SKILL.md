@@ -49,7 +49,8 @@ saved upstream route.
 
 - Installing the repo or skill must not change Codex provider config; ordinary users enable from UI.
 - `install --start` starts the local proxy before switching Codex config and installs the
-  `SessionStart` hook. That hook starts or reuses both the proxy and Control UI on future sessions.
+  `SessionStart` hook. That hook starts or reuses both the proxy and Control UI on future sessions,
+  and emits only short non-secret context when it actually starts, restarts, or detects a problem.
 - First enable prepares provider auth for future ChatGPT account login when a provider key is
   available, then asks the user to restart Codex because running Codex processes do not hot-switch
   provider config.

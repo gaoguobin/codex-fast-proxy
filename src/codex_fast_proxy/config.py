@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .core import ConfigError
+from .storage import write_private_text
 
 try:
     import tomllib
@@ -85,8 +86,7 @@ def read_toml_lines(path: Path) -> tuple[list[str], str]:
 
 
 def write_toml_lines(path: Path, lines: list[str], newline: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(newline.join(lines) + newline, encoding="utf-8")
+    write_private_text(path, newline.join(lines) + newline)
 
 
 def toml_string(value: str) -> str:

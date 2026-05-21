@@ -310,9 +310,11 @@ python -m codex_fast_proxy uninstall --defer-stop
 ## Safety Model
 
 - `install --start` verifies upstream `/v1/responses` streaming route before switching config.
-- The startup hook runs `codex_fast_proxy autostart --quiet` on `SessionStart`.
+- The startup hook runs `codex_fast_proxy autostart --quiet --hook-summary` on `SessionStart`.
 - The hook starts a missing proxy and opens/reuses the independent Control UI only when the recorded
   provider still points to the local proxy.
+- Quiet no-op hook runs stay silent. Starts, restarts, stale runtime warnings, or Control UI
+  autostarts may emit a short non-secret hook context summary for the current Codex turn.
 - A healthy proxy is not restarted just because runtime code is stale; use explicit `start` when you
   are ready to refresh runtime.
 - `stop` refuses while Codex config still points to the proxy unless `--force` is explicit.

@@ -159,11 +159,14 @@ The installed Control UI pages are:
 When ChatGPT account login is detected, proxy-side speed controls are hidden because speed selection
 is handled by the Codex App native UI.
 
-Enable also writes the Codex hook feature flags and a trusted hook state entry. Treat
+Enable also writes the canonical Codex hook feature flag (`[features].hooks = true`) and a trusted
+hook state entry. Treat
 `startup_hook: true` as installed, enabled, and trusted; if `startup_hook_trust` reports `modified`
 or `untrusted`, rerun enable/update instead of assuming `~/.codex/hooks.json` is enough.
-The hook runs `codex_fast_proxy autostart --quiet` on future `SessionStart` events and starts or
-reuses both the proxy and Control UI when the recorded provider still points to the local proxy.
+The hook runs `codex_fast_proxy autostart --quiet --hook-summary` on future `SessionStart` events and
+starts or reuses both the proxy and Control UI when the recorded provider still points to the local
+proxy. Normal no-op runs stay silent; starts, restarts, stale runtime warnings, or Control UI
+autostarts may emit a short non-secret hook context summary.
 
 ## Existing install
 

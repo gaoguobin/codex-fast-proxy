@@ -26,7 +26,7 @@ from .runtime_status import (
     settings_restart_pending,
 )
 from .status_rules import LEGACY_SERVICE_TIER_POLICY, effective_service_tier_policy
-from .storage import read_json
+from .storage import append_private_text, ensure_private_dir, open_private_append, read_json
 
 
 def current_process(paths: ProxyPaths) -> tuple[int | None, bool]:
@@ -218,6 +218,7 @@ def already_running_result(
         "runtime_id": health.get("runtime_id"),
         "runtime_matches": runtime_matches,
         "needs_restart": not runtime_matches,
+        "provider": settings.provider,
         "base_url": settings.base_url,
         "upstream_base": settings.upstream_base,
         "log": str(paths.log_path),
@@ -262,6 +263,7 @@ def restart_background(
         "old_pid": pid,
         "old_runtime_id": health.get("runtime_id"),
         "runtime_id": RUNTIME_ID,
+        "provider": settings.provider,
         "base_url": settings.base_url,
         "upstream_base": settings.upstream_base,
         "stop_result": stop_result,
@@ -276,7 +278,8 @@ def start_background(
     *,
     restart_stale_runtime: bool = True,
 ) -> dict[str, Any]:
-    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(paths.app_home)
+    ensure_private_dir(paths.state_dir)
 
     pid, running, health, healthy, _pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
     if running:
@@ -303,7 +306,8 @@ def start_background(
 
 
 def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: bool) -> dict[str, Any]:
-    paths.state_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(paths.app_home)
+    ensure_private_dir(paths.state_dir)
 
     if not is_port_available(settings.host, settings.port):
         raise ConfigError(f"Port {settings.port} is already in use on {settings.host}.")
@@ -345,7 +349,7 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
         command.append("--verbose")
 
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    with paths.stdout_path.open("ab") as stdout, paths.stderr_path.open("ab") as stderr:
+    with open_private_append(paths.stdout_path, binary=True) as stdout, open_private_append(paths.stderr_path, binary=True) as stderr:
         process = subprocess.Popen(
             command,
             cwd=str(Path.cwd()),
@@ -369,6 +373,7 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
         "status": "started",
         "pid": process.pid,
         "healthy": True,
+        "provider": settings.provider,
         "base_url": settings.base_url,
         "upstream_base": settings.upstream_base,
         "health": health,
@@ -379,10 +384,8 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
 
 
 def append_autostart_event(paths: ProxyPaths, event: dict[str, Any]) -> None:
-    paths.state_dir.mkdir(parents=True, exist_ok=True)
     event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
-    with event_path.open("a", encoding="utf-8") as log_file:
-        log_file.write(compact_json({"ts": time.time(), **event}) + "\n")
+    append_private_text(event_path, compact_json({"ts": time.time(), **event}) + "\n")
 
 
 def should_log_autostart_event(event: dict[str, Any], quiet: bool) -> bool:
