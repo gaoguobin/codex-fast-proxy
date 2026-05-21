@@ -114,6 +114,10 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.editor.add": "添加",
         "provider.form.invalidName": "先填写供应商名称。",
         "provider.form.invalidUrl": "模型服务地址需要是 http 或 https URL。",
+        "provider.check.checking": "检查中",
+        "provider.check.checkingMessage": "正在验证这个模型服务。",
+        "provider.check.ok": "正常",
+        "provider.check.warn": "异常",
         "speed.inlineHint": "快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。",
         "requests.title": "请求记录",
         "requests.description": "查看最近请求、Provider 检查和性能基准。",
@@ -372,6 +376,10 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.editor.add": "Add",
         "provider.form.invalidName": "Enter a provider name first.",
         "provider.form.invalidUrl": "The model service address must be an http or https URL.",
+        "provider.check.checking": "Checking",
+        "provider.check.checkingMessage": "Verifying this model service.",
+        "provider.check.ok": "Normal",
+        "provider.check.warn": "Issue",
         "speed.inlineHint": "Fast uses priority when the request does not specify service_tier; Standard keeps the original request.",
         "requests.title": "Requests",
         "requests.description": "Review recent requests, provider checks, and benchmarks.",
@@ -630,6 +638,10 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.editor.add": "追加",
         "provider.form.invalidName": "先にプロバイダー名を入力してください。",
         "provider.form.invalidUrl": "モデルサービスアドレスは http または https URL にしてください。",
+        "provider.check.checking": "確認中",
+        "provider.check.checkingMessage": "このモデルサービスを確認しています。",
+        "provider.check.ok": "正常",
+        "provider.check.warn": "異常",
         "speed.inlineHint": "高速はリクエストに service_tier がない場合に priority を使います。標準は元のリクエストを維持します。",
         "requests.title": "リクエスト",
         "requests.description": "最近のリクエスト、プロバイダー確認、ベンチマークを確認します。",
@@ -1579,6 +1591,7 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
                   <strong>{html.escape(name)}</strong>
                   <span class="provider-url">{html.escape(display_text(item.get("base_url"), ui_text("provider.noService")))}</span>
                   <span class="provider-auth-state"><span data-i18n="provider.keyPrefix">{ui_text("provider.keyPrefix")}</span>{html.escape(provider_key_label(item.get("api_key")))}</span>
+                  <span class="provider-row-feedback" data-provider-check-feedback role="status" aria-live="polite" hidden></span>
                 </div>
               </div>
               <div class="provider-card-actions">
@@ -1715,7 +1728,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           <button id="newProvider" class="secondary" type="button" data-i18n="button.add">添加</button>
         </div>
         <p class="detail-note provider-note" data-i18n="provider.note">已启用后，这里只管理本地代理配置；不会改写 Codex config.toml。</p>
-        <p id="providerCheckFeedback" class="inline-feedback" role="status" aria-live="polite"></p>
         <div class="provider-split">
           <div class="provider-list-pane">
           <div class="provider-panel-header">
@@ -2295,14 +2307,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin: 0;
       min-height: 0;
     }}
-    .provider-workspace > .inline-feedback {{
-      padding: 0 18px;
-    }}
-    .provider-workspace > .inline-feedback:not(:empty) {{
-      border-top: 1px solid var(--border);
-      padding-top: 12px;
-      padding-bottom: 12px;
-    }}
     .inline-confirm {{
       align-items: center;
       background: var(--surface);
@@ -2405,8 +2409,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       background: transparent;
     }}
     .provider-card.current {{
-      border-left: 3px solid var(--blue);
-      padding-left: 13px;
+      background: color-mix(in srgb, var(--blue-soft) 48%, transparent);
+    }}
+    .provider-card.current .provider-avatar {{
+      background: var(--surface);
+      border-color: color-mix(in srgb, var(--blue) 24%, var(--border));
+      color: var(--blue);
     }}
     .provider-main {{
       display: flex;
@@ -2440,6 +2448,34 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       color: var(--muted);
       font-size: 14px;
       overflow-wrap: anywhere;
+    }}
+    .provider-row-feedback {{
+      color: var(--muted-strong);
+      display: grid;
+      font-size: 14px;
+      gap: 2px;
+      line-height: 1.45;
+      margin-top: 2px;
+      max-width: 540px;
+      overflow-wrap: anywhere;
+    }}
+    .provider-row-feedback[hidden] {{
+      display: none;
+    }}
+    .provider-row-feedback strong {{
+      font-weight: 500;
+    }}
+    .provider-row-feedback span {{
+      color: var(--muted);
+    }}
+    .provider-row-feedback.checking strong {{
+      color: var(--blue);
+    }}
+    .provider-row-feedback.ok strong {{
+      color: var(--green-text);
+    }}
+    .provider-row-feedback.warn strong {{
+      color: var(--red);
     }}
     .provider-card-actions {{
       align-items: center;
@@ -2609,8 +2645,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .status-row.emphasized {{
       background: var(--blue-soft);
-      border-left: 3px solid var(--blue);
-      padding-left: 11px;
     }}
     .status-row span {{
       color: var(--muted);
@@ -2749,12 +2783,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .empty-state {{
       background: transparent;
       border: 0;
-      border-left: 2px solid var(--border-strong);
       border-radius: 0;
       color: var(--muted);
       line-height: 1.6;
       margin: 0;
-      padding: 3px 0 3px 12px;
+      padding: 3px 0;
     }}
     .request-table-wrap {{
       background: var(--surface);
@@ -3578,6 +3611,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     let currentLocale = supportedLocales.includes(storedLocale) ? storedLocale : 'zh';
     let currentTheme = supportedThemes.includes(storedTheme) ? storedTheme : 'system';
     let currentSnapshot = initialSnapshot;
+    let providerCheckResults = {{}};
     const labels = {labels_json};
     const actionProgress = {{
       enable: [
@@ -3748,7 +3782,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       updateStatusPanel(snapshot);
       updateDiagnosticsWorkspace(snapshot);
       updateSettingsWorkspace(snapshot);
-      updateProviderFeedback(snapshot);
       const editorTitle = $('providerEditorTitle');
       if (editorTitle && editorTitle.dataset.editorMode) {{
         editorTitle.textContent = t(editorTitle.dataset.editorMode, editorTitle.textContent);
@@ -3785,6 +3818,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
                   <strong>${{escapeHtml(name)}}</strong>
                   <span class="provider-url">${{escapeHtml(baseUrl)}}</span>
                   <span class="provider-auth-state">${{escapeHtml(t('provider.keyPrefix', '密钥：'))}}${{escapeHtml(keyLabel(record ? record.api_key : null))}}</span>
+                  <span class="provider-row-feedback" data-provider-check-feedback role="status" aria-live="polite" hidden></span>
                 </div>
               </div>
               <div class="provider-card-actions">
@@ -3797,22 +3831,42 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             </article>
 `;
     }}
+    function providerCheckRow(provider) {{
+      return Array.from(document.querySelectorAll('.provider-card'))
+        .find((item) => item.dataset.providerName === provider);
+    }}
+    function updateProviderCheckRow(provider) {{
+      const card = providerCheckRow(provider);
+      if (!card) return;
+      const target = card.querySelector('[data-provider-check-feedback]');
+      if (!target) return;
+      const result = providerCheckResults[provider];
+      if (!result) {{
+        target.hidden = true;
+        target.className = 'provider-row-feedback';
+        target.textContent = '';
+        target.removeAttribute('title');
+        target.removeAttribute('aria-label');
+        return;
+      }}
+      target.hidden = false;
+      target.className = `provider-row-feedback ${{result.tone || 'checking'}}`;
+      target.title = result.message || '';
+      target.setAttribute('aria-label', `${{result.title || ''}}：${{result.message || ''}}`);
+      target.innerHTML = `<strong>${{escapeHtml(result.title || '')}}</strong><span>${{escapeHtml(result.message || '')}}</span>`;
+    }}
+    function setProviderCheckResult(provider, result) {{
+      if (!provider) return;
+      providerCheckResults = {{ ...providerCheckResults, [provider]: result }};
+      updateProviderCheckRow(provider);
+    }}
     function renderProviderList(snapshot) {{
       providerRecords = Array.isArray(snapshot.providers) ? snapshot.providers : providerRecords;
       const list = $('providerList');
       if (list) {{
         const currentName = currentProviderName(snapshot);
         list.innerHTML = providerRecords.map((item) => renderProviderCard(item, currentName)).join('');
-      }}
-    }}
-    function updateProviderFeedback(snapshot) {{
-      const feedback = $('providerCheckFeedback');
-      if (!feedback) return;
-      const state = snapshot.user_state || {{}};
-      if (state.code === 'provider_verified') {{
-        feedback.textContent = translatedState(state).message || state.message || t('provider.saved', '已保存');
-      }} else {{
-        feedback.textContent = '';
+        Object.keys(providerCheckResults).forEach((provider) => updateProviderCheckRow(provider));
       }}
     }}
     function resetControls(userState, snapshot) {{
@@ -4436,7 +4490,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const userState = snapshot.user_state || {{}};
       updateDiagnosticsWorkspace(snapshot);
       updateSettingsWorkspace(snapshot);
-      updateProviderFeedback(snapshot);
       renderLocalTimes();
       const button = $('primary');
       button.dataset.action = userState.primary_action || 'diagnostics';
@@ -4505,6 +4558,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         window.location.reload();
         return;
       }}
+      if (options.onSuccessData) options.onSuccessData(data);
+      if (options.renderSuccessSnapshot === false) {{
+        data.renderedSnapshot = false;
+        return data;
+      }}
       render(data.snapshot);
       data.renderedSnapshot = true;
       return data;
@@ -4534,12 +4592,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       window.location.href = url;
     }}
-    function startActionProgress(button, action) {{
+    function startActionProgress(button, action, options = {{}}) {{
       const timers = [];
       const steps = actionProgress[action] || actionProgress.default;
       const applyStep = (step) => {{
         button.textContent = t(step.labelKey, step.label);
-        if (step.message) $('message').textContent = t(step.messageKey, step.message);
+        if (step.message && !options.suppressGlobalProgress) $('message').textContent = t(step.messageKey, step.message);
       }};
       steps.forEach((step) => {{
         if (step.delay > 0) timers.push(window.setTimeout(() => applyStep(step), step.delay));
@@ -4551,7 +4609,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
       const oldText = button.textContent;
-      const stopProgress = startActionProgress(button, action);
+      const stopProgress = startActionProgress(button, action, options);
       let renderedSnapshot = false;
       let ok = false;
       let caughtError = null;
@@ -4562,7 +4620,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }} catch (error) {{
         caughtError = error;
         renderedSnapshot = Boolean(error && error.renderedSnapshot);
-        if (!renderedSnapshot) {{
+        if (!renderedSnapshot && !options.suppressGlobalError) {{
           $('state').textContent = t('value.needsAttention', '需要处理');
           $('message').textContent = (error && error.message) ? error.message : String(error);
         }}
@@ -4632,7 +4690,35 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         await runButton(button, 'switch-provider', {{ provider }});
       }}
       if (button.dataset.providerAction === 'verify') {{
-        await runButton(button, 'verify-provider', {{ provider }});
+        setProviderCheckResult(provider, {{
+          tone: 'checking',
+          title: t('provider.check.checking', '检查中'),
+          message: t('provider.check.checkingMessage', '正在验证这个模型服务。')
+        }});
+        const result = await runButton(button, 'verify-provider', {{ provider }}, {{
+          renderErrorSnapshot: false,
+          renderSuccessSnapshot: false,
+          suppressGlobalProgress: true,
+          suppressGlobalError: true,
+          onSuccessData: (data) => {{
+            const action = data.action || {{}};
+            const state = (data.snapshot && data.snapshot.user_state) || action.user_state || {{}};
+            const text = translatedState(state);
+            setProviderCheckResult(provider, {{
+              tone: 'ok',
+              title: t('provider.check.ok', '正常'),
+              message: text.message || t('provider.check.ok', '正常')
+            }});
+          }}
+        }});
+        if (!result.ok) {{
+          const message = result.error && result.error.message ? result.error.message : t('provider.check.warn', '异常');
+          setProviderCheckResult(provider, {{
+            tone: 'warn',
+            title: t('provider.check.warn', '异常'),
+            message
+          }});
+        }}
       }}
       if (button.dataset.providerAction === 'delete') {{
         if (window.confirm(`${{t('button.delete', '删除')}} ${{provider}}?`)) await runButton(button, 'delete-provider', {{ provider }});
