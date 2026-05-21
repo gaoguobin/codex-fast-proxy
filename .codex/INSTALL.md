@@ -154,13 +154,16 @@ The installed Control UI pages are:
   after enable, with masked key reveal.
 - `请求记录`: recent requests, provider checks, and benchmark summary.
 - `高级`: status summary, log paths, self-check, copy diagnostics, and JSON export.
+- `设置`: language, appearance, update checks, and updates.
 
-When ChatGPT account login is detected, the Speed page is hidden because speed selection is handled
-by the Codex App native UI.
+When ChatGPT account login is detected, proxy-side speed controls are hidden because speed selection
+is handled by the Codex App native UI.
 
 Enable also writes the Codex hook feature flags and a trusted hook state entry. Treat
 `startup_hook: true` as installed, enabled, and trusted; if `startup_hook_trust` reports `modified`
 or `untrusted`, rerun enable/update instead of assuming `~/.codex/hooks.json` is enough.
+The hook runs `codex_fast_proxy autostart --quiet` on future `SessionStart` events and starts or
+reuses both the proxy and Control UI when the recorded provider still points to the local proxy.
 
 ## Existing install
 

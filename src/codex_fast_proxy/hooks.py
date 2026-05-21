@@ -29,7 +29,7 @@ from .core import ConfigError
 HOOK_EVENT = "SessionStart"
 HOOK_EVENT_LABEL = "session_start"
 HOOK_MATCHER = "startup|resume"
-HOOK_TIMEOUT_SECONDS = 10
+HOOK_TIMEOUT_SECONDS = 20
 HOOK_FEATURE_KEY = "hooks"
 LEGACY_HOOK_FEATURE_KEY = "codex_hooks"
 HOOK_FEATURE_KEYS = (HOOK_FEATURE_KEY, LEGACY_HOOK_FEATURE_KEY)

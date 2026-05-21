@@ -19,7 +19,7 @@ a local background Control UI server that must stay alive after the launcher exi
 printed URL as plain text and ask the user to open it in an external browser. Do not use browser
 automation for this handoff. The UI defaults to Chinese, supports English/Japanese and light/dark
 appearance, and delegates to manager actions for enable, update, provider management, diagnostics,
-and safe restore/uninstall.
+benchmark, and safe restore/uninstall.
 
 ## Manager fallback
 
@@ -49,7 +49,7 @@ saved upstream route.
 
 - Installing the repo or skill must not change Codex provider config; ordinary users enable from UI.
 - `install --start` starts the local proxy before switching Codex config and installs the
-  `SessionStart` hook.
+  `SessionStart` hook. That hook starts or reuses both the proxy and Control UI on future sessions.
 - First enable prepares provider auth for future ChatGPT account login when a provider key is
   available, then asks the user to restart Codex because running Codex processes do not hot-switch
   provider config.
@@ -76,9 +76,11 @@ Treat JSON output as the source of truth. Report user-facing fields such as `pro
 
 For normal users, do not surface the proxy `base_url` unless they are explicitly asking for
 diagnostics. Use "Control UI URL" for the browser page and "model service URL" for the upstream
-provider endpoint. When ChatGPT login is active, explain that speed is App controlled and the UI
-hides the Speed page.
+provider endpoint. When ChatGPT login is active, explain that speed is App controlled and proxy-side
+speed controls are hidden.
 
 For benchmark requests, run `benchmark` only after the user explicitly accepts the cost. Report
-sample counts, medians, observed speedup, `priority_accepted`, `observed_priority_effective`, and
-provider-confirmed priority metadata when present.
+sample counts, medians, observed speedup, `priority_accepted`, `priority_support_assessment`,
+`statistical_test`, and provider-confirmed priority metadata when present. Treat latency as an
+observation; do not present it as proof of provider fast support unless the provider confirms
+priority through response metadata, billing, dashboard state, or documentation.

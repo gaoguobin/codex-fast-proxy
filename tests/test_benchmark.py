@@ -109,6 +109,9 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_sample_plan_balances_order(self) -> None:
         self.assertEqual(sample_plan(2), ["default", "priority", "priority", "default"])
+        paired = benchmark.paired_sample_plan(4, randomize=False)
+        self.assertEqual([item["pair_id"] for item in paired[:2]], [1, 1])
+        self.assertEqual([item["order"] for item in paired[:2]], [1, 2])
 
     def test_extract_response_service_tier_ignores_non_json(self) -> None:
         self.assertIsNone(extract_response_service_tier(b"not json"))
@@ -140,15 +143,16 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_full_payload_uses_codex_like_heavy_shape(self) -> None:
         profile = benchmark.profile_for_name("full")
+        cache_key = "cfp-bench-test-01-priority"
         payload = json.loads(
-            benchmark_payload("gpt-test", profile, "priority", reasoning_effort="xhigh").decode("utf-8")
+            benchmark_payload("gpt-test", profile, "priority", reasoning_effort="xhigh", cache_key=cache_key).decode("utf-8")
         )
 
         self.assertEqual(payload["service_tier"], "priority")
         self.assertEqual(payload["reasoning"], {"effort": "xhigh"})
         self.assertEqual(payload["include"], ["reasoning.encrypted_content"])
         self.assertEqual(payload["store"], False)
-        self.assertEqual(payload["prompt_cache_key"], "codex-fast-proxy-benchmark-full-v1")
+        self.assertEqual(payload["prompt_cache_key"], cache_key)
         self.assertEqual(payload["text"], {"verbosity": "low"})
         self.assertGreater(len(payload["instructions"]), 20000)
         self.assertNotIn("max_output_tokens", payload)
@@ -202,10 +206,15 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["priority"]["request_service_tiers"], ["priority"])
         self.assertEqual(result["priority"]["response_service_tiers"], ["priority"])
         self.assertTrue(result["service_tier_control"]["valid"])
+        self.assertEqual(result["cache_isolation"], ["per_sample_prompt_cache_key"])
         self.assertTrue(result["priority_accepted"])
         self.assertFalse(result["observed_priority_effective"])
         self.assertTrue(result["provider_confirmed_priority"])
+        self.assertEqual(result["priority_support_assessment"]["conclusion"], "confirmed")
+        self.assertFalse(result["priority_support_assessment"]["latency_is_proof"])
+        self.assertTrue(result["latency_result_is_observational"])
         self.assertNotIn("secret", json.dumps(result))
+        self.assertNotIn("cfp-bench-", json.dumps(result))
         self.assertNotIn("Codex App Responses API proxy", json.dumps(result))
         self.assertNotIn("review text", json.dumps(result))
 
@@ -231,6 +240,55 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertFalse(result["service_tier_control"]["valid"])
         self.assertEqual(result["service_tier_control"]["default_request_service_tiers"], ["priority"])
+
+    def test_strict_benchmark_reports_statistical_priority_speedup(self) -> None:
+        target = BenchmarkTarget(
+            provider="acme",
+            upstream_base="https://api.example.test/v1",
+            model="gpt-test",
+            profile="full",
+            service_tier="priority",
+            api_key_source="auth.json:OPENAI_API_KEY",
+            api_key="secret",
+        )
+        samples = []
+        for pair_id in range(1, 11):
+            samples.extend([
+                {
+                    "tier": "default",
+                    "pair_id": pair_id,
+                    "status": 200,
+                    "request_service_tier": None,
+                    "total_ms": 1000.0 + pair_id,
+                    "ttft_ms": 400.0 + pair_id,
+                    "response_service_tier": "auto",
+                },
+                {
+                    "tier": "priority",
+                    "pair_id": pair_id,
+                    "status": 200,
+                    "request_service_tier": "priority",
+                    "total_ms": 700.0 + pair_id,
+                    "ttft_ms": 300.0 + pair_id,
+                    "response_service_tier": "auto",
+                },
+            ])
+
+        result = benchmark.summarize_benchmark_result(
+            target,
+            pairs=10,
+            samples=samples,
+            mode="direct",
+            benchmark_kind="strict",
+            randomized_order=True,
+        )
+
+        self.assertEqual(result["benchmark_kind"], "strict")
+        self.assertTrue(result["randomized_order"])
+        self.assertEqual(result["statistical_test"]["conclusion"], "priority_faster")
+        self.assertTrue(result["statistical_test"]["metrics"]["total_ms"]["significant_priority_faster"])
+        self.assertEqual(result["priority_support_assessment"]["observed_latency"], "statistically_faster")
+        self.assertEqual(result["priority_support_assessment"]["conclusion"], "accepted_different_tier")
 
 
 if __name__ == "__main__":

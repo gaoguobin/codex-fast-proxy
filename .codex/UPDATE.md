@@ -75,8 +75,9 @@ steps in chat. If local changes exist, the update must stop with `status=blocked
 `code=local_changes`; do not overwrite the user's worktree.
 
 After an update, reopen or reload the Control UI and verify the visible user state. The current UI
-uses pages for Overview, Providers, Requests, and Advanced. The Advanced page should expose status
-summary, log paths, self-check, copy diagnostics, and JSON export.
+uses pages for Overview, Providers, Requests, Advanced, and Settings. The Advanced page should
+expose status summary, log paths, self-check, copy diagnostics, and JSON export. The Settings page
+should expose language, appearance, check-update, and update controls.
 
 ## Check only
 

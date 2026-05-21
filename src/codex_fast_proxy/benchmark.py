@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
 import os
+import secrets
 import shutil
 import statistics
 import subprocess
@@ -85,7 +87,7 @@ Benchmark interpretation rules:
 - A short OK response is a smoke test, not a speed test.
 - A long output task is required to expose generation throughput.
 - Interleave default and priority samples to reduce provider-load bias.
-- Use the same synthetic prompt for both sides.
+- Keep the workload equivalent without reusing the same cache bucket for every sample.
 - Do not store response content.
 - Do not print API keys.
 - Report sample counts and failed samples.
@@ -172,7 +174,8 @@ Lifecycle constraints:
 Benchmark constraints:
 - The benchmark is opt-in because it consumes real provider quota.
 - It compares default routing against the same request with service_tier set to priority.
-- It should use interleaved ordering so provider load and prompt cache effects are shared.
+- It should use interleaved ordering so provider load is shared.
+- It should isolate prompt cache per sample; latency is not proof of provider support.
 - It should measure E2E latency and TTFT, not just TTFB.
 - It should report accepted priority requests separately from observed acceleration.
 - A provider may accept priority but not echo service_tier in the response.
@@ -477,8 +480,18 @@ class CodexCliCaptureHandler(BaseHTTPRequestHandler):
 
 
 def benchmark_input(profile: BenchmarkProfile) -> list[dict[str, Any]]:
+    return benchmark_input_for_variant(profile, None)
+
+
+def benchmark_input_for_variant(profile: BenchmarkProfile, prompt_variant: str | None) -> list[dict[str, Any]]:
+    prompt = profile.prompt
+    if prompt_variant:
+        prompt = (
+            f"{prompt}\n\nBenchmark variant: {prompt_variant}. "
+            "Use the same task requirements and ignore this variant marker in the final answer."
+        )
     if profile.name == "smoke":
-        return [{"role": "user", "content": profile.prompt}]
+        return [{"role": "user", "content": prompt}]
     return [
         {
             "type": "message",
@@ -496,7 +509,7 @@ def benchmark_input(profile: BenchmarkProfile) -> list[dict[str, Any]]:
         {
             "type": "message",
             "role": "user",
-            "content": [{"type": "input_text", "text": profile.prompt}],
+            "content": [{"type": "input_text", "text": prompt}],
         },
     ]
 
@@ -506,16 +519,19 @@ def benchmark_payload(
     profile: BenchmarkProfile,
     service_tier: str | None,
     reasoning_effort: str | None = None,
+    cache_key: str | None = None,
+    prompt_variant: str | None = None,
 ) -> bytes:
     payload: dict[str, Any] = {
         "model": model,
-        "input": benchmark_input(profile),
+        "input": benchmark_input_for_variant(profile, prompt_variant),
         "stream": True,
         "store": False,
     }
+    if cache_key:
+        payload["prompt_cache_key"] = cache_key
     if profile.name != "smoke":
         payload["instructions"] = benchmark_instructions()
-        payload["prompt_cache_key"] = "codex-fast-proxy-benchmark-full-v1"
         payload["text"] = {"verbosity": "low"}
     if profile.max_output_tokens is not None:
         payload["max_output_tokens"] = profile.max_output_tokens
@@ -603,11 +619,29 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
+def new_benchmark_run_id() -> str:
+    return secrets.token_hex(8)
+
+
+def sample_cache_key(run_id: str, sequence: int, label: str) -> str:
+    safe_label = "".join(char for char in label if char.isalnum())[:12] or "sample"
+    return f"cfp-bench-{run_id}-{sequence:02d}-{safe_label}"
+
+
+def sample_prompt_variant(run_id: str, pair_id: int) -> str:
+    return f"{run_id}-{pair_id:02d}"
+
+
 def run_sample(
     target: BenchmarkTarget,
     label: str,
     timeout: float,
     connection_factory: ConnectionFactory = default_connection_factory,
+    cache_key: str | None = None,
+    prompt_variant: str | None = None,
+    pair_id: int | None = None,
+    sequence: int | None = None,
+    order: int | None = None,
 ) -> dict[str, Any]:
     parsed = urlsplit(target.upstream_base)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -619,6 +653,8 @@ def run_sample(
         profile,
         target.service_tier if label == "priority" else None,
         target.reasoning_effort,
+        cache_key,
+        prompt_variant,
     )
     headers = {
         "Authorization": f"Bearer {target.api_key}",
@@ -661,6 +697,9 @@ def run_sample(
     ttft_ms = round((first_output_at - started) * 1000, 1) if first_output_at is not None else None
     return {
         "tier": label,
+        "pair_id": pair_id,
+        "sequence": sequence,
+        "order": order,
         "status": response.status,
         "request_service_tier": target.service_tier if label == "priority" else None,
         "ttfb_ms": first_event_ms,
@@ -671,14 +710,32 @@ def run_sample(
         "output_chars": output_chars,
         "response_content_type": response.getheader("Content-Type"),
         "response_service_tier": extract_response_service_tier(response_body),
+        "cache_isolation": "per_sample_prompt_cache_key" if cache_key else "none",
     }
 
 
 def sample_plan(pairs: int) -> list[str]:
-    plan: list[str] = []
+    return [item["tier"] for item in paired_sample_plan(pairs, randomize=False)]
+
+
+def paired_sample_plan(pairs: int, *, randomize: bool = False) -> list[dict[str, int | str]]:
+    orders: list[tuple[str, str]] = []
     for index in range(pairs):
-        plan.extend(("default", "priority") if index % 2 == 0 else ("priority", "default"))
-    return plan
+        orders.append(("default", "priority") if index % 2 == 0 else ("priority", "default"))
+    if randomize:
+        secrets.SystemRandom().shuffle(orders)
+    entries: list[dict[str, int | str]] = []
+    sequence = 1
+    for pair_id, order in enumerate(orders, start=1):
+        for order_index, tier in enumerate(order, start=1):
+            entries.append({
+                "pair_id": pair_id,
+                "tier": tier,
+                "sequence": sequence,
+                "order": order_index,
+            })
+            sequence += 1
+    return entries
 
 
 def median(values: list[float]) -> float | None:
@@ -752,11 +809,110 @@ def speedup(default_ms: float | None, priority_ms: float | None) -> float | None
     return round(default_ms / priority_ms, 2)
 
 
+def metric_value(sample: dict[str, Any], metric: str) -> float | None:
+    value = sample.get(metric)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def exact_sign_test_p_value(successes: int, trials: int) -> float | None:
+    if trials <= 0:
+        return None
+    tail = sum(math.comb(trials, item) for item in range(successes, trials + 1))
+    return round(tail / (2 ** trials), 4)
+
+
+def paired_metric_test(samples: list[dict[str, Any]], metric: str) -> dict[str, Any]:
+    by_pair: dict[int, dict[str, dict[str, Any]]] = {}
+    for sample in samples:
+        pair_id = sample.get("pair_id")
+        if not isinstance(pair_id, int) or not is_success_status(sample.get("status")):
+            continue
+        tier = sample.get("tier")
+        if tier not in {"default", "priority"}:
+            continue
+        by_pair.setdefault(pair_id, {})[str(tier)] = sample
+
+    default_values: list[float] = []
+    priority_values: list[float] = []
+    speedups: list[float] = []
+    faster = 0
+    slower = 0
+    ties = 0
+    for pair in by_pair.values():
+        default_value = metric_value(pair.get("default", {}), metric)
+        priority_value = metric_value(pair.get("priority", {}), metric)
+        if default_value is None or priority_value is None or priority_value <= 0:
+            continue
+        default_values.append(default_value)
+        priority_values.append(priority_value)
+        speedups.append(default_value / priority_value)
+        if priority_value < default_value:
+            faster += 1
+        elif priority_value > default_value:
+            slower += 1
+        else:
+            ties += 1
+
+    trials = faster + slower
+    median_speedup = round(statistics.median(speedups), 2) if speedups else None
+    p_value = exact_sign_test_p_value(faster, trials)
+    significant = bool(trials >= 8 and p_value is not None and p_value <= 0.05 and median_speedup and median_speedup >= 1.15)
+    return {
+        "metric": metric,
+        "usable_pairs": len(speedups),
+        "non_tied_pairs": trials,
+        "priority_faster_pairs": faster,
+        "priority_slower_pairs": slower,
+        "tied_pairs": ties,
+        "median_default_ms": median(default_values),
+        "median_priority_ms": median(priority_values),
+        "median_speedup": median_speedup,
+        "p_value_one_sided": p_value,
+        "significant_priority_faster": significant,
+    }
+
+
+def statistical_test(samples: list[dict[str, Any]], pairs: int, *, strict: bool) -> dict[str, Any]:
+    metrics = {
+        "total_ms": paired_metric_test(samples, "total_ms"),
+        "ttft_ms": paired_metric_test(samples, "ttft_ms"),
+    }
+    primary = metrics["total_ms"]
+    enough_pairs = primary["usable_pairs"] >= 8
+    if strict and primary["significant_priority_faster"]:
+        conclusion = "priority_faster"
+    elif strict and enough_pairs:
+        conclusion = "no_significant_speedup"
+    else:
+        conclusion = "insufficient_sample_size"
+    return {
+        "method": "paired_sign_test",
+        "hypothesis": "priority latency is lower than default latency",
+        "strict": strict,
+        "planned_pairs": pairs,
+        "minimum_pairs": 8,
+        "conclusion": conclusion,
+        "metrics": metrics,
+    }
+
+
 def priority_confirmed(priority_summary: dict[str, Any]) -> bool | None:
     tiers = priority_summary["response_service_tiers"]
     if not tiers:
         return None
     return "priority" in tiers
+
+
+def provider_confirmation_status(priority_summary: dict[str, Any], expected: str) -> str:
+    tiers = priority_summary.get("response_service_tiers", [])
+    if not tiers:
+        return "unknown"
+    if expected in tiers:
+        return "confirmed"
+    return "different_tier"
 
 
 def priority_accepted(priority_summary: dict[str, Any]) -> bool | None:
@@ -771,6 +927,66 @@ def observed_priority_effective(priority_summary: dict[str, Any], total_speedup:
     if accepted is not True or total_speedup is None:
         return None if accepted is not False else False
     return total_speedup >= 1.15
+
+
+def latency_observation(priority_summary: dict[str, Any], total_speedup: float | None) -> str:
+    accepted = priority_accepted(priority_summary)
+    if accepted is False:
+        return "not_available"
+    if total_speedup is None:
+        return "unknown"
+    if total_speedup >= 1.15:
+        return "faster"
+    if total_speedup <= 0.87:
+        return "slower"
+    return "neutral"
+
+
+def latency_observation_from_statistical_test(test: dict[str, Any], fallback: str) -> str:
+    conclusion = test.get("conclusion")
+    if conclusion == "priority_faster":
+        return "statistically_faster"
+    if conclusion == "no_significant_speedup":
+        return "not_significant"
+    return fallback
+
+
+def priority_support_assessment(
+    target: BenchmarkTarget,
+    default_summary: dict[str, Any],
+    priority_summary: dict[str, Any],
+    tier_control: dict[str, Any],
+    total_speedup: float | None,
+    test: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    accepted = priority_accepted(priority_summary)
+    confirmation = provider_confirmation_status(priority_summary, target.service_tier)
+    if not tier_control.get("valid"):
+        conclusion = "invalid"
+    elif accepted is False:
+        conclusion = "not_accepted"
+    elif confirmation == "confirmed":
+        conclusion = "confirmed"
+    elif confirmation == "different_tier":
+        conclusion = "accepted_different_tier"
+    elif accepted is True:
+        conclusion = "accepted_unconfirmed"
+    else:
+        conclusion = "unknown"
+    observed_latency = latency_observation(priority_summary, total_speedup)
+    if isinstance(test, dict):
+        observed_latency = latency_observation_from_statistical_test(test, observed_latency)
+    return {
+        "conclusion": conclusion,
+        "request_control_valid": bool(tier_control.get("valid")),
+        "parameter_accepted": accepted,
+        "provider_confirmation": confirmation,
+        "observed_latency": observed_latency,
+        "expected_service_tier": target.service_tier,
+        "default_response_service_tiers": default_summary.get("response_service_tiers", []),
+        "priority_response_service_tiers": priority_summary.get("response_service_tiers", []),
+        "latency_is_proof": False,
+    }
 
 
 def codex_command() -> list[str]:
@@ -850,12 +1066,18 @@ def run_codex_cli_sample(
         records = server.records[before:]
     record = next((item for item in reversed(records) if item.get("path") == "/v1/responses"), None)
     if record:
-        return {"tier": label, **record, "codex_exit_code": completed.returncode}
+        return {
+            "tier": label,
+            **record,
+            "codex_exit_code": completed.returncode,
+            "cache_isolation": "codex_cli_uncontrolled",
+        }
     return {
         "tier": label,
         "status": None,
         "error_type": "CodexCliNoCapture",
         "codex_exit_code": completed.returncode,
+        "cache_isolation": "codex_cli_uncontrolled",
     }
 
 
@@ -875,7 +1097,7 @@ def run_codex_cli_benchmark(target: BenchmarkTarget, pairs: int, timeout: float)
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
-    return summarize_benchmark_result(target, pairs, samples, mode="codex-cli")
+    return summarize_benchmark_result(target, pairs, samples, mode="codex-cli", benchmark_kind="codex-cli")
 
 
 def summarize_benchmark_result(
@@ -883,6 +1105,8 @@ def summarize_benchmark_result(
     pairs: int,
     samples: list[dict[str, Any]],
     mode: str,
+    benchmark_kind: str = "quick",
+    randomized_order: bool = False,
 ) -> dict[str, Any]:
     profile = profile_for_name(target.profile)
     default_summary = summarize_samples(samples, "default")
@@ -891,6 +1115,16 @@ def summarize_benchmark_result(
     total_speedup = speedup(default_summary["median_total_ms"], priority_summary["median_total_ms"])
     ttfb_speedup = speedup(default_summary["median_ttfb_ms"], priority_summary["median_ttfb_ms"])
     ttft_speedup = speedup(default_summary["median_ttft_ms"], priority_summary["median_ttft_ms"])
+    test = statistical_test(samples, pairs, strict=benchmark_kind == "strict")
+    support_assessment = priority_support_assessment(
+        target,
+        default_summary,
+        priority_summary,
+        tier_control,
+        total_speedup,
+        test,
+    )
+    cache_isolation = sorted({str(sample.get("cache_isolation")) for sample in samples if sample.get("cache_isolation")})
     return {
         "status": "completed",
         "ts": utc_now(),
@@ -900,7 +1134,9 @@ def summarize_benchmark_result(
         "reasoning_effort": target.reasoning_effort,
         "profile": target.profile,
         "profile_description": profile.description,
+        "benchmark_kind": benchmark_kind,
         "benchmark_mode": mode,
+        "randomized_order": randomized_order,
         "max_output_tokens": profile.max_output_tokens,
         "api_key_source": target.api_key_source,
         "pairs": pairs,
@@ -908,6 +1144,9 @@ def summarize_benchmark_result(
         "default": default_summary,
         "priority": priority_summary,
         "service_tier_control": tier_control,
+        "priority_support_assessment": support_assessment,
+        "statistical_test": test,
+        "cache_isolation": cache_isolation,
         "observed_speedup_total": total_speedup,
         "observed_speedup_ttfb": ttfb_speedup,
         "observed_speedup_ttft": ttft_speedup,
@@ -915,7 +1154,8 @@ def summarize_benchmark_result(
         "priority_accepted": priority_accepted(priority_summary),
         "observed_priority_effective": observed_priority_effective(priority_summary, total_speedup),
         "provider_confirmed_priority": priority_confirmed(priority_summary),
-        "privacy": "Synthetic prompt only; response content and API key are not stored.",
+        "latency_result_is_observational": True,
+        "privacy": "Synthetic prompt only; response content, prompt cache keys, and API key are not stored.",
     }
 
 
@@ -925,18 +1165,49 @@ def run_benchmark(
     timeout: float,
     connection_factory: ConnectionFactory = default_connection_factory,
     mode: str = "direct",
+    benchmark_kind: str = "quick",
+    randomized_order: bool = False,
 ) -> dict[str, Any]:
     if mode == "codex-cli":
         return run_codex_cli_benchmark(target, pairs, timeout)
     if mode != "direct":
         raise ValueError(f"Unknown benchmark mode {mode!r}. Available: codex-cli, direct")
+    run_id = new_benchmark_run_id()
     samples: list[dict[str, Any]] = []
-    for label in sample_plan(pairs):
+    for item in paired_sample_plan(pairs, randomize=randomized_order):
+        label = str(item["tier"])
+        sequence = int(item["sequence"])
+        pair_id = int(item["pair_id"])
         try:
-            samples.append(run_sample(target, label, timeout, connection_factory))
+            samples.append(run_sample(
+                target,
+                label,
+                timeout,
+                connection_factory,
+                sample_cache_key(run_id, sequence, label),
+                sample_prompt_variant(run_id, pair_id),
+                pair_id,
+                sequence,
+                int(item["order"]),
+            ))
         except Exception as exc:
-            samples.append({"tier": label, "status": None, "error_type": type(exc).__name__})
-    return summarize_benchmark_result(target, pairs, samples, mode=mode)
+            samples.append({
+                "tier": label,
+                "pair_id": pair_id,
+                "sequence": sequence,
+                "order": int(item["order"]),
+                "status": None,
+                "error_type": type(exc).__name__,
+                "cache_isolation": "per_sample_prompt_cache_key",
+            })
+    return summarize_benchmark_result(
+        target,
+        pairs,
+        samples,
+        mode=mode,
+        benchmark_kind=benchmark_kind,
+        randomized_order=randomized_order,
+    )
 
 
 def save_benchmark_result(path: Path, result: dict[str, Any]) -> None:

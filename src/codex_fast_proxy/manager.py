@@ -275,6 +275,21 @@ def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
     return _call_runtime("autostart_proxy", paths, verbose_proxy, sync=("start_background",))
 
 
+def autostart_control_ui(paths: ProxyPaths) -> dict[str, Any]:
+    settings_data = read_json(paths.settings_path)
+    if not settings_data:
+        return {"status": "skipped", "reason": "settings_missing"}
+
+    settings = settings_from_dict(settings_data)
+    config = load_toml_config(paths.config_path)
+    if not provider_name_for_base_url(config, settings.base_url):
+        return {"status": "skipped", "reason": "config_not_proxy", "provider": settings.provider}
+
+    from .control_ui import open_control_ui
+
+    return open_control_ui(str(paths.codex_home), None, DEFAULT_HOST, 8786)
+
+
 def resolve_upstream_base(
     config: dict[str, Any],
     paths: ProxyPaths,
@@ -1088,9 +1103,16 @@ def command_start(args: argparse.Namespace) -> int:
 def command_autostart(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     try:
-        result = autostart_proxy(paths, args.verbose_proxy)
+        proxy_result = autostart_proxy(paths, args.verbose_proxy)
     except Exception as exc:
-        result = {"status": "error", "error": str(exc)}
+        proxy_result = {"status": "error", "error": str(exc)}
+
+    result = {**proxy_result, "status": proxy_result.get("status", "unknown"), "proxy": proxy_result}
+    if proxy_result.get("status") not in {"error", "skipped"}:
+        try:
+            result["control_ui"] = autostart_control_ui(paths)
+        except Exception as exc:
+            result["control_ui"] = {"status": "error", "error": str(exc)}
 
     if should_log_autostart_event(result, args.quiet):
         append_autostart_event(paths, result)
@@ -1223,10 +1245,13 @@ def command_benchmark(args: argparse.Namespace) -> int:
         raise ConfigError("Codex config has no model; rerun with --model.")
     if reasoning_effort is not None and not isinstance(reasoning_effort, str):
         raise ConfigError("Codex config model_reasoning_effort must be a string; rerun with --reasoning-effort.")
-    if args.pairs < 1:
+    pairs = args.pairs if args.pairs is not None else (12 if args.kind == "strict" else 3)
+    if pairs < 1:
         raise ConfigError("--pairs must be at least 1.")
-    if args.pairs > 20:
+    if pairs > 20:
         raise ConfigError("--pairs must be 20 or less.")
+    if args.kind == "strict" and args.mode != "direct":
+        raise ConfigError("--kind strict requires --mode direct.")
     try:
         profile_for_name(args.profile)
     except ValueError as exc:
@@ -1255,7 +1280,14 @@ def command_benchmark(args: argparse.Namespace) -> int:
         api_key=api_key,
         reasoning_effort=reasoning_effort,
     )
-    result = run_benchmark(target, args.pairs, args.timeout, mode=args.mode)
+    result = run_benchmark(
+        target,
+        pairs,
+        args.timeout,
+        mode=args.mode,
+        benchmark_kind=args.kind,
+        randomized_order=args.kind == "strict",
+    )
     if args.save:
         save_benchmark_result(paths.benchmark_path, result)
         result["saved_to"] = str(paths.benchmark_path)
@@ -1501,7 +1533,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_upstream.add_argument("--clear-upstream-api-key-env", action="store_true")
     verify_upstream.add_argument("--verify-timeout", type=float, default=60.0)
 
-    autostart = subparsers.add_parser("autostart", help="Start proxy from a Codex SessionStart hook if enabled.")
+    autostart = subparsers.add_parser("autostart", help="Start proxy and Control UI from a Codex SessionStart hook if enabled.")
     add_shared_options(autostart)
     autostart.add_argument("--quiet", action="store_true")
     autostart.add_argument("--verbose-proxy", action="store_true")
@@ -1527,12 +1559,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     benchmark = subparsers.add_parser("benchmark", help="Run an opt-in default vs priority latency benchmark.")
     add_shared_options(benchmark)
-    benchmark.add_argument("--pairs", type=int, default=3)
+    benchmark.add_argument("--pairs", type=int)
     benchmark.add_argument("--timeout", type=float, default=600.0)
     benchmark.add_argument("--model")
     benchmark.add_argument("--reasoning-effort")
     benchmark.add_argument("--profile", default="full")
-    benchmark.add_argument("--mode", choices=("codex-cli", "direct"), default="codex-cli")
+    benchmark.add_argument("--mode", choices=("codex-cli", "direct"), default="direct")
+    benchmark.add_argument("--kind", choices=("quick", "strict"), default="quick")
     benchmark.add_argument("--api-key-env")
     benchmark.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
 

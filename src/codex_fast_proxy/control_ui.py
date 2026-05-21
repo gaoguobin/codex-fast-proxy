@@ -214,6 +214,8 @@ class ControlHandler(BaseHTTPRequestHandler):
 
     def run_action(self, action: str) -> dict[str, Any]:
         from .actions import (
+            run_benchmark,
+            run_check_update,
             run_delete_provider,
             run_first_run_enable,
             run_save_provider,
@@ -221,6 +223,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             run_switch_provider,
             run_uninstall,
             run_update,
+            run_verify_provider,
         )
 
         body = self.read_body_json()
@@ -233,12 +236,19 @@ class ControlHandler(BaseHTTPRequestHandler):
             if result.get("control_ui_reload_required"):
                 result["control_ui"] = self.restart_current_control_ui()
                 shutdown_control_ui = result["control_ui"].get("status") == "scheduled"
+        elif action == "check-update":
+            result = run_check_update(self.server.codex_home)
         elif action == "save-provider":
             result = run_save_provider(
                 self.server.codex_home,
                 body.get("provider") if isinstance(body.get("provider"), str) else None,
                 body.get("upstream_base") if isinstance(body.get("upstream_base"), str) else None,
                 body.get("api_key") if isinstance(body.get("api_key"), str) else None,
+            )
+        elif action == "verify-provider":
+            result = run_verify_provider(
+                self.server.codex_home,
+                body.get("provider") if isinstance(body.get("provider"), str) else None,
             )
         elif action == "switch-provider":
             result = run_switch_provider(
@@ -254,6 +264,12 @@ class ControlHandler(BaseHTTPRequestHandler):
             result = run_set_speed_mode(
                 self.server.codex_home,
                 body.get("speed_mode") if isinstance(body.get("speed_mode"), str) else None,
+            )
+        elif action == "run-benchmark":
+            result = run_benchmark(
+                self.server.codex_home,
+                bool(body.get("confirm")),
+                body.get("benchmark_kind") if isinstance(body.get("benchmark_kind"), str) else "quick",
             )
         elif action == "uninstall":
             result = run_uninstall(self.server.codex_home, bool(body.get("confirm")))
@@ -386,6 +402,12 @@ def user_error_message(action: str, snapshot: dict[str, Any], detail: str | None
         return "启用没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
     if action == "update":
         return "更新没有完成。请打开高级诊断，或让 Codex 检查原因。"
+    if action == "check-update":
+        return f"检查更新没有完成。{suffix}"
+    if action == "verify-provider":
+        return f"Provider 检查没有完成，当前设置保持不变。{suffix}"
+    if action == "run-benchmark":
+        return f"基准测试没有完成，未保存新结果。{suffix}"
     if action == "uninstall":
         return "停用没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
     return "操作没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"

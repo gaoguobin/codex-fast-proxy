@@ -122,6 +122,146 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
     return result
 
 
+def run_check_update(codex_home: str | None = None) -> dict[str, Any]:
+    from . import manager
+
+    result = manager.check_update()
+    if result.get("local_changes"):
+        result["user_state"] = state(
+            "update_checked_dirty",
+            "已检查，有本地改动",
+            "远端检查完成；当前本地有未提交改动，更新会先暂停。",
+            "diagnostics",
+            "打开高级诊断",
+        )
+    elif result.get("update_available"):
+        result["user_state"] = state(
+            "update_available",
+            "发现可用更新",
+            "远端有新提交；确认当前工作区状态后，可以在设置里更新。",
+        )
+    else:
+        result["user_state"] = state(
+            "already_current",
+            "已是最新",
+            "远端检查完成，当前已经是最新版本。",
+        )
+    return result
+
+
+def run_verify_provider(codex_home: str | None, provider: str | None = None) -> dict[str, Any]:
+    from . import manager
+
+    paths = manager.paths_for(codex_home)
+    config = manager.load_toml_config(paths.config_path)
+    settings_data = manager.read_json(paths.settings_path)
+    settings = manager.settings_from_dict(settings_data) if settings_data else None
+    name = manager.validate_provider_name(provider or (settings.provider if settings else manager.choose_provider(config, None)))
+    config_base = manager.provider_base_url(config, name)
+    upstream_base = settings.upstream_base if settings and settings.provider == name else manager.provider_auth_base_url(paths, name) or config_base
+    if not upstream_base:
+        raise ValueError(f"Provider {name!r} 没有模型服务地址。")
+
+    if settings and settings.provider == name:
+        verify_settings = settings
+    else:
+        verify_settings = manager.ProxySettings(
+            provider=name,
+            host=settings.host if settings else manager.DEFAULT_HOST,
+            port=settings.port if settings else manager.DEFAULT_PORT,
+            proxy_base=settings.proxy_base if settings else manager.DEFAULT_PROXY_BASE,
+            upstream_base=manager.validate_upstream_base(upstream_base),
+            service_tier=settings.service_tier if settings else manager.DEFAULT_SERVICE_TIER,
+            service_tier_policy=settings.service_tier_policy if settings else manager.DEFAULT_SERVICE_TIER_POLICY,
+            upstream_api_key_file=bool(manager.provider_auth_secret(paths, name)),
+        )
+
+    verification = manager.verify_upstream_responses(paths, config, verify_settings, 60.0)
+    duration = verification.get("total_ms") or verification.get("first_event_ms")
+    duration_text = f"{float(duration) / 1000:.2f}s" if isinstance(duration, (int, float)) else "已响应"
+    return {
+        "status": "provider_verified",
+        "provider": name,
+        "verification": verification,
+        "user_state": state(
+            "provider_verified",
+            "模型服务可用",
+            f"{name} 已通过 Responses 流式检查，耗时 {duration_text}。",
+        ),
+    }
+
+
+def run_benchmark(codex_home: str | None, confirm: bool = False, benchmark_kind: str = "quick") -> dict[str, Any]:
+    if not confirm:
+        raise ValueError("运行基准测试前需要确认。")
+
+    from . import manager
+    from .benchmark import (
+        BenchmarkTarget,
+        discover_api_key,
+        profile_for_name,
+        run_benchmark as execute_benchmark,
+        save_benchmark_result,
+    )
+
+    kind = benchmark_kind if benchmark_kind in {"quick", "strict"} else "quick"
+    pairs = 12 if kind == "strict" else 3
+    timeout = 600.0
+    profile = "full"
+    mode = "direct"
+    paths = manager.paths_for(codex_home)
+    settings = manager.read_settings(paths)
+    config = manager.load_toml_config(paths.config_path)
+    provider_config = manager.provider_config_for(config, settings.provider)
+    model = config.get("model")
+    reasoning_effort = config.get("model_reasoning_effort")
+    if not isinstance(model, str) or not model:
+        raise manager.ConfigError("Codex config has no model; configure a model before running benchmark.")
+    if reasoning_effort is not None and not isinstance(reasoning_effort, str):
+        raise manager.ConfigError("Codex config model_reasoning_effort must be a string.")
+    try:
+        profile_for_name(profile)
+    except ValueError as exc:
+        raise manager.ConfigError(str(exc)) from exc
+
+    if manager.upstream_auth_configured(settings):
+        api_key_source, api_key = manager.resolve_verification_api_key(paths, provider_config, settings)
+    else:
+        try:
+            api_key_source, api_key = discover_api_key(provider_config, None, paths.codex_home)
+        except ValueError as exc:
+            raise manager.ConfigError(str(exc)) from exc
+
+    target = BenchmarkTarget(
+        provider=settings.provider,
+        upstream_base=settings.upstream_base,
+        model=model,
+        profile=profile,
+        service_tier=settings.service_tier,
+        api_key_source=api_key_source,
+        api_key=api_key,
+        reasoning_effort=reasoning_effort,
+    )
+    result = execute_benchmark(
+        target,
+        pairs,
+        timeout,
+        mode=mode,
+        benchmark_kind=kind,
+        randomized_order=kind == "strict",
+    )
+    save_benchmark_result(paths.benchmark_path, result)
+    result["saved_to"] = str(paths.benchmark_path)
+    result["status"] = "benchmark_saved"
+    result["reload_required"] = True
+    result["user_state"] = state(
+        "benchmark_saved",
+        "基准测试完成",
+        f"已完成 {pairs} 组标准和优先请求，结果已保存到请求记录页。",
+    )
+    return result
+
+
 def run_configure_upstream(
     codex_home: str | None,
     upstream_base: str | None,

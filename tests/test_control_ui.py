@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.actions import (  # noqa: E402
+    run_benchmark,
+    run_check_update,
     run_configure_upstream,
     run_delete_provider,
     run_first_run_enable,
@@ -23,6 +25,7 @@ from codex_fast_proxy.actions import (  # noqa: E402
     run_switch_provider,
     run_uninstall,
     run_update,
+    run_verify_provider,
 )
 from codex_fast_proxy.control_ui import (  # noqa: E402
     ControlHandler,
@@ -224,6 +227,13 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('data-view="providers"', html)
         self.assertIn('data-view="requests"', html)
         self.assertIn('data-view="advanced"', html)
+        self.assertIn('data-view="settings"', html)
+        self.assertIn('class="nav-item nav-settings"', html)
+        self.assertIn('data-page="settings"', html)
+        self.assertIn('id="checkUpdate"', html)
+        self.assertIn('id="update"', html)
+        self.assertIn("检查更新", html)
+        self.assertIn("语言和外观只影响这个本地控制面板", html)
         self.assertIn("模型服务地址", html)
         self.assertNotIn("providerProxy", html)
         self.assertNotIn("provider-tabs", html)
@@ -273,6 +283,10 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("'set-speed-mode'", html)
         self.assertIn("正在保存当前选择。", html)
         self.assertIn("如果验证失败，当前设置会保持不变。", html)
+        self.assertIn("'check-update'", html)
+        self.assertIn("正在读取远端分支和本地工作区状态", html)
+        self.assertIn("'verify-provider'", html)
+        self.assertIn("'run-benchmark'", html)
         self.assertIn("高级诊断", html)
         self.assertIn('id="diagnosticsPanel"', html)
         self.assertIn("/api/doctor", html)
@@ -397,12 +411,14 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("运行细节", html)
         self.assertIn("总耗时收益", html)
         self.assertIn("1.53x", html)
+        self.assertIn("已接受", html)
         self.assertIn("首文本收益", html)
         self.assertIn("1.40x", html)
         self.assertIn("优先耗时", html)
         self.assertIn("0.784s", html)
         self.assertIn("0.500s -&gt; 0.357s", html)
         self.assertIn("样本 default 3/3，priority 3/3", html)
+        self.assertIn("延迟结果只代表本轮观测", html)
         self.assertIn("get /v1/models", html)
         self.assertIn(">异常</span>", html)
         self.assertIn("request_id: req-demo", html)
@@ -530,6 +546,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn("••••••••••••••••", html)
         self.assertIn("apiKeyFormValue()", html)
         self.assertIn("/api/provider-key?provider=", html)
+        self.assertIn('data-provider-action="verify"', html)
+        self.assertIn('data-provider="other" data-i18n="button.checkProvider">检查</button>', html)
         self.assertIn('data-provider-action="switch"', html)
         self.assertIn('data-provider="other" data-i18n="button.switch">启用</button>', html)
         self.assertIn('data-provider="other" data-i18n="button.delete">删除</button>', html)
@@ -671,6 +689,7 @@ class ControlUiTests(unittest.TestCase):
             {
                 "base_url": "http://127.0.0.1:8787/v1",
                 "upstream_base": "https://api.acme.test/v1",
+                "api_key_auth": True,
                 "user_state": {
                     "title": "运行正常",
                     "message": "Codex 已准备好继续使用当前模型服务。",
@@ -685,7 +704,11 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('"confirmUninstall": "我知道可能导致模型请求失败，仍要停用"', html)
         self.assertIn('"saveProvider": "保存"', html)
         self.assertIn("providerEditorActionLabel(saveProvider.dataset.providerMode)", html)
-        self.assertIn('"saveSpeed": "保存速度模式"', html)
+        self.assertIn('"saveSpeed": "保存"', html)
+        self.assertIn('"checkUpdate": "检查更新"', html)
+        self.assertIn('"runBenchmark": "运行基准测试"', html)
+        self.assertIn('"confirmBenchmark": "运行快速测试"', html)
+        self.assertIn('"confirmStrictBenchmark": "运行严格测试"', html)
         self.assertIn("正在保存并验证...", html)
         self.assertIn("resetControls(userState, snapshot);", html)
         self.assertIn("resetSummary(snapshot);", html)
@@ -721,6 +744,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("const hasRuntimeControls = Boolean($('dangerZone') || $('uninstall'));", html)
         self.assertNotIn("Boolean($('update') || $('uninstall'))", html)
         self.assertIn("window.location.reload();", html)
+        self.assertIn("showBenchmarkConfirm", html)
+        self.assertIn("window.sessionStorage.setItem(viewStorageKey, currentActiveView());", html)
         self.assertIn("正在等待新版界面...", html)
         self.assertIn("查看诊断", html)
         self.assertIn('data-page="advanced"', html)
@@ -735,6 +760,7 @@ class ControlUiTests(unittest.TestCase):
                 "config_matches": True,
                 "healthy": False,
                 "service_tier_policy": "preserve",
+                "api_key_auth": True,
                 "user_state": {
                     "title": "运行正常",
                     "message": "Codex 已准备好继续使用当前模型服务。",
@@ -744,6 +770,10 @@ class ControlUiTests(unittest.TestCase):
             "token",
         )
 
+        self.assertNotIn('data-page="speed"', html)
+        self.assertNotIn('id="speedPanel"', html)
+        self.assertIn('class="status-metric summary-speed-control', html)
+        self.assertIn("快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。", html)
         self.assertIn('name="speedMode" value="standard" checked', html)
         self.assertIn('name="speedMode" value="fast"', html)
         self.assertIn("需处理", html)
@@ -772,6 +802,8 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertNotIn('id="speedPanel"', html)
         self.assertNotIn('id="speedForm"', html)
+        self.assertNotIn('data-page="speed"', html)
+        self.assertNotIn('data-view="speed"', html)
         self.assertIn("ChatGPT 账户登录", html)
 
     def test_control_page_maps_fast_behavior_names_to_summary_labels(self) -> None:
@@ -851,6 +883,167 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["user_state"]["title"], "更新完成")
         self.assertTrue(result["control_ui_reload_required"])
         self.assertIn("正在打开新版控制面板", result["user_state"]["message"])
+
+    def test_check_update_action_is_read_only_and_reports_local_changes(self) -> None:
+        with mock.patch("codex_fast_proxy.manager.check_update", return_value={
+            "status": "checked",
+            "read_only": True,
+            "local_changes": True,
+            "update_available": True,
+        }):
+            result = run_check_update(str(self.codex_home))
+
+        self.assertTrue(result["read_only"])
+        self.assertEqual(result["user_state"]["code"], "update_checked_dirty")
+        self.assertIn("未提交改动", result["user_state"]["message"])
+
+    def test_verify_provider_action_checks_saved_inactive_provider_without_switching(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            service_tier_policy="auto",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(
+            self.paths,
+            "other",
+            api_key="other-secret",
+            base_url="https://api.other.test/v1",
+        )
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n'
+            'model = "gpt-5.5"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n'
+            "[model_providers.other]\n"
+            'base_url = "https://api.other.test/v1"\n',
+            encoding="utf-8",
+        )
+
+        with mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={
+            "status": "verified",
+            "total_ms": 1234.0,
+        }) as verify:
+            result = run_verify_provider(str(self.codex_home), "other")
+
+        verified_settings = verify.call_args.args[2]
+        self.assertEqual(result["status"], "provider_verified")
+        self.assertEqual(result["provider"], "other")
+        self.assertEqual(verified_settings.provider, "other")
+        self.assertEqual(verified_settings.upstream_base, "https://api.other.test/v1")
+        self.assertTrue(verified_settings.upstream_api_key_file)
+        self.assertIn("1.23s", result["user_state"]["message"])
+
+    def test_benchmark_action_uses_three_pairs_and_requires_confirmation(self) -> None:
+        with self.assertRaises(ValueError):
+            run_benchmark(str(self.codex_home), confirm=False)
+
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(
+            self.paths,
+            "acme",
+            api_key="benchmark-secret",
+            base_url="https://api.acme.test/v1",
+        )
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n'
+            'model = "gpt-5.5"\n'
+            'model_reasoning_effort = "xhigh"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+
+        def fake_benchmark(
+            target: object,
+            pairs: int,
+            timeout: float,
+            *,
+            mode: str,
+            benchmark_kind: str,
+            randomized_order: bool,
+        ) -> dict[str, object]:
+            self.assertEqual(target.provider, "acme")
+            self.assertEqual(target.model, "gpt-5.5")
+            self.assertEqual(target.profile, "full")
+            self.assertEqual(target.reasoning_effort, "xhigh")
+            self.assertEqual(pairs, 3)
+            self.assertEqual(timeout, 600.0)
+            self.assertEqual(mode, "direct")
+            self.assertEqual(benchmark_kind, "quick")
+            self.assertFalse(randomized_order)
+            return {"pairs": pairs, "profile": target.profile, "benchmark_kind": benchmark_kind}
+
+        with mock.patch("codex_fast_proxy.benchmark.run_benchmark", side_effect=fake_benchmark):
+            result = run_benchmark(str(self.codex_home), confirm=True)
+
+        self.assertEqual(result["status"], "benchmark_saved")
+        self.assertEqual(result["pairs"], 3)
+        self.assertEqual(result["saved_to"], str(self.paths.benchmark_path))
+        saved = manager.read_json(self.paths.benchmark_path)
+        self.assertEqual(saved["pairs"], 3)
+        self.assertTrue(result["reload_required"])
+        self.assertIn("3 组", result["user_state"]["message"])
+
+    def test_strict_benchmark_action_uses_twelve_pairs_and_randomized_order(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(
+            self.paths,
+            "acme",
+            api_key="benchmark-secret",
+            base_url="https://api.acme.test/v1",
+        )
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n'
+            'model = "gpt-5.5"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+
+        def fake_benchmark(
+            _target: object,
+            pairs: int,
+            _timeout: float,
+            *,
+            mode: str,
+            benchmark_kind: str,
+            randomized_order: bool,
+        ) -> dict[str, object]:
+            self.assertEqual(pairs, 12)
+            self.assertEqual(mode, "direct")
+            self.assertEqual(benchmark_kind, "strict")
+            self.assertTrue(randomized_order)
+            return {"pairs": pairs, "benchmark_kind": benchmark_kind}
+
+        with mock.patch("codex_fast_proxy.benchmark.run_benchmark", side_effect=fake_benchmark):
+            result = run_benchmark(str(self.codex_home), confirm=True, benchmark_kind="strict")
+
+        self.assertEqual(result["pairs"], 12)
+        self.assertIn("12 组", result["user_state"]["message"])
 
     def test_update_control_action_restarts_current_ui_on_same_port(self) -> None:
         handler = object.__new__(ControlHandler)

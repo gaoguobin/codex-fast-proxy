@@ -17,6 +17,7 @@ python -m codex_fast_proxy start
 python -m codex_fast_proxy check-update
 python -m codex_fast_proxy update
 python -m codex_fast_proxy benchmark
+python -m codex_fast_proxy benchmark --kind strict
 python -m codex_fast_proxy uninstall
 ```
 
@@ -48,13 +49,15 @@ The UI is a lightweight Python SSR page with native JavaScript. It supports:
 - Chinese, English, and Japanese locale switching. Chinese is the default.
 - System, light, and dark appearance.
 - Overview, Providers, Requests, and Advanced pages.
+- Settings page for language, appearance, update checks, and updates.
 - Provider management after the proxy is enabled.
+- Provider availability checks from the Providers page.
 - Masked API keys with explicit reveal.
 - Advanced self-check via `/api/doctor`.
 - Copy and JSON export for redacted diagnostics.
 
-The Speed page appears only when proxy-side speed controls are useful. If Codex is signed in with
-ChatGPT, speed is handled by Codex App's native UI and the page is hidden.
+Proxy-side speed controls appear inline on Overview only when they are useful. If Codex is signed in
+with ChatGPT, speed is handled by Codex App's native UI and the proxy-side control is hidden.
 
 The UI writes through token-protected loopback endpoints only. It rejects non-loopback hosts and
 cross-origin writes.
@@ -186,8 +189,8 @@ Policy meaning:
 - `preserve`: never inject service tier.
 - `inject_missing`: inject `service_tier="priority"` only when missing.
 
-When ChatGPT login is detected, the Control UI hides the Speed page and reports `App 控制`, because
-Codex App owns the speed choice.
+When ChatGPT login is detected, the Control UI hides proxy-side speed controls and reports
+`App 控制`, because Codex App owns the speed choice.
 
 ## Benchmark
 
@@ -197,21 +200,24 @@ Natural-language trigger:
 Run the Codex Model Gateway A/B benchmark
 ```
 
-Command:
+Commands:
 
 ```powershell
 python -m codex_fast_proxy benchmark
+python -m codex_fast_proxy benchmark --kind strict
 ```
 
-The default benchmark launches real `codex exec` requests through a local capture proxy and compares
-interleaved default-vs-priority samples. It stores redacted metrics only.
+The default quick benchmark runs 3 direct API request pairs. Strict mode runs 12 direct request pairs
+with balanced random order, per-sample prompt cache isolation, and a paired sign test. Both modes
+store redacted metrics only and spend real provider quota.
 
 Useful options:
 
 ```powershell
 python -m codex_fast_proxy benchmark --timeout 900
 python -m codex_fast_proxy benchmark --profile smoke
-python -m codex_fast_proxy benchmark --mode direct
+python -m codex_fast_proxy benchmark --pairs 6
+python -m codex_fast_proxy benchmark --mode codex-cli
 python -m codex_fast_proxy benchmark --api-key-env PACKY_API_KEY
 ```
 
@@ -220,10 +226,16 @@ Interpretation:
 - `service_tier_control.valid=true`: default samples omitted `service_tier` and priority samples
   sent the expected value.
 - `priority_accepted=true`: at least one priority sample succeeded.
-- `observed_priority_effective=true`: the measured workload benefited.
+- `priority_support_assessment.conclusion`: support-oriented result such as `confirmed`,
+  `accepted_unconfirmed`, `accepted_different_tier`, or `not_accepted`.
+- `statistical_test.conclusion`: latency-oriented result such as `priority_faster`,
+  `no_significant_speedup`, or `insufficient_sample_size`.
 - `provider_confirmed_priority=true`: provider response metadata explicitly confirmed priority when
   available.
-- Always read those flags together with sample counts and errors.
+- `observed_priority_effective=true`: legacy compatibility flag for a simple latency threshold.
+- Always read those fields together with sample counts and errors. Latency is an observation, not
+  proof that the provider supports fast; provider response metadata, billing, dashboard state, or
+  provider documentation are stronger support signals.
 
 Normal proxy logs with `service_tier_injected=true` and HTTP 200 prove only that the proxy sent a
 successful request. Benchmark results are the stronger signal for speed impact.
@@ -299,7 +311,8 @@ python -m codex_fast_proxy uninstall --defer-stop
 
 - `install --start` verifies upstream `/v1/responses` streaming route before switching config.
 - The startup hook runs `codex_fast_proxy autostart --quiet` on `SessionStart`.
-- The hook starts a missing proxy only when the recorded provider still points to the local proxy.
+- The hook starts a missing proxy and opens/reuses the independent Control UI only when the recorded
+  provider still points to the local proxy.
 - A healthy proxy is not restarted just because runtime code is stale; use explicit `start` when you
   are ready to refresh runtime.
 - `stop` refuses while Codex config still points to the proxy unless `--force` is explicit.

@@ -197,6 +197,9 @@ class ManagerConfigTests(unittest.TestCase):
         args = manager.build_parser().parse_args(["benchmark"])
 
         self.assertEqual(args.timeout, 600.0)
+        self.assertEqual(args.kind, "quick")
+        self.assertEqual(args.mode, "direct")
+        self.assertIsNone(args.pairs)
 
     def test_set_upstream_verification_is_enabled_by_default_in_cli(self) -> None:
         parser = manager.build_parser()
@@ -994,6 +997,7 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn("codex_fast_proxy", command)
         self.assertIn("autostart", command)
         self.assertIn("--quiet", command)
+        self.assertEqual(session_start[0]["hooks"][0]["timeout"], 20)
 
     def test_hooks_feature_detection_accepts_current_and_legacy_keys(self) -> None:
         self.assertTrue(manager.hooks_feature_enabled({"features": {"hooks": True}}))
@@ -1906,6 +1910,7 @@ class ManagerConfigTests(unittest.TestCase):
                 reasoning_effort=None,
                 profile="smoke",
                 mode="direct",
+                kind="quick",
                 api_key_env=None,
                 save=False,
             )
@@ -3505,6 +3510,28 @@ class ManagerConfigTests(unittest.TestCase):
 
         self.assertTrue(event_path.exists())
         self.assertIn('"status":"restarted"', event_path.read_text(encoding="utf-8"))
+
+    def test_autostart_also_starts_control_ui_when_proxy_is_active(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
+        args = argparse.Namespace(codex_home=str(codex_home), quiet=True, verbose_proxy=False)
+
+        with (
+            mock.patch("codex_fast_proxy.manager.autostart_proxy", return_value={"status": "already_running", "pid": 1234}),
+            mock.patch("codex_fast_proxy.manager.autostart_control_ui", return_value={
+                "status": "ready",
+                "url": "http://127.0.0.1:8786/",
+                "started_background_process": True,
+            }) as control_ui,
+        ):
+            self.assertEqual(manager.command_autostart(args), 0)
+
+        control_ui.assert_called_once_with(paths)
+        self.assertTrue(event_path.exists())
+        event_text = event_path.read_text(encoding="utf-8")
+        self.assertIn('"control_ui"', event_text)
+        self.assertIn('"started_background_process":true', event_text)
 
     def test_uninstall_defer_stop_restores_config_and_keeps_proxy_for_restart(self) -> None:
         codex_home = self.temp_dir / ".codex"

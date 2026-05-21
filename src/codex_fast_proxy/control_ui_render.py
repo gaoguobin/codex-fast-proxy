@@ -19,17 +19,22 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "theme.dark": "深色",
         "nav.overview": "概览",
         "nav.providers": "供应商",
-        "nav.speed": "速度",
         "nav.requests": "请求记录",
         "nav.advanced": "高级",
+        "nav.settings": "设置",
         "button.update": "更新",
+        "button.checkUpdate": "检查更新",
+        "button.checkProvider": "检查",
+        "button.runBenchmark": "运行基准测试",
+        "button.confirmBenchmark": "运行快速测试",
+        "button.confirmStrictBenchmark": "运行严格测试",
         "button.diagnostics": "打开高级诊断",
         "button.uninstall": "停用并恢复",
         "button.confirmUninstall": "我知道可能导致模型请求失败，仍要停用",
         "button.finishCleanup": "完成清理",
         "button.saveProvider": "保存",
         "button.updateProvider": "更新",
-        "button.saveSpeed": "保存速度模式",
+        "button.saveSpeed": "保存",
         "button.add": "添加",
         "button.cancel": "取消",
         "button.edit": "编辑",
@@ -74,6 +79,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "value.effective": "有效",
         "value.accepted": "已接受",
         "value.confirmed": "已确认",
+        "value.observedFaster": "观测更快",
+        "value.unconfirmed": "未确认",
+        "value.invalid": "无效",
         "value.notAccepted": "未接受",
         "providers.title": "供应商",
         "providers.note.manage": "管理本地代理使用的模型服务。",
@@ -101,10 +109,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.hideKey": "隐藏接口密钥",
         "provider.editor.edit": "编辑",
         "provider.editor.add": "添加",
-        "speed.title": "速度",
-        "speed.description": "选择代理写入 service_tier 的方式。",
-        "speed.mode": "速度模式",
-        "speed.currentPolicy": "当前策略",
+        "speed.inlineHint": "快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。",
         "requests.title": "请求记录",
         "requests.description": "查看最近请求、Provider 检查和性能基准。",
         "requests.section": "请求",
@@ -114,15 +119,20 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "requests.ops": "运行细节",
         "requests.opsTitle": "Provider 检查与性能基准",
         "requests.opsDescription": "这些记录来自本地代理日志，不包含密钥。",
+        "requests.benchmarkConfirmTitle": "选择基准测试强度",
+        "requests.benchmarkConfirmText": "快速测试运行 3 对请求，适合低成本观察；严格测试运行 12 对请求，使用平衡随机顺序和配对统计检验。",
+        "requests.benchmarkCost": "两种模式都会消耗真实额度；严格测试成本更高，但更适合判断本轮是否存在统计意义的加速迹象。",
         "requests.providerCheck": "Provider 检查",
         "requests.benchmark": "性能基准",
         "requests.check": "检查",
         "requests.noProviderCheck": "还没有 /v1/models 检查记录。",
-        "requests.benchmarkNotRun": "尚未运行 benchmark。",
+        "requests.benchmarkNotRun": "尚未运行基准测试。",
         "benchmark.totalGain": "总耗时收益",
         "benchmark.firstTextGain": "首文本收益",
         "benchmark.priorityDuration": "优先耗时",
         "benchmark.firstText": "首文本",
+        "benchmark.caveat": "延迟结果只代表本轮观测，受缓存、网络和负载影响；是否支持 fast 优先看响应是否确认 priority。",
+        "benchmark.statsPrefix": "统计",
         "table.time": "时间",
         "table.request": "请求",
         "table.status": "状态",
@@ -192,6 +202,14 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.proxy_runtime": "代理运行时",
         "advanced.check.hooks_enabled": "Hooks 开关",
         "advanced.check.startup_hook": "启动钩子",
+        "settings.title": "设置",
+        "settings.description": "控制面板偏好和版本更新。",
+        "settings.preferences": "偏好",
+        "settings.preferencesDescription": "语言和外观只影响这个本地控制面板。",
+        "settings.updates": "版本更新",
+        "settings.updatesDescription": "先检查远端状态，再决定是否更新本地代理。",
+        "settings.updateIdle": "还没有检查更新。",
+        "settings.updateNote": "检查更新是只读操作；更新会拉取代码并刷新本地运行时。",
         "danger.confirmNote": "仍要继续停用只适合你已经理解风险的情况。继续后，当前 ChatGPT 登录可能无法直接使用第三方模型服务。",
         "hint.chatgptSpeed": "已检测到 ChatGPT 账户登录，速度控制由 Codex App 原生界面接管。",
         "action.enable.prepare.label": "正在准备环境...",
@@ -208,16 +226,26 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "action.update.slow.message": "仍在等待本地更新完成，请保持控制面板打开。",
         "action.update.waitUi.label": "正在等待新版界面...",
         "action.update.waitUi.message": "更新已完成后会自动切换到新版控制面板，请不要手动刷新。",
+        "action.checkUpdate.start.label": "正在检查...",
+        "action.checkUpdate.start.message": "正在读取远端分支和本地工作区状态。",
         "action.saveProvider.start.label": "正在保存并验证...",
         "action.saveProvider.start.message": "正在保存，并验证模型服务是否可用。",
         "action.saveProvider.verify.message": "正在发起一次真实响应接口流式检查，完成后会自动更新页面。",
         "action.saveProvider.slow.message": "仍在等待模型服务响应；如果验证失败，当前设置会保持不变。",
+        "action.verifyProvider.start.label": "正在检查...",
+        "action.verifyProvider.start.message": "正在发起一次真实 Responses 流式检查。",
+        "action.verifyProvider.slow.label": "检查仍在继续...",
+        "action.verifyProvider.slow.message": "模型服务响应较慢，请保持页面打开。",
         "action.switchProvider.start.label": "正在切换...",
         "action.switchProvider.start.message": "正在切换，并验证新的模型服务。",
         "action.deleteProvider.start.label": "正在删除...",
         "action.deleteProvider.start.message": "正在删除保存项，当前模型服务不会受影响。",
         "action.speed.start.label": "正在保存...",
         "action.speed.start.message": "正在保存当前选择。",
+        "action.benchmark.start.label": "正在运行...",
+        "action.benchmark.start.message": "正在发起标准和优先请求。",
+        "action.benchmark.slow.label": "基准测试仍在继续...",
+        "action.benchmark.slow.message": "这一步取决于模型服务响应速度，完成后会刷新结果。",
         "action.uninstall.start.label": "正在恢复直连...",
         "action.uninstall.start.message": "正在恢复 Codex 原模型服务，并准备清理本地代理。",
         "action.uninstall.cleanup.label": "正在清理...",
@@ -235,17 +263,22 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "theme.dark": "Dark",
         "nav.overview": "Overview",
         "nav.providers": "Providers",
-        "nav.speed": "Speed",
         "nav.requests": "Requests",
         "nav.advanced": "Advanced",
+        "nav.settings": "Settings",
         "button.update": "Update",
+        "button.checkUpdate": "Check for updates",
+        "button.checkProvider": "Check",
+        "button.runBenchmark": "Run benchmark",
+        "button.confirmBenchmark": "Run quick test",
+        "button.confirmStrictBenchmark": "Run strict test",
         "button.diagnostics": "Open diagnostics",
         "button.uninstall": "Disable and restore",
         "button.confirmUninstall": "I understand the risk; disable anyway",
         "button.finishCleanup": "Finish cleanup",
         "button.saveProvider": "Save",
         "button.updateProvider": "Update",
-        "button.saveSpeed": "Save speed mode",
+        "button.saveSpeed": "Save",
         "button.add": "Add",
         "button.cancel": "Cancel",
         "button.edit": "Edit",
@@ -290,6 +323,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "value.effective": "Effective",
         "value.accepted": "Accepted",
         "value.confirmed": "Confirmed",
+        "value.observedFaster": "Observed faster",
+        "value.unconfirmed": "Unconfirmed",
+        "value.invalid": "Invalid",
         "value.notAccepted": "Not accepted",
         "providers.title": "Providers",
         "providers.note.manage": "Manage the model services used by the local proxy.",
@@ -317,10 +353,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.hideKey": "Hide key",
         "provider.editor.edit": "Edit",
         "provider.editor.add": "Add",
-        "speed.title": "Speed",
-        "speed.description": "Choose how the proxy writes service_tier.",
-        "speed.mode": "Speed mode",
-        "speed.currentPolicy": "Current policy",
+        "speed.inlineHint": "Fast uses priority when the request does not specify service_tier; Standard keeps the original request.",
         "requests.title": "Requests",
         "requests.description": "Review recent requests, provider checks, and benchmarks.",
         "requests.section": "Requests",
@@ -330,6 +363,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "requests.ops": "Operations",
         "requests.opsTitle": "Provider checks and benchmarks",
         "requests.opsDescription": "These records come from local proxy logs and never include keys.",
+        "requests.benchmarkConfirmTitle": "Choose benchmark depth",
+        "requests.benchmarkConfirmText": "Quick runs 3 request pairs for a low-cost observation. Strict runs 12 pairs with balanced random order and paired statistics.",
+        "requests.benchmarkCost": "Both modes spend real quota. Strict costs more, but is better for judging whether this run shows statistically meaningful acceleration.",
         "requests.providerCheck": "Provider check",
         "requests.benchmark": "Benchmark",
         "requests.check": "Check",
@@ -339,6 +375,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "benchmark.firstTextGain": "First text gain",
         "benchmark.priorityDuration": "Priority duration",
         "benchmark.firstText": "First text",
+        "benchmark.caveat": "Latency is only this run's observation and can be affected by cache, network, and load; fast support is best confirmed by a priority response tier.",
+        "benchmark.statsPrefix": "Stats",
         "table.time": "Time",
         "table.request": "Request",
         "table.status": "Status",
@@ -408,6 +446,14 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.proxy_runtime": "Proxy runtime",
         "advanced.check.hooks_enabled": "Hooks enabled",
         "advanced.check.startup_hook": "Startup hook",
+        "settings.title": "Settings",
+        "settings.description": "Control panel preferences and version updates.",
+        "settings.preferences": "Preferences",
+        "settings.preferencesDescription": "Language and appearance only affect this local control panel.",
+        "settings.updates": "Version updates",
+        "settings.updatesDescription": "Check remote status before updating the local proxy.",
+        "settings.updateIdle": "Updates have not been checked yet.",
+        "settings.updateNote": "Checking is read-only. Updating pulls code and refreshes the local runtime.",
         "danger.confirmNote": "Only continue disabling if you understand the risk. After this, the current ChatGPT login may not work directly with the third-party model service.",
         "hint.chatgptSpeed": "ChatGPT account login detected. Speed controls are handled by the Codex App.",
         "action.enable.prepare.label": "Preparing...",
@@ -424,16 +470,26 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "action.update.slow.message": "Still waiting for the local update. Keep this control panel open.",
         "action.update.waitUi.label": "Waiting for the new UI...",
         "action.update.waitUi.message": "When the update finishes, the page will switch to the new control panel automatically.",
+        "action.checkUpdate.start.label": "Checking...",
+        "action.checkUpdate.start.message": "Reading the remote branch and local working tree state.",
         "action.saveProvider.start.label": "Saving and verifying...",
         "action.saveProvider.start.message": "Saving and verifying that the model service is usable.",
         "action.saveProvider.verify.message": "Running a real streaming Responses check. The page will update when it completes.",
         "action.saveProvider.slow.message": "Still waiting for the model service. If verification fails, current settings stay unchanged.",
+        "action.verifyProvider.start.label": "Checking...",
+        "action.verifyProvider.start.message": "Running a real streaming Responses check.",
+        "action.verifyProvider.slow.label": "Check still running...",
+        "action.verifyProvider.slow.message": "The model service is responding slowly. Keep this page open.",
         "action.switchProvider.start.label": "Switching...",
         "action.switchProvider.start.message": "Switching and verifying the new model service.",
         "action.deleteProvider.start.label": "Deleting...",
         "action.deleteProvider.start.message": "Deleting the saved entry. The current model service is not affected.",
         "action.speed.start.label": "Saving...",
         "action.speed.start.message": "Saving the current selection.",
+        "action.benchmark.start.label": "Running...",
+        "action.benchmark.start.message": "Sending default and priority request pairs.",
+        "action.benchmark.slow.label": "Benchmark still running...",
+        "action.benchmark.slow.message": "This depends on model service latency. Results will refresh when it completes.",
         "action.uninstall.start.label": "Restoring direct connection...",
         "action.uninstall.start.message": "Restoring the original Codex model service and preparing local proxy cleanup.",
         "action.uninstall.cleanup.label": "Cleaning up...",
@@ -451,17 +507,22 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "theme.dark": "ダーク",
         "nav.overview": "概要",
         "nav.providers": "プロバイダー",
-        "nav.speed": "速度",
         "nav.requests": "リクエスト",
         "nav.advanced": "詳細",
+        "nav.settings": "設定",
         "button.update": "更新",
+        "button.checkUpdate": "更新を確認",
+        "button.checkProvider": "確認",
+        "button.runBenchmark": "ベンチマーク実行",
+        "button.confirmBenchmark": "クイックテスト",
+        "button.confirmStrictBenchmark": "厳密テスト",
         "button.diagnostics": "診断を開く",
         "button.uninstall": "無効化して復元",
         "button.confirmUninstall": "リスクを理解して無効化する",
         "button.finishCleanup": "クリーンアップ完了",
         "button.saveProvider": "保存",
         "button.updateProvider": "更新",
-        "button.saveSpeed": "速度モードを保存",
+        "button.saveSpeed": "保存",
         "button.add": "追加",
         "button.cancel": "キャンセル",
         "button.edit": "編集",
@@ -506,6 +567,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "value.effective": "有効",
         "value.accepted": "受理済み",
         "value.confirmed": "確認済み",
+        "value.observedFaster": "高速化を観測",
+        "value.unconfirmed": "未確認",
+        "value.invalid": "無効",
         "value.notAccepted": "未受理",
         "providers.title": "プロバイダー",
         "providers.note.manage": "ローカルプロキシが使うモデルサービスを管理します。",
@@ -533,10 +597,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.hideKey": "キーを隠す",
         "provider.editor.edit": "編集",
         "provider.editor.add": "追加",
-        "speed.title": "速度",
-        "speed.description": "プロキシが service_tier を書き込む方法を選びます。",
-        "speed.mode": "速度モード",
-        "speed.currentPolicy": "現在のポリシー",
+        "speed.inlineHint": "高速はリクエストに service_tier がない場合に priority を使います。標準は元のリクエストを維持します。",
         "requests.title": "リクエスト",
         "requests.description": "最近のリクエスト、プロバイダー確認、ベンチマークを確認します。",
         "requests.section": "リクエスト",
@@ -546,6 +607,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "requests.ops": "運用情報",
         "requests.opsTitle": "プロバイダー確認とベンチマーク",
         "requests.opsDescription": "これらの記録はローカルプロキシのログから取得され、キーは含みません。",
+        "requests.benchmarkConfirmTitle": "ベンチマークの強度を選択",
+        "requests.benchmarkConfirmText": "クイックは 3 ペアで低コストに観測します。厳密は 12 ペアを平衡ランダム順で実行し、ペア統計で判定します。",
+        "requests.benchmarkCost": "どちらも実利用枠を消費します。厳密テストは高コストですが、今回の加速傾向をより判断しやすくします。",
         "requests.providerCheck": "プロバイダー確認",
         "requests.benchmark": "ベンチマーク",
         "requests.check": "確認",
@@ -555,6 +619,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "benchmark.firstTextGain": "初回テキスト改善",
         "benchmark.priorityDuration": "優先時の所要時間",
         "benchmark.firstText": "初回テキスト",
+        "benchmark.caveat": "遅延結果は今回の観測値で、キャッシュ、ネットワーク、負荷の影響を受けます。fast 対応は priority の応答 tier で確認するのが確実です。",
+        "benchmark.statsPrefix": "統計",
         "table.time": "時刻",
         "table.request": "リクエスト",
         "table.status": "状態",
@@ -624,6 +690,14 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.proxy_runtime": "プロキシランタイム",
         "advanced.check.hooks_enabled": "Hooks 有効",
         "advanced.check.startup_hook": "起動フック",
+        "settings.title": "設定",
+        "settings.description": "コントロールパネルの設定とバージョン更新。",
+        "settings.preferences": "環境設定",
+        "settings.preferencesDescription": "言語と外観はこのローカルコントロールパネルだけに反映されます。",
+        "settings.updates": "バージョン更新",
+        "settings.updatesDescription": "ローカルプロキシを更新する前に、リモート状態を確認します。",
+        "settings.updateIdle": "更新確認はまだ実行していません。",
+        "settings.updateNote": "更新確認は読み取り専用です。更新はコードを取得し、ローカルランタイムを更新します。",
         "danger.confirmNote": "リスクを理解している場合だけ無効化を続行してください。続行後、現在の ChatGPT ログインではサードパーティのモデルサービスを直接使えない可能性があります。",
         "hint.chatgptSpeed": "ChatGPT アカウントログインを検出しました。速度制御は Codex App 側で行われます。",
         "action.enable.prepare.label": "準備中...",
@@ -640,16 +714,26 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "action.update.slow.message": "ローカル更新の完了を待っています。このコントロールパネルを開いたままにしてください。",
         "action.update.waitUi.label": "新しい画面を待機中...",
         "action.update.waitUi.message": "更新完了後、新しいコントロールパネルへ自動で切り替わります。",
+        "action.checkUpdate.start.label": "確認中...",
+        "action.checkUpdate.start.message": "リモートブランチとローカル作業ツリーの状態を確認しています。",
         "action.saveProvider.start.label": "保存して確認中...",
         "action.saveProvider.start.message": "保存し、モデルサービスが使えるか確認しています。",
         "action.saveProvider.verify.message": "実際のストリーミング Responses 確認を実行しています。完了後にページを更新します。",
         "action.saveProvider.slow.message": "まだモデルサービスの応答を待っています。確認に失敗した場合、現在の設定は維持されます。",
+        "action.verifyProvider.start.label": "確認中...",
+        "action.verifyProvider.start.message": "実際のストリーミング Responses 確認を実行しています。",
+        "action.verifyProvider.slow.label": "確認が続いています...",
+        "action.verifyProvider.slow.message": "モデルサービスの応答が遅いです。このページを開いたままにしてください。",
         "action.switchProvider.start.label": "切り替え中...",
         "action.switchProvider.start.message": "新しいモデルサービスへ切り替えて確認しています。",
         "action.deleteProvider.start.label": "削除中...",
         "action.deleteProvider.start.message": "保存項目を削除しています。現在のモデルサービスには影響しません。",
         "action.speed.start.label": "保存中...",
         "action.speed.start.message": "現在の選択を保存しています。",
+        "action.benchmark.start.label": "実行中...",
+        "action.benchmark.start.message": "標準と優先のリクエストを送信しています。",
+        "action.benchmark.slow.label": "ベンチマークが続いています...",
+        "action.benchmark.slow.message": "モデルサービスの応答速度に依存します。完了後に結果を更新します。",
         "action.uninstall.start.label": "直結へ復元中...",
         "action.uninstall.start.message": "Codex 元のモデルサービスへ復元し、ローカルプロキシのクリーンアップを準備しています。",
         "action.uninstall.cleanup.label": "クリーンアップ中...",
@@ -669,7 +753,11 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "update_blocked": {"title": "更新被暂停"},
         "already_current": {"title": "已是最新"},
         "updated": {"title": "更新完成"},
+        "update_checked_dirty": {"title": "已检查，有本地改动", "message": "远端检查完成；当前本地有未提交改动，更新会先暂停。"},
+        "update_available": {"title": "发现可用更新", "message": "远端有新提交；确认当前工作区状态后，可以在设置里更新。"},
         "provider_saved": {"title": "Provider 已保存", "message": "模型服务地址和接口密钥已保存。需要使用它时，点击切换。"},
+        "provider_verified": {"title": "模型服务可用"},
+        "benchmark_saved": {"title": "基准测试完成", "message": "已完成 3 组标准和优先请求，结果已保存到请求记录页。"},
         "configured": {"title": "已保存"},
         "confirmation_required": {"title": "停用前需要处理登录方式"},
     },
@@ -683,7 +771,11 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "update_blocked": {"title": "Update paused"},
         "already_current": {"title": "Already current"},
         "updated": {"title": "Update complete"},
+        "update_checked_dirty": {"title": "Checked, local changes found", "message": "Remote check completed. Local uncommitted changes will pause updating first."},
+        "update_available": {"title": "Update available", "message": "New remote commits are available. After reviewing the workspace, update from Settings."},
         "provider_saved": {"title": "Provider saved", "message": "The model service URL and key were saved. Switch to it when you want to use it."},
+        "provider_verified": {"title": "Model service is usable"},
+        "benchmark_saved": {"title": "Benchmark complete", "message": "3 default and priority request pairs finished. Results were saved to Requests."},
         "configured": {"title": "Saved"},
         "confirmation_required": {"title": "Switch login method before disabling"},
     },
@@ -697,7 +789,11 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "update_blocked": {"title": "更新を一時停止"},
         "already_current": {"title": "最新です"},
         "updated": {"title": "更新完了"},
+        "update_checked_dirty": {"title": "確認済み、ローカル変更あり", "message": "リモート確認は完了しました。未コミットのローカル変更があるため、更新は先に停止します。"},
+        "update_available": {"title": "更新があります", "message": "リモートに新しいコミットがあります。作業ツリー確認後、設定から更新できます。"},
         "provider_saved": {"title": "Provider を保存しました", "message": "モデルサービス URL とキーを保存しました。使うときに切り替えてください。"},
+        "provider_verified": {"title": "モデルサービスは利用可能です"},
+        "benchmark_saved": {"title": "ベンチマーク完了", "message": "標準と優先のリクエスト 3 組が完了し、結果をリクエスト画面に保存しました。"},
         "configured": {"title": "保存しました"},
         "confirmation_required": {"title": "無効化前にログイン方式を確認"},
     },
@@ -710,6 +806,19 @@ def speed_mode_from_snapshot(snapshot: dict[str, Any]) -> str:
 
 def speed_mode_label(snapshot: dict[str, Any]) -> str:
     return "标准" if speed_mode_from_snapshot(snapshot) == "standard" else "快速"
+
+
+def speed_controls_available(snapshot: dict[str, Any]) -> bool:
+    state = snapshot.get("user_state") if isinstance(snapshot.get("user_state"), dict) else {}
+    terminal_state = state.get("code") in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
+    api_key_login = snapshot.get("api_key_auth") or snapshot.get("login_mode") == "api_key"
+    return (
+        bool(providers_from_snapshot(snapshot))
+        and bool(snapshot.get("base_url"))
+        and bool(api_key_login)
+        and not bool(snapshot.get("chatgpt_auth"))
+        and not terminal_state
+    )
 
 
 def ui_text(key: str) -> str:
@@ -948,17 +1057,44 @@ def benchmark_ttft_value(benchmark: dict[str, Any], tier: str) -> Any:
     return value
 
 
+def benchmark_stat_note(benchmark: dict[str, Any]) -> str:
+    test = benchmark.get("statistical_test")
+    if not isinstance(test, dict):
+        return ""
+    total = test.get("metrics", {}).get("total_ms") if isinstance(test.get("metrics"), dict) else None
+    if not isinstance(total, dict):
+        return ""
+    conclusion = test.get("conclusion")
+    usable = display_value(total.get("usable_pairs"), "0")
+    speed = format_speedup(total.get("median_speedup"))
+    p_value = total.get("p_value_one_sided")
+    p_text = f"p={p_value}" if isinstance(p_value, (int, float)) else "p=-"
+    if conclusion == "priority_faster":
+        verdict = "严格测试显示本轮 priority 总耗时显著更低"
+    elif conclusion == "no_significant_speedup":
+        verdict = "严格测试未发现本轮 priority 总耗时显著更低"
+    else:
+        verdict = "样本量不足，统计结论仅供参考"
+    return f"{verdict}；可用配对 {usable}，中位收益 {speed}，{p_text}。"
+
+
 def benchmark_label(benchmark: dict[str, Any] | None) -> tuple[str, str, str]:
     if not benchmark:
         return "未运行", "idle", "value.notRun"
-    if benchmark.get("observed_priority_effective") is True:
-        return "有效", "ok", "value.effective"
-    if benchmark.get("priority_accepted") is True:
-        return "已接受", "ok", "value.accepted"
-    if benchmark.get("provider_confirmed_priority") is True:
+    assessment = benchmark.get("priority_support_assessment")
+    conclusion = assessment.get("conclusion") if isinstance(assessment, dict) else None
+    if conclusion == "invalid":
+        return "无效", "warn", "value.invalid"
+    if conclusion == "confirmed" or benchmark.get("provider_confirmed_priority") is True:
         return "已确认", "ok", "value.confirmed"
+    if conclusion == "accepted_different_tier":
+        return "未确认", "warn", "value.unconfirmed"
     if benchmark.get("priority_accepted") is False:
         return "未接受", "warn", "value.notAccepted"
+    if benchmark.get("priority_accepted") is True:
+        return "已接受", "idle", "value.accepted"
+    if benchmark.get("observed_priority_effective") is True:
+        return "观测更快", "ok", "value.observedFaster"
     return "未知", "idle", "value.unknown"
 
 
@@ -983,7 +1119,7 @@ def render_benchmark_signal(snapshot: dict[str, Any]) -> str:
                 <span data-i18n="requests.benchmark">性能基准</span>
                 {render_status_pill(label, tone, label_key=label_key)}
               </div>
-              <p class="empty-state" data-i18n="requests.benchmarkNotRun">尚未运行 benchmark。</p>
+              <p class="empty-state" data-i18n="requests.benchmarkNotRun">尚未运行基准测试。</p>
             </section>
 """
 
@@ -999,6 +1135,11 @@ def render_benchmark_signal(snapshot: dict[str, Any]) -> str:
     priority_total = benchmark_summary_value(benchmark, "priority", "median_total_ms")
     default_ttft = benchmark_ttft_value(benchmark, "default")
     priority_ttft = benchmark_ttft_value(benchmark, "priority")
+    stat_note = benchmark_stat_note(benchmark)
+    stat_markup = (
+        f'<p class="signal-note benchmark-stat">{html.escape(stat_note)}</p>'
+        if stat_note else ""
+    )
     note = (
         f"{provider} / {model} / {mode} / {profile} / {pairs} 组；"
         f"样本 default {display_value(default_ok)}/{display_value(default_count)}，"
@@ -1017,6 +1158,8 @@ def render_benchmark_signal(snapshot: dict[str, Any]) -> str:
                 {render_signal_metric("首文本", f"{format_optional_duration(default_ttft)} -> {format_optional_duration(priority_ttft)}", "benchmark.firstText")}
               </div>
               <p class="signal-note">最近运行 {render_time_value(benchmark.get("ts"))}；{html.escape(note)}</p>
+              {stat_markup}
+              <p class="signal-note benchmark-caveat" data-i18n="benchmark.caveat">延迟结果只代表本轮观测，受缓存、网络和负载影响；是否支持 fast 优先看响应是否确认 priority。</p>
             </section>
 """
 
@@ -1087,6 +1230,36 @@ def render_status_metric(label: str, value: str, tone: str = "idle", label_key: 
             <div class="status-metric {html.escape(tone)}">
               <span{attr}>{html.escape(label)}</span>
               <strong>{html.escape(value)}</strong>
+            </div>
+"""
+
+
+def render_speed_metric(snapshot: dict[str, Any]) -> str:
+    if not speed_controls_available(snapshot):
+        return render_status_metric(
+            "速度",
+            short_speed_label(snapshot),
+            speed_summary_tone(snapshot),
+            "summary.speed",
+        )
+    speed_mode = speed_mode_from_snapshot(snapshot)
+    fast_checked = " checked" if speed_mode == "fast" else ""
+    standard_checked = " checked" if speed_mode == "standard" else ""
+    speed_label = html.escape(speed_mode_label(snapshot))
+    return f"""
+            <div class="status-metric summary-speed-control {html.escape(speed_summary_tone(snapshot))}">
+              <span data-i18n="summary.speed">速度</span>
+              <strong id="providerSpeed">{speed_label}</strong>
+              <form id="speedForm" class="summary-speed-form" aria-label="速度模式">
+                <fieldset>
+                  <div class="segments summary-segments">
+                    <label><input type="radio" name="speedMode" value="fast"{fast_checked}><span data-i18n="value.fast">快速</span></label>
+                    <label><input type="radio" name="speedMode" value="standard"{standard_checked}><span data-i18n="value.standard">标准</span></label>
+                  </div>
+                </fieldset>
+                <p class="speed-hint" data-i18n="speed.inlineHint">快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。</p>
+                <button id="saveSpeed" class="secondary" type="submit" data-i18n="button.saveSpeed">保存</button>
+              </form>
             </div>
 """
 
@@ -1224,6 +1397,7 @@ def nav_icon(name: str) -> str:
         "speed": '<path d="M4 14a8 8 0 0 1 16 0"></path><path d="M12 14l4-5"></path><path d="M8 20h8"></path>',
         "requests": '<path d="M6 7h12"></path><path d="M6 12h12"></path><path d="M6 17h8"></path><circle cx="3.5" cy="7" r=".8"></circle><circle cx="3.5" cy="12" r=".8"></circle><circle cx="3.5" cy="17" r=".8"></circle>',
         "advanced": '<path d="M4 7h16"></path><path d="M4 17h16"></path><circle cx="9" cy="7" r="2"></circle><circle cx="15" cy="17" r="2"></circle>',
+        "settings": '<circle cx="12" cy="12" r="3"></circle><path d="M12 3v3"></path><path d="M12 18v3"></path><path d="m4.8 4.8 2.1 2.1"></path><path d="m17.1 17.1 2.1 2.1"></path><path d="M3 12h3"></path><path d="M18 12h3"></path><path d="m4.8 19.2 2.1-2.1"></path><path d="m17.1 6.9 2.1-2.1"></path>',
     }
     path = paths.get(name, paths["overview"])
     return f'<span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">{path}</svg></span>'
@@ -1235,7 +1409,7 @@ def render_top_summary(snapshot: dict[str, Any]) -> str:
       <div class="hero-summary" aria-label="当前状态摘要">
         {render_status_metric("代理", short_proxy_label(snapshot), proxy_summary_tone(snapshot), "summary.proxy")}
         {render_status_metric("登录", short_login_label(snapshot), login_summary_tone(snapshot), "summary.login")}
-        {render_status_metric("速度", short_speed_label(snapshot), speed_summary_tone(snapshot), "summary.speed")}
+        {render_speed_metric(snapshot)}
         {render_status_metric("最近请求", request_label, request_tone, "summary.recentRequests")}
       </div>
 """
@@ -1332,6 +1506,10 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
             f'<button class="provider-delete" type="button" data-provider-action="delete" '
             f'data-provider="{name_attr}" data-i18n="button.delete">{ui_text("button.delete")}</button>'
         )
+        check_button = (
+            f'<button class="provider-check" type="button" data-provider-action="verify" '
+            f'data-provider="{name_attr}" data-i18n="button.checkProvider">{ui_text("button.checkProvider")}</button>'
+        )
         cards.append(f"""
             <article class="{card_class}" data-provider-name="{name_attr}">
               <div class="provider-main">
@@ -1344,6 +1522,7 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
               </div>
               <div class="provider-card-actions">
                 {status_pill}
+                {check_button}
                 {enable_button}
                 <button class="provider-edit" type="button" data-provider-action="edit" data-provider="{name_attr}" data-i18n="button.edit">{ui_text("button.edit")}</button>
                 {delete_button}
@@ -1398,7 +1577,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     proxy_enabled = show_runtime_controls
     action_buttons = ""
     danger_zone = ""
-    labels["update"] = "更新"
+    labels.update({
+        "update": "更新",
+        "checkUpdate": "检查更新",
+    })
     if show_runtime_controls:
         labels.update({
             "uninstall": "停用并恢复",
@@ -1441,6 +1623,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           <button id="newProvider" class="secondary" type="button" data-i18n="button.add">添加</button>
         </div>
         <p class="detail-note provider-note" data-i18n="provider.note">已启用后，这里只管理本地代理配置；不会改写 Codex config.toml。</p>
+        <p id="providerCheckFeedback" class="inline-feedback" role="status" aria-live="polite"></p>
         <div class="provider-split">
           <div class="provider-list-pane">
           <div class="provider-panel-header">
@@ -1490,38 +1673,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       </section>
 """
 
-    speed_controls = ""
-    if providers and proxy_enabled and not snapshot.get("chatgpt_auth"):
-        status_label, status_class = provider_status(snapshot)
-        speed_label = html.escape(speed_mode_label(snapshot))
-        speed_mode = speed_mode_from_snapshot(snapshot)
-        fast_checked = " checked" if speed_mode == "fast" else ""
-        standard_checked = " checked" if speed_mode == "standard" else ""
-        labels["saveSpeed"] = "保存速度模式"
-        disabled_speed = "" if show_runtime_controls else " disabled"
-        speed_controls = f"""
-      <section id="speedPanel" class="detail-panel">
-        <div class="detail-panel-head">
-          <div>
-            <span class="muted" data-i18n="speed.mode">速度模式</span>
-            <h2 id="providerSpeed">{speed_label}</h2>
-            <p data-i18n="speed.currentPolicy">当前策略</p>
-          </div>
-          <span id="providerStatus" class="status-pill {status_class}">{html.escape(status_label)}</span>
-        </div>
-        <div class="detail-panel-body">
-          <form id="speedForm" class="provider-form">
-            <fieldset>
-              <div class="segments">
-                <label><input type="radio" name="speedMode" value="fast"{fast_checked}><span data-i18n="value.fast">快速</span></label>
-                <label><input type="radio" name="speedMode" value="standard"{standard_checked}><span data-i18n="value.standard">标准</span></label>
-              </div>
-            </fieldset>
-            <button id="saveSpeed" type="submit"{disabled_speed} data-i18n="button.saveSpeed">保存速度模式</button>
-          </form>
-        </div>
-      </section>
-"""
+    if speed_controls_available(snapshot):
+        labels["saveSpeed"] = "保存"
+    if proxy_enabled:
+        labels.update({
+            "runBenchmark": "运行基准测试",
+            "confirmBenchmark": "运行快速测试",
+            "confirmStrictBenchmark": "运行严格测试",
+        })
     snapshot_json = html.escape(json.dumps(snapshot, ensure_ascii=False, indent=2))
     initial_snapshot_json = script_json(snapshot)
     translations_json = script_json(UI_TRANSLATIONS)
@@ -1532,8 +1691,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         ("overview", "nav.overview", "概览"),
         ("providers", "nav.providers", "供应商"),
     ]
-    if speed_controls:
-        nav_items.append(("speed", "nav.speed", "速度"))
     nav_items.extend([
         ("requests", "nav.requests", "请求记录"),
         ("advanced", "nav.advanced", "高级"),
@@ -1542,6 +1699,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         f'<button class="nav-item{" active" if key == "overview" else ""}" type="button" data-view="{key}">{nav_icon(key)}<span data-i18n="{label_key}">{label}</span></button>'
         for key, label_key, label in nav_items
     )
+    settings_nav = f'<button class="nav-item nav-settings" type="button" data-view="settings">{nav_icon("settings")}<span data-i18n="nav.settings">设置</span></button>'
     login_hint = (
         '<p class="hint-line" data-i18n="hint.chatgptSpeed">已检测到 ChatGPT 账户登录，速度控制由 Codex App 原生界面接管。</p>'
         if snapshot.get("chatgpt_auth") and proxy_enabled else ""
@@ -1555,17 +1713,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     else:
         provider_page_note_key = "providers.note.empty"
     provider_page_note = ui_text(provider_page_note_key)
-    speed_page = f"""
-        <section class="view-page" data-page="speed" hidden>
-          <div class="page-head">
-            <div>
-              <h1 data-i18n="speed.title">速度</h1>
-              <p data-i18n="speed.description">选择代理写入 service_tier 的方式。</p>
-            </div>
-          </div>
-          {speed_controls}
-        </section>
-""" if speed_controls else ""
+    benchmark_action = (
+        '<div class="panel-actions"><button id="runBenchmark" class="secondary" type="button" '
+        'data-i18n="button.runBenchmark">运行基准测试</button></div>'
+        if proxy_enabled else ""
+    )
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1685,7 +1837,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .sidebar-nav {{
       display: grid;
+      flex: 1;
       gap: 4px;
+      align-content: start;
+    }}
+    .nav-settings {{
+      margin-top: auto;
     }}
     .nav-item {{
       align-items: center;
@@ -1739,39 +1896,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .content-shell {{
       min-width: 0;
       padding: 26px 42px 48px;
-    }}
-    .content-toolbar {{
-      align-items: center;
-      display: flex;
-      gap: 16px;
-      justify-content: space-between;
-      margin: 0 auto 22px;
-      max-width: 980px;
-    }}
-    .content-toolbar span {{
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 400;
-    }}
-    .toolbar-controls {{
-      align-items: center;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: flex-end;
-    }}
-    .toolbar-select {{
-      align-items: center;
-      display: inline-flex;
-      gap: 7px;
-    }}
-    .toolbar-select span {{
-      color: var(--muted);
-      font-size: 14px;
-    }}
-    .toolbar-select select {{
-      min-height: 34px;
-      padding: 6px 28px 6px 10px;
     }}
     .view-page {{
       margin: 0 auto;
@@ -1872,13 +1996,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       background: var(--button-hover);
       border-color: var(--button-hover);
     }}
-    button.secondary, .provider-card-actions .provider-edit, #cancelProvider, #saveSpeed {{
+    button.secondary, .provider-card-actions .provider-edit, .provider-card-actions .provider-check, #cancelProvider, #saveSpeed {{
       background: var(--control-bg);
       border-color: var(--border);
       color: var(--text);
     }}
     button.secondary:hover:not(:disabled),
     .provider-card-actions .provider-edit:hover:not(:disabled),
+    .provider-card-actions .provider-check:hover:not(:disabled),
       #cancelProvider:hover:not(:disabled),
       #saveSpeed:hover:not(:disabled) {{
       background: var(--control-hover);
@@ -1953,6 +2078,63 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .detail-panel-body {{
       padding: 16px 18px;
+    }}
+    .panel-actions {{
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }}
+    .inline-feedback {{
+      color: var(--muted-strong);
+      font-size: 14px;
+      line-height: 1.55;
+      margin: 0;
+      min-height: 0;
+    }}
+    .provider-workspace > .inline-feedback {{
+      padding: 0 18px;
+    }}
+    .provider-workspace > .inline-feedback:not(:empty) {{
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      padding-bottom: 12px;
+    }}
+    .inline-confirm {{
+      align-items: center;
+      background: var(--surface-soft);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: flex;
+      gap: 16px;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding: 14px;
+    }}
+    .inline-confirm strong {{
+      color: var(--text);
+      display: block;
+      font-size: 15px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }}
+    .inline-confirm p {{
+      color: var(--muted-strong);
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0;
+    }}
+    .inline-confirm p + p {{
+      color: var(--muted);
+      margin-top: 4px;
+    }}
+    .inline-confirm-actions {{
+      display: flex;
+      flex: 0 0 auto;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
     }}
     .detail-note {{
       color: var(--muted);
@@ -2256,6 +2438,25 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .status-metric.ok strong {{ color: var(--green-text); }}
     .status-metric.warn strong {{ color: var(--red); }}
     .status-metric.idle strong {{ color: var(--muted-strong); }}
+    .summary-speed-control {{
+      gap: 8px;
+    }}
+    .summary-speed-form {{
+      display: grid;
+      gap: 8px;
+      margin-top: 1px;
+    }}
+    .summary-segments {{ gap: 6px; }}
+    .speed-hint {{
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+      margin: 0;
+    }}
+    .summary-speed-form button {{
+      min-height: 32px;
+      padding: 6px 10px;
+    }}
     form {{
       display: grid;
       gap: 11px;
@@ -2318,6 +2519,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .segments input {{
       margin: 0;
       padding: 0;
+    }}
+    .segments.summary-segments label {{
+      flex: 1 1 76px;
+      font-size: 14px;
+      min-height: 34px;
+      padding: 7px 9px;
     }}
     .subsection-title {{
       border-top: 1px solid var(--border);
@@ -2614,6 +2821,35 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       line-height: 1.6;
       margin: 0;
     }}
+    .settings-list {{
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }}
+    .settings-row {{
+      align-items: center;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 12px;
+      grid-template-columns: minmax(150px, .45fr) minmax(180px, .55fr);
+      padding: 12px 14px;
+    }}
+    .settings-row:last-child {{
+      border-bottom: 0;
+    }}
+    .settings-row span {{
+      color: var(--muted-strong);
+      font-size: 14px;
+      font-weight: 500;
+    }}
+    .settings-row select {{
+      justify-self: end;
+      min-width: 180px;
+    }}
+    .settings-note {{
+      margin: 10px 0 0;
+    }}
     details {{
       border-top: 1px solid var(--border);
       margin: 0;
@@ -2674,6 +2910,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .state {{ font-size: 28px; }}
       .hero {{ grid-template-columns: 1fr; }}
       .provider-split {{ grid-template-columns: 1fr; }}
+      .inline-confirm {{ align-items: stretch; flex-direction: column; }}
+      .inline-confirm-actions {{ justify-content: flex-start; }}
       .provider-editor {{
         border-left: 0;
         border-top: 1px solid var(--border);
@@ -2681,9 +2919,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .provider-panel-header, .provider-card {{ align-items: stretch; flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
       .actions button {{ width: 100%; }}
-      .content-toolbar {{ align-items: stretch; flex-direction: column; }}
-      .toolbar-controls {{ justify-content: flex-start; }}
-      .content-toolbar button, .provider-card-actions button, #newProvider, #cancelProvider {{ width: auto; }}
+      .provider-card-actions button, #newProvider, #cancelProvider, #checkUpdate, #update {{ width: auto; }}
       .status-row {{
         align-items: flex-start;
         gap: 4px;
@@ -2700,9 +2936,15 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       .diagnostic-row,
       .diagnostic-path,
-      .doctor-row {{
+      .doctor-row,
+      .settings-row {{
         align-items: flex-start;
         grid-template-columns: 1fr;
+      }}
+      .settings-row select {{
+        justify-self: stretch;
+        min-width: 0;
+        width: 100%;
       }}
       .diagnostic-row strong {{
         justify-self: start;
@@ -2720,30 +2962,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       <nav class="sidebar-nav">
         {sidebar_nav}
       </nav>
+      {settings_nav}
     </aside>
     <section class="content-shell">
-      <div class="content-toolbar">
-        <span data-i18n="page.title">Codex 控制面板</span>
-        <div class="toolbar-controls">
-          <label class="toolbar-select">
-            <span data-i18n="toolbar.language">语言</span>
-            <select id="languageSelect" aria-label="语言" data-i18n-aria-label="toolbar.language">
-              <option value="zh">中文</option>
-              <option value="en">English</option>
-              <option value="ja">日本語</option>
-            </select>
-          </label>
-          <label class="toolbar-select">
-            <span data-i18n="toolbar.theme">外观</span>
-            <select id="themeSelect" aria-label="外观" data-i18n-aria-label="toolbar.theme">
-              <option value="system" data-i18n="theme.system">跟随系统</option>
-              <option value="light" data-i18n="theme.light">浅色</option>
-              <option value="dark" data-i18n="theme.dark">深色</option>
-            </select>
-          </label>
-          <button id="update" class="secondary" data-action="update" data-i18n="button.update">更新</button>
-        </div>
-      </div>
         <section class="view-page active" data-page="overview">
           <div class="hero">
             <div class="hero-main">
@@ -2771,7 +2992,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         </div>
         {provider_page_body}
       </section>
-      {speed_page}
       <section class="view-page" data-page="requests" hidden>
         <div class="page-head">
           <div>
@@ -2798,8 +3018,21 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
               <h2 data-i18n="requests.opsTitle">Provider 检查与性能基准</h2>
               <p data-i18n="requests.opsDescription">这些记录来自本地代理日志，不包含密钥。</p>
             </div>
+            {benchmark_action}
           </div>
           <div class="detail-panel-body">
+            <div id="benchmarkConfirm" class="inline-confirm" hidden>
+              <div>
+                <strong data-i18n="requests.benchmarkConfirmTitle">选择基准测试强度</strong>
+                <p data-i18n="requests.benchmarkConfirmText">快速测试运行 3 对请求，适合低成本观察；严格测试运行 12 对请求，使用平衡随机顺序和配对统计检验。</p>
+                <p data-i18n="requests.benchmarkCost">两种模式都会消耗真实额度；严格测试成本更高，但更适合判断本轮是否存在统计意义的加速迹象。</p>
+              </div>
+              <div class="inline-confirm-actions">
+                <button id="confirmBenchmark" type="button" data-benchmark-kind="quick" data-i18n="button.confirmBenchmark">运行快速测试</button>
+                <button id="confirmStrictBenchmark" class="secondary" type="button" data-benchmark-kind="strict" data-i18n="button.confirmStrictBenchmark">运行严格测试</button>
+                <button id="cancelBenchmark" class="secondary" type="button" data-i18n="button.cancel">取消</button>
+              </div>
+            </div>
             {render_operational_signals(snapshot)}
           </div>
         </section>
@@ -2867,6 +3100,60 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           </details>
         </section>
       </section>
+      <section class="view-page" data-page="settings" hidden>
+        <div class="page-head">
+          <div>
+            <h1 data-i18n="settings.title">设置</h1>
+            <p data-i18n="settings.description">控制面板偏好和版本更新。</p>
+          </div>
+        </div>
+        <section class="detail-panel settings-panel">
+          <div class="detail-panel-head">
+            <div>
+              <span class="muted" data-i18n="settings.preferences">偏好</span>
+              <h2 data-i18n="settings.preferences">偏好</h2>
+              <p data-i18n="settings.preferencesDescription">语言和外观只影响这个本地控制面板。</p>
+            </div>
+          </div>
+          <div class="detail-panel-body">
+            <div class="settings-list">
+              <label class="settings-row">
+                <span data-i18n="toolbar.language">语言</span>
+                <select id="languageSelect" aria-label="语言" data-i18n-aria-label="toolbar.language">
+                  <option value="zh">中文</option>
+                  <option value="en">English</option>
+                  <option value="ja">日本語</option>
+                </select>
+              </label>
+              <label class="settings-row">
+                <span data-i18n="toolbar.theme">外观</span>
+                <select id="themeSelect" aria-label="外观" data-i18n-aria-label="toolbar.theme">
+                  <option value="system" data-i18n="theme.system">跟随系统</option>
+                  <option value="light" data-i18n="theme.light">浅色</option>
+                  <option value="dark" data-i18n="theme.dark">深色</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+        <section class="detail-panel settings-panel">
+          <div class="detail-panel-head">
+            <div>
+              <span class="muted" data-i18n="settings.updates">版本更新</span>
+              <h2 data-i18n="settings.updates">版本更新</h2>
+              <p data-i18n="settings.updatesDescription">先检查远端状态，再决定是否更新本地代理。</p>
+            </div>
+            <div class="panel-actions">
+              <button id="checkUpdate" class="secondary" type="button" data-i18n="button.checkUpdate">检查更新</button>
+              <button id="update" class="secondary" data-action="update" data-i18n="button.update">更新</button>
+            </div>
+          </div>
+          <div class="detail-panel-body">
+            <p id="settingsUpdateFeedback" class="inline-feedback" role="status" aria-live="polite" data-i18n="settings.updateIdle">还没有检查更新。</p>
+            <p class="detail-note settings-note" data-i18n="settings.updateNote">检查更新是只读操作；更新会拉取代码并刷新本地运行时。</p>
+          </div>
+        </section>
+      </section>
     </section>
   </main>
   <script>
@@ -2878,6 +3165,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     const stateTranslations = {state_translations_json};
     const localeStorageKey = 'codex-fast-proxy.locale';
     const themeStorageKey = 'codex-fast-proxy.theme';
+    const viewStorageKey = 'codex-fast-proxy.view';
     const supportedLocales = ['zh', 'en', 'ja'];
     const supportedThemes = ['system', 'light', 'dark'];
     const localeLang = {{ zh: 'zh-CN', en: 'en', ja: 'ja' }};
@@ -2899,10 +3187,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         {{ delay: 20000, label: '更新仍在继续...', labelKey: 'action.update.slow.label', message: '仍在等待本地更新完成，请保持控制面板打开。', messageKey: 'action.update.slow.message' }},
         {{ delay: 30000, label: '正在等待新版界面...', labelKey: 'action.update.waitUi.label', message: '更新已完成后会自动切换到新版控制面板，请不要手动刷新。', messageKey: 'action.update.waitUi.message' }}
       ],
+      'check-update': [
+        {{ delay: 0, label: '正在检查...', labelKey: 'action.checkUpdate.start.label', message: '正在读取远端分支和本地工作区状态。', messageKey: 'action.checkUpdate.start.message' }}
+      ],
       'save-provider': [
         {{ delay: 0, label: '正在保存并验证...', labelKey: 'action.saveProvider.start.label', message: '正在保存，并验证模型服务是否可用。', messageKey: 'action.saveProvider.start.message' }},
         {{ delay: 6000, label: '正在验证模型服务...', labelKey: 'action.enable.verify.label', message: '正在发起一次真实响应接口流式检查，完成后会自动更新页面。', messageKey: 'action.saveProvider.verify.message' }},
         {{ delay: 18000, label: '模型服务响应较慢...', labelKey: 'action.enable.slow.label', message: '仍在等待模型服务响应；如果验证失败，当前设置会保持不变。', messageKey: 'action.saveProvider.slow.message' }}
+      ],
+      'verify-provider': [
+        {{ delay: 0, label: '正在检查...', labelKey: 'action.verifyProvider.start.label', message: '正在发起一次真实 Responses 流式检查。', messageKey: 'action.verifyProvider.start.message' }},
+        {{ delay: 12000, label: '检查仍在继续...', labelKey: 'action.verifyProvider.slow.label', message: '模型服务响应较慢，请保持页面打开。', messageKey: 'action.verifyProvider.slow.message' }}
       ],
       'switch-provider': [
         {{ delay: 0, label: '正在切换...', labelKey: 'action.switchProvider.start.label', message: '正在切换，并验证新的模型服务。', messageKey: 'action.switchProvider.start.message' }},
@@ -2916,6 +3211,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         {{ delay: 0, label: '正在保存...', labelKey: 'action.speed.start.label', message: '正在保存当前选择。', messageKey: 'action.speed.start.message' }},
         {{ delay: 6000, label: '正在验证模型服务...', labelKey: 'action.enable.verify.label', message: '正在确认当前模型服务仍可正常响应。', messageKey: 'action.saveProvider.verify.message' }},
         {{ delay: 18000, label: '模型服务响应较慢...', labelKey: 'action.enable.slow.label', message: '仍在等待模型服务响应；如果验证失败，当前设置会保持不变。', messageKey: 'action.saveProvider.slow.message' }}
+      ],
+      'run-benchmark': [
+        {{ delay: 0, label: '正在运行...', labelKey: 'action.benchmark.start.label', message: '正在发起标准和优先请求。', messageKey: 'action.benchmark.start.message' }},
+        {{ delay: 30000, label: '基准测试仍在继续...', labelKey: 'action.benchmark.slow.label', message: '这一步取决于模型服务响应速度，完成后会刷新结果。', messageKey: 'action.benchmark.slow.message' }}
       ],
       uninstall: [
         {{ delay: 0, label: '正在恢复直连...', labelKey: 'action.uninstall.start.label', message: '正在恢复 Codex 原模型服务，并准备清理本地代理。', messageKey: 'action.uninstall.start.message' }},
@@ -2965,11 +3264,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function buttonLabel(id, fallback = '') {{
       const keys = {{
         update: 'button.update',
+        checkUpdate: 'button.checkUpdate',
         uninstall: 'button.uninstall',
         confirmUninstall: 'button.confirmUninstall',
         finishCleanup: 'button.finishCleanup',
         saveProvider: 'button.saveProvider',
-        saveSpeed: 'button.saveSpeed'
+        saveSpeed: 'button.saveSpeed',
+        runBenchmark: 'button.runBenchmark',
+        confirmBenchmark: 'button.confirmBenchmark'
       }};
       return t(keys[id], fallback);
     }}
@@ -3036,6 +3338,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       resetSummary(snapshot);
       updateStatusPanel(snapshot);
       updateDiagnosticsWorkspace(snapshot);
+      updateSettingsWorkspace(snapshot);
+      updateProviderFeedback(snapshot);
       const editorTitle = $('providerEditorTitle');
       if (editorTitle && editorTitle.dataset.editorMode) {{
         editorTitle.textContent = t(editorTitle.dataset.editorMode, editorTitle.textContent);
@@ -3060,6 +3364,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const baseUrl = record && record.base_url ? String(record.base_url) : t('provider.noService', '未设置模型服务');
       const isCurrent = Boolean(record && record.current) || name === currentName;
       const statusPill = isCurrent ? `<span class="status-pill ok">${{escapeHtml(t('value.inUse', '使用中'))}}</span>` : '';
+      const checkButton = `<button class="provider-check" type="button" data-provider-action="verify" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.checkProvider', '检查'))}}</button>`;
       const enableButton = isCurrent ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.switch', '启用'))}}</button>`;
       const deleteButton = record && record.deletable ? `<button class="provider-delete" type="button" data-provider-action="delete" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.delete', '删除'))}}</button>` : '';
       const avatar = (name.trim().charAt(0) || '?').toUpperCase();
@@ -3075,6 +3380,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
               </div>
               <div class="provider-card-actions">
                 ${{statusPill}}
+                ${{checkButton}}
                 ${{enableButton}}
                 <button class="provider-edit" type="button" data-provider-action="edit" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.edit', '编辑'))}}</button>
                 ${{deleteButton}}
@@ -3088,6 +3394,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (list) {{
         const currentName = currentProviderName(snapshot);
         list.innerHTML = providerRecords.map((item) => renderProviderCard(item, currentName)).join('');
+      }}
+    }}
+    function updateProviderFeedback(snapshot) {{
+      const feedback = $('providerCheckFeedback');
+      if (!feedback) return;
+      const state = snapshot.user_state || {{}};
+      if (state.code === 'provider_verified') {{
+        feedback.textContent = translatedState(state).message || state.message || t('provider.saved', '已保存');
+      }} else {{
+        feedback.textContent = '';
       }}
     }}
     function resetControls(userState, snapshot) {{
@@ -3252,6 +3568,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const speedInput = document.querySelector(`input[name="speedMode"][value="${{speedMode}}"]`);
       if (speedInput) speedInput.checked = true;
     }}
+    function hasProviderCandidate(snapshot) {{
+      return (Array.isArray(snapshot.providers) && snapshot.providers.length > 0) ||
+        Boolean(snapshot.provider || snapshot.upstream_base || snapshot.config_base_url || snapshot.base_url);
+    }}
+    function speedControlsAvailable(snapshot) {{
+      const state = snapshot.user_state || {{}};
+      const terminalState = ['cleanup_pending', 'uninstalled_deferred', 'uninstalled'].includes(state.code);
+      const apiKeyLogin = Boolean(snapshot.api_key_auth || snapshot.login_mode === 'api_key');
+      return hasProviderCandidate(snapshot) && Boolean(snapshot.base_url) && apiKeyLogin && !snapshot.chatgpt_auth && !terminalState;
+    }}
     function displayValue(value, fallback) {{
       return typeof value === 'string' && value ? value : fallback;
     }}
@@ -3390,6 +3716,20 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       updateDiagnosticRow('telemetry', diagnosticTelemetryInfo(snapshot));
       updateDiagnosticRow('next', diagnosticNextInfo(snapshot));
       if (latestDoctorReport) renderDoctorReport(latestDoctorReport);
+    }}
+    function updateSettingsWorkspace(snapshot) {{
+      const feedback = $('settingsUpdateFeedback');
+      if (!feedback) return;
+      const state = snapshot.user_state || {{}};
+      const updateCodes = ['update_checked_dirty', 'update_available', 'already_current', 'update_blocked', 'updated'];
+      if (updateCodes.includes(state.code)) {{
+        const text = translatedState(state);
+        feedback.textContent = text.message || text.title;
+        feedback.removeAttribute('data-i18n');
+      }} else {{
+        feedback.dataset.i18n = 'settings.updateIdle';
+        feedback.textContent = t('settings.updateIdle', '还没有检查更新。');
+      }}
     }}
     function diagnosticExportText() {{
       const payload = {{
@@ -3580,6 +3920,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     function showView(view) {{
       const target = view || 'overview';
+      if (!document.querySelector(`.view-page[data-page="${{target}}"]`)) return;
       document.querySelectorAll('.view-page[data-page]').forEach((page) => {{
         const active = page.dataset.page === target;
         page.hidden = !active;
@@ -3588,6 +3929,15 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       document.querySelectorAll('.nav-item[data-view]').forEach((item) => {{
         item.classList.toggle('active', item.dataset.view === target);
       }});
+      window.sessionStorage.setItem(viewStorageKey, target);
+    }}
+    function currentActiveView() {{
+      const active = document.querySelector('.view-page.active[data-page]');
+      return active ? active.dataset.page || 'overview' : 'overview';
+    }}
+    function showBenchmarkConfirm(show) {{
+      const panel = $('benchmarkConfirm');
+      if (panel) panel.hidden = !show;
     }}
     function resetSummary(snapshot) {{
       const providerSpeed = $('providerSpeed');
@@ -3631,7 +3981,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const shouldShowProviderPanel = providerAvailable && proxyEnabled;
       const shouldShowCodexConfigPanel = providerAvailable && !proxyEnabled && !terminalState;
       const hasSpeedForm = Boolean($('speedForm'));
-      const shouldShowSpeedForm = shouldShowProviderPanel && !snapshot.chatgpt_auth;
+      const shouldShowSpeedForm = speedControlsAvailable(snapshot);
       return hasRuntimeControls !== shouldShowRuntimeControls ||
         hasCodexConfigPanel !== shouldShowCodexConfigPanel ||
         hasProviderPanel !== shouldShowProviderPanel ||
@@ -3645,6 +3995,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       const userState = snapshot.user_state || {{}};
       updateDiagnosticsWorkspace(snapshot);
+      updateSettingsWorkspace(snapshot);
+      updateProviderFeedback(snapshot);
       renderLocalTimes();
       const button = $('primary');
       button.dataset.action = userState.primary_action || 'diagnostics';
@@ -3659,6 +4011,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     applyTheme();
     applyLocale(currentSnapshot);
     renderLocalTimes();
+    const savedView = window.sessionStorage.getItem(viewStorageKey);
+    if (savedView) showView(savedView);
     document.querySelectorAll('.nav-item[data-view]').forEach((item) => {{
       item.addEventListener('click', () => showView(item.dataset.view));
     }});
@@ -3701,7 +4055,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         await reloadWhenControlUiReady(data.action.control_ui);
         return;
       }}
+      if (data.action && data.action.reload_required) {{
+        window.sessionStorage.setItem(viewStorageKey, currentActiveView());
+        window.location.reload();
+        return;
+      }}
       render(data.snapshot);
+      return data;
     }}
     async function reloadWhenControlUiReady(controlUi) {{
       const url = controlUi.url;
@@ -3770,6 +4130,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
     }});
     if ($('update')) $('update').addEventListener('click', (event) => runButton(event.currentTarget, 'update'));
+    if ($('checkUpdate')) $('checkUpdate').addEventListener('click', (event) => runButton(event.currentTarget, 'check-update'));
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('finishCleanup')) $('finishCleanup').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
@@ -3806,10 +4167,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (button.dataset.providerAction === 'switch') {{
         await runButton(button, 'switch-provider', {{ provider }});
       }}
+      if (button.dataset.providerAction === 'verify') {{
+        await runButton(button, 'verify-provider', {{ provider }});
+      }}
       if (button.dataset.providerAction === 'delete') {{
         if (window.confirm(`${{t('button.delete', '删除')}} ${{provider}}?`)) await runButton(button, 'delete-provider', {{ provider }});
       }}
     }});
+    if ($('runBenchmark')) $('runBenchmark').addEventListener('click', () => showBenchmarkConfirm(true));
+    if ($('cancelBenchmark')) $('cancelBenchmark').addEventListener('click', () => showBenchmarkConfirm(false));
+    async function confirmBenchmark(event) {{
+      showBenchmarkConfirm(false);
+      await runButton(event.currentTarget, 'run-benchmark', {{
+        confirm: true,
+        benchmark_kind: event.currentTarget.dataset.benchmarkKind || 'quick'
+      }});
+    }}
+    if ($('confirmBenchmark')) $('confirmBenchmark').addEventListener('click', confirmBenchmark);
+    if ($('confirmStrictBenchmark')) $('confirmStrictBenchmark').addEventListener('click', confirmBenchmark);
     if ($('providerForm')) $('providerForm').addEventListener('submit', async (event) => {{
       event.preventDefault();
       await runButton($('saveProvider'), 'save-provider', {{

@@ -30,7 +30,7 @@ Fast/Priority routing is treated as a provider capability that should be measure
 - Patches `service_tier` only for `POST /v1/responses`, and only when the configured Fast policy
   allows it.
 - Preserves Codex App's manual Fast controls when the App sends its own `service_tier`.
-- Installs a trusted Codex `SessionStart` hook so future sessions can start a missing proxy.
+- Installs a trusted Codex `SessionStart` hook so future sessions can start the proxy and Control UI.
 - Provides a local Control UI for status, providers, request records, diagnostics, update, and
   uninstall.
 
@@ -68,11 +68,12 @@ Pages:
 - `概览`: running state, primary action, and a compact 2x2 summary.
 - `供应商`: before enable, read-only entries from Codex `config.toml`; after enable, provider add,
   edit, switch, delete, and masked API-key reveal.
-- `请求记录`: recent `/v1/responses` records, provider metadata checks, and benchmark results.
+- `请求记录`: recent `/v1/responses` records, provider checks, and quick/strict benchmark results.
 - `高级`: status summary, log paths, self-check, copy diagnostics, and JSON export.
+- `设置`: language, appearance, update checks, and updates.
 
-When Codex is signed in with ChatGPT, the Speed page is hidden because speed selection is controlled
-by Codex App's native UI. The summary shows `App 控制` for that state.
+When Codex is signed in with ChatGPT, proxy-side speed controls are hidden because speed selection
+is controlled by Codex App's native UI. The summary shows `App 控制` for that state.
 
 ## Common Workflows
 
@@ -168,14 +169,17 @@ hint, but the real latency effect depends on the upstream OpenAI-compatible prov
 accept `service_tier="priority"` without making the measured workload faster, and some may not echo
 priority metadata in the response.
 
-Use the built-in A/B benchmark as the source of truth for your current provider and model:
+Use the built-in A/B benchmark as a local observation tool for your current provider and model:
 
 ```text
 Run the Codex Model Gateway A/B benchmark
 ```
 
-Benchmark results separate three facts: whether priority requests were accepted, whether the
-measured workload got faster, and whether provider response metadata explicitly confirmed priority.
+The Control UI offers a quick 3-pair benchmark and a stricter 12-pair benchmark. Strict mode uses
+direct API sampling, balanced random order, per-sample prompt cache isolation, and paired statistics.
+Results separate provider support signals from latency observations: whether priority requests were
+accepted, whether provider response metadata explicitly confirmed priority, and whether this run
+showed statistically meaningful acceleration. Latency alone is not treated as proof of fast support.
 
 ## Safety
 

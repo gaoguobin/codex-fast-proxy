@@ -388,6 +388,11 @@ def append_autostart_event(paths: ProxyPaths, event: dict[str, Any]) -> None:
 def should_log_autostart_event(event: dict[str, Any], quiet: bool) -> bool:
     if not quiet:
         return True
+    control_ui = event.get("control_ui")
+    if isinstance(control_ui, dict) and control_ui.get("status") not in {None, "ready", "skipped"}:
+        return True
+    if isinstance(control_ui, dict) and control_ui.get("started_background_process"):
+        return True
     return event.get("status") not in {"already_running", "skipped"}
 
 
