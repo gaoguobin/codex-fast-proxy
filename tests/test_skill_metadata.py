@@ -22,7 +22,8 @@ class SkillMetadataTests(unittest.TestCase):
 
         self.assertEqual(set(fields), {"name", "description"})
         self.assertEqual(fields["name"], "codex-fast-proxy")
-        self.assertIn("Codex App Fast proxy", fields["description"])
+        self.assertIn("Codex Model Gateway", fields["description"])
+        self.assertIn("provider management", fields["description"])
         self.assertIn("install --start", body)
 
     def test_codex_docs_delegate_skill_links_to_manager(self) -> None:

@@ -1,11 +1,11 @@
-# codex-fast-proxy model service settings for Codex
+# Codex Model Gateway model service settings for Codex
 
 Use these instructions when an engineer asks Codex to change the model service URL or API key used
-by an already enabled Codex Fast proxy.
+by an already enabled Codex Model Gateway installation.
 
 ## Normal path
 
-Open the Control UI and let the user edit `模型服务`:
+Open the Control UI and let the user manage the provider from `供应商`:
 
 ```powershell
 python -m codex_fast_proxy ui
@@ -16,7 +16,8 @@ starts a local background Control UI server that must stay alive after the launc
 
 Report the printed URL as plain text. The UI saves through the manager, verifies a streaming
 `POST /v1/responses` route before committing settings, stores API keys only in the proxy-managed
-provider auth file, and never prints the key.
+provider auth file, and never prints the key. It supports provider add, edit, switch, delete, and
+masked key reveal after the proxy is enabled.
 
 Do not edit the active provider `base_url` in `~/.codex/config.toml` directly while the proxy is
 enabled. That field should keep pointing to the local proxy.
@@ -61,4 +62,5 @@ current proxy-backed Codex sessions. If `restart_required=true` or final `status
 tell the user to restart Codex App, open a new CLI process, or run `python -m codex_fast_proxy start`
 later to apply the new settings.
 
-Never print API key values, `auth.json` contents, ChatGPT tokens, cookies, request bodies, or prompts.
+Never print API key values, `auth.json` contents, provider-auth file contents, ChatGPT tokens,
+cookies, request bodies, or prompts.

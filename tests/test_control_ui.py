@@ -28,6 +28,7 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     ControlHandler,
     control_ui_identity,
     control_ui_runtime_paths,
+    doctor_payload,
     find_existing_control_ui,
     is_loopback_host,
     open_control_ui,
@@ -70,6 +71,23 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(snapshot["user_state"]["primary_action"], "enable")
         self.assertEqual(snapshot["providers"][0]["name"], "acme")
         self.assertEqual(snapshot["providers"][0]["base_url"], "https://api.acme.test/v1")
+
+    def test_status_snapshot_without_provider_uses_specific_missing_provider_state(self) -> None:
+        self.paths.config_path.write_text("", encoding="utf-8")
+
+        snapshot = collect_status(str(self.codex_home))
+
+        self.assertEqual(snapshot["user_state"]["code"], "missing_provider")
+        self.assertEqual(snapshot["user_state"]["title"], "需要先配置供应商")
+        self.assertIn("没有检测到可接管的第三方模型服务入口", snapshot["user_state"]["message"])
+        self.assertIn("还没有发起上游请求", snapshot["user_state"]["message"])
+        self.assertEqual(snapshot["user_state"]["primary_action"], "diagnostics")
+        self.assertEqual(snapshot["providers"], [])
+
+        html = render_page(snapshot, "token")
+        self.assertIn("还没有检测到 Codex config.toml 里的供应商入口。", html)
+        self.assertIn("还没有可显示的供应商。请先在 Codex config.toml 配置 provider。", html)
+        self.assertNotIn("还没有可管理的供应商。", html)
 
     def test_status_snapshot_lists_multiple_providers_without_proxy_url(self) -> None:
         settings = manager.ProxySettings(
@@ -179,9 +197,22 @@ class ControlUiTests(unittest.TestCase):
         )
 
         self.assertIn("Codex 控制面板", html)
+        self.assertIn("Codex Model Gateway", html)
+        self.assertNotIn("Codex Fast Proxy</strong>", html)
         self.assertIn("启用", html)
         self.assertIn("更新", html)
-        self.assertNotIn("停用并恢复", html)
+        self.assertNotIn('id="uninstall"', html)
+        self.assertIn('id="languageSelect"', html)
+        self.assertIn('<option value="zh">中文</option>', html)
+        self.assertIn('<option value="en">English</option>', html)
+        self.assertIn('<option value="ja">日本語</option>', html)
+        self.assertIn('id="themeSelect"', html)
+        self.assertIn('value="system" data-i18n="theme.system"', html)
+        self.assertIn('const translations = ', html)
+        self.assertIn('const stateTranslations = ', html)
+        self.assertIn("codex-fast-proxy.locale", html)
+        self.assertIn("codex-fast-proxy.theme", html)
+        self.assertIn(':root[data-theme="dark"]', html)
         self.assertIn('id="codexConfigPanel"', html)
         self.assertNotIn('id="providerPanel"', html)
         self.assertIn("Codex 配置", html)
@@ -208,17 +239,28 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("运行状态", html)
         self.assertIn("请求记录", html)
         self.assertIn('data-page="providers"', html)
-        self.assertIn("请求链路", html)
-        self.assertIn("route-map", html)
+        self.assertIn("运行状态", html)
+        self.assertIn("status-list", html)
+        self.assertIn("status-row emphasized", html)
         self.assertIn("hero-summary", html)
-        self.assertIn("<span>速度</span>", html)
-        self.assertIn("<span>最近请求</span>", html)
-        self.assertIn("status-metrics", html)
+        self.assertIn("api.acme.test/v1", html)
+        self.assertIn('<span data-i18n="summary.speed">速度</span>', html)
+        self.assertIn('<span data-i18n="summary.recentRequests">最近请求</span>', html)
+        self.assertIn("status-metric", html)
         self.assertIn("request-table", html)
         self.assertNotIn("Codex 当前入口", html)
         self.assertNotIn('name="speedMode" value="fast" checked', html)
         self.assertNotIn('name="speedMode" value="standard"', html)
-        self.assertIn("重启 Codex 前请用外部浏览器打开此页面", html)
+        self.assertIn("这里汇总运行时、配置、登录、启动钩子和日志路径", html)
+        self.assertIn('id="runDoctor"', html)
+        self.assertIn('id="copyDiagnostics"', html)
+        self.assertIn('id="downloadDiagnostics"', html)
+        self.assertIn('id="refreshDiagnostics"', html)
+        self.assertIn('id="diagnosticsFeedback"', html)
+        self.assertIn("状态摘要", html)
+        self.assertIn("日志路径", html)
+        self.assertIn("自检结果", html)
+        self.assertIn("诊断导出不包含密钥", html)
         self.assertIn("正在准备环境", html)
         self.assertIn("正在验证模型服务", html)
         self.assertIn("首次启用可能需要几十秒", html)
@@ -233,6 +275,10 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("如果验证失败，当前设置会保持不变。", html)
         self.assertIn("高级诊断", html)
         self.assertIn('id="diagnosticsPanel"', html)
+        self.assertIn("/api/doctor", html)
+        self.assertIn("copyDiagnostics", html)
+        self.assertIn("downloadDiagnostics", html)
+        self.assertIn("renderDoctorReport", html)
         self.assertIn('const token = "token";', html)
         self.assertNotIn("&quot;token&quot;", html)
 
@@ -268,20 +314,20 @@ class ControlUiTests(unittest.TestCase):
         )
 
         self.assertIn("最近请求", html)
-        self.assertIn("<th>时间</th>", html)
-        self.assertIn('title="首响应（TTFB / Time to first byte）">首响应<small>（TTFB）</small></span>', html)
-        self.assertIn('title="首文本（TTFT / Time to first token）">首文本<small>（TTFT）</small></span>', html)
-        self.assertIn('title="完整耗时（E2E / End-to-end latency）">完整耗时<small>（E2E）</small></span>', html)
-        self.assertIn("<th>速度模式</th>", html)
+        self.assertIn('<th data-i18n="table.time">时间</th>', html)
+        self.assertIn('title="首响应：收到上游第一个响应字节" data-i18n="table.firstResponse">首响应</span>', html)
+        self.assertIn('title="首文本：收到第一个可见文本" data-i18n="table.firstText">首文本</span>', html)
+        self.assertIn('title="完整耗时：请求从开始到结束的总耗时" data-i18n="table.totalDuration">完整耗时</span>', html)
+        self.assertIn('<th data-i18n="table.speedMode">速度模式</th>', html)
         self.assertNotIn("<th>Tier</th>", html)
         self.assertNotIn("<th>首包</th>", html)
         self.assertNotIn("<th>首字</th>", html)
         self.assertIn('class="local-time" datetime="2026-05-18T11:41:19.293+00:00"', html)
-        self.assertIn('title="POST /v1/responses">POST /v1/responses</td>', html)
+        self.assertIn('title="post /v1/responses">post /v1/responses</td>', html)
         self.assertIn('<span class="status-pill ok"', html)
         self.assertIn(">正常</span>", html)
-        self.assertIn("首响应（TTFB）", html)
-        self.assertIn("首文本（TTFT）", html)
+        self.assertIn("首响应：收到上游第一个响应字节", html)
+        self.assertIn("首文本：收到第一个可见文本", html)
         self.assertIn('>1.234s</td>', html)
         self.assertIn('>2.346s</td>', html)
         self.assertIn("<td class=\"number-cell\">32.066s</td>", html)
@@ -357,7 +403,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("0.784s", html)
         self.assertIn("0.500s -&gt; 0.357s", html)
         self.assertIn("样本 default 3/3，priority 3/3", html)
-        self.assertIn("GET /v1/models", html)
+        self.assertIn("get /v1/models", html)
         self.assertIn(">异常</span>", html)
         self.assertIn("request_id: req-demo", html)
         self.assertIn("error_type: client_disconnected", html)
@@ -427,7 +473,7 @@ class ControlUiTests(unittest.TestCase):
             "token",
         )
 
-        self.assertIn(">N/A</td>", html)
+        self.assertIn(">不适用</td>", html)
 
     def test_provider_management_is_collapsed_by_default(self) -> None:
         html = render_page(
@@ -485,9 +531,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("apiKeyFormValue()", html)
         self.assertIn("/api/provider-key?provider=", html)
         self.assertIn('data-provider-action="switch"', html)
-        self.assertIn('data-provider="other">启用</button>', html)
-        self.assertIn('data-provider="other">删除</button>', html)
-        self.assertIn('<span class="status-pill ok">使用中</span>', html)
+        self.assertIn('data-provider="other" data-i18n="button.switch">启用</button>', html)
+        self.assertIn('data-provider="other" data-i18n="button.delete">删除</button>', html)
+        self.assertIn('<span class="status-pill ok" data-i18n="value.inUse">使用中</span>', html)
         self.assertNotIn("已配置", html)
         self.assertIn("https://api.other.test/v1", html)
         self.assertNotIn("providerSelect", html)
@@ -593,8 +639,9 @@ class ControlUiTests(unittest.TestCase):
             "token",
         )
 
-        self.assertNotIn("停用并恢复", html)
-        self.assertNotIn("速度模式", html)
+        self.assertNotIn('id="uninstall"', html)
+        self.assertNotIn('id="speedPanel"', html)
+        self.assertNotIn('id="speedForm"', html)
 
     def test_control_page_cleanup_state_offers_reenable_and_finish_cleanup(self) -> None:
         html = render_page(
@@ -617,7 +664,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('id="finishCleanup"', html)
         self.assertIn("完成清理", html)
         self.assertIn("else if (action === 'uninstall') await runButton", html)
-        self.assertNotIn("停用并恢复", html)
+        self.assertNotIn('id="uninstall"', html)
 
     def test_control_page_restores_maintenance_button_labels_after_action(self) -> None:
         html = render_page(
@@ -637,7 +684,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('"uninstall": "停用并恢复"', html)
         self.assertIn('"confirmUninstall": "我知道可能导致模型请求失败，仍要停用"', html)
         self.assertIn('"saveProvider": "保存"', html)
-        self.assertIn("saveProvider.textContent = record ? '更新' : '保存'", html)
+        self.assertIn("providerEditorActionLabel(saveProvider.dataset.providerMode)", html)
         self.assertIn('"saveSpeed": "保存速度模式"', html)
         self.assertIn("正在保存并验证...", html)
         self.assertIn("resetControls(userState, snapshot);", html)
@@ -671,6 +718,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("let disconnected = !waitForDisconnect;", html)
         self.assertIn("controlUi.reload_after_ms", html)
         self.assertIn("shouldReloadForSnapshot(snapshot)", html)
+        self.assertIn("const hasRuntimeControls = Boolean($('dangerZone') || $('uninstall'));", html)
+        self.assertNotIn("Boolean($('update') || $('uninstall'))", html)
         self.assertIn("window.location.reload();", html)
         self.assertIn("正在等待新版界面...", html)
         self.assertIn("查看诊断", html)
@@ -722,8 +771,28 @@ class ControlUiTests(unittest.TestCase):
         )
 
         self.assertNotIn('id="speedPanel"', html)
-        self.assertNotIn("保存速度模式", html)
+        self.assertNotIn('id="speedForm"', html)
         self.assertIn("ChatGPT 账户登录", html)
+
+    def test_control_page_maps_fast_behavior_names_to_summary_labels(self) -> None:
+        html = render_page(
+            {
+                "base_url": "http://127.0.0.1:8787/v1",
+                "provider": "acme",
+                "fast_behavior": "auto_global_priority",
+                "user_state": {
+                    "title": "运行正常",
+                    "message": "Codex 已准备好继续使用当前模型服务。",
+                    "primary_action": "uninstall",
+                    "primary_label": "停用并恢复",
+                },
+            },
+            "token",
+        )
+
+        self.assertIn('<span data-i18n="summary.speed">速度</span>', html)
+        self.assertIn("<strong>快速</strong>", html)
+        self.assertIn("auto_global_priority", html)
 
     def test_configure_upstream_errors_are_user_facing(self) -> None:
         message = user_error_message(
@@ -756,6 +825,20 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["user_state"]["title"], "已是最新")
         self.assertIn("最新版本", result["user_state"]["message"])
         self.assertNotIn("重新打开控制面板", result["user_state"]["message"])
+
+    def test_update_action_blocked_local_changes_preserves_operational_context(self) -> None:
+        with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
+            "status": "blocked",
+            "code": "local_changes",
+            "next_user_action": "请先处理本地改动，再从控制面板更新。",
+        }):
+            result = run_update(str(self.codex_home))
+
+        self.assertEqual(result["user_state"]["code"], "update_blocked")
+        self.assertEqual(result["user_state"]["title"], "更新被暂停")
+        self.assertIn("当前代理状态不受影响", result["user_state"]["message"])
+        self.assertIn("请先处理本地改动", result["user_state"]["message"])
+        self.assertEqual(result["user_state"]["primary_action"], "diagnostics")
 
     def test_update_action_prompts_to_reopen_control_ui_after_code_update(self) -> None:
         with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
@@ -827,6 +910,18 @@ class ControlUiTests(unittest.TestCase):
     def test_provider_key_payload_rejects_missing_secret(self) -> None:
         with self.assertRaises(ValueError):
             provider_key_payload(str(self.codex_home), "missing")
+
+    def test_doctor_payload_returns_sanitized_control_ui_report(self) -> None:
+        payload = doctor_payload(str(self.codex_home), None)
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertIn("doctor", payload)
+        self.assertIn("checks", payload["doctor"])
+        names = [item["name"] for item in payload["doctor"]["checks"]]
+        self.assertIn("python", names)
+        self.assertIn("codex_config", names)
+        self.assertIn("active_provider", names)
+        self.assertNotIn("provider-secret", json.dumps(payload, ensure_ascii=False))
 
     def test_uninstall_control_action_schedules_state_cleanup(self) -> None:
         handler = object.__new__(ControlHandler)
@@ -905,7 +1000,7 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertEqual(result["user_state"]["title"], "停用前需要处理登录方式")
         self.assertIn("ChatGPT 账户登录", result["user_state"]["message"])
-        self.assertIn("API Key", result["user_state"]["message"])
+        self.assertIn("接口密钥", result["user_state"]["message"])
         self.assertNotIn("401", result["user_state"]["message"])
 
     def test_uninstall_cleanup_schedules_deep_install_removal_when_installed_repo_is_active(self) -> None:
@@ -1380,7 +1475,7 @@ class ControlUiTests(unittest.TestCase):
 
     def test_background_server_detaches_standard_input_and_hides_windows_console(self) -> None:
         with (
-            mock.patch("codex_fast_proxy.control_ui.os.name", "nt"),
+            mock.patch("codex_fast_proxy.control_ui.is_windows_platform", return_value=True),
             mock.patch("codex_fast_proxy.control_ui.subprocess.Popen") as popen,
         ):
             popen.return_value.pid = 1234

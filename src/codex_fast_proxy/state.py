@@ -147,6 +147,18 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
             "enable",
             "启用",
         )
+    elif code == "not_enabled" and not provider_ready:
+        message = (
+            "没有检测到可接管的第三方模型服务入口；当前还没有发起上游请求。"
+            "请先在 Codex config.toml 配置 provider，再回到控制面板启用。"
+        )
+        view = (
+            "missing_provider",
+            "需要先配置供应商",
+            message,
+            "diagnostics",
+            "打开高级诊断",
+        )
     else:
         view = (
             "needs_attention",

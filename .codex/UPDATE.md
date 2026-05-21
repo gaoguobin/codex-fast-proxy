@@ -1,6 +1,7 @@
-# codex-fast-proxy update for Codex
+# Codex Model Gateway update for Codex
 
-Use these instructions when an engineer asks Codex to update Codex App Fast proxy.
+Use these instructions when an engineer asks Codex to update Codex Model Gateway
+(`codex-fast-proxy` package and repo).
 
 ## Bootstrap gate
 
@@ -70,7 +71,12 @@ Report the printed URL as plain text:
 
 The UI action delegates to `python -m codex_fast_proxy update`; it owns git pull, editable reinstall,
 skill link refresh, enabled-runtime refresh, and final status reporting. Do not reimplement those
-steps in chat.
+steps in chat. If local changes exist, the update must stop with `status=blocked` and
+`code=local_changes`; do not overwrite the user's worktree.
+
+After an update, reopen or reload the Control UI and verify the visible user state. The current UI
+uses pages for Overview, Providers, Requests, and Advanced. The Advanced page should expose status
+summary, log paths, self-check, copy diagnostics, and JSON export.
 
 ## Check only
 
@@ -97,6 +103,8 @@ fetches from GitHub, reinstalls a Python package, writes under `~/.codex`, may r
 
 Use the returned JSON as the source of truth. Tell the user to restart Codex only when
 `restart_required=true`, final `needs_restart=true`, or the result explicitly reports that Codex must
-rescan skills.
+rescan skills. If the update refreshed skill files, also mention that a Codex App restart or new CLI
+process may be needed before natural-language skill discovery sees the latest instructions.
 
-Never print API key values, `auth.json` contents, ChatGPT tokens, cookies, request bodies, or prompts.
+Never print API key values, `auth.json` contents, provider-auth file contents, ChatGPT tokens,
+cookies, request bodies, or prompts.

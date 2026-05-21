@@ -1,4 +1,4 @@
-"""Codex Fast proxy package."""
+"""Codex Model Gateway package."""
 
 __all__ = ["__version__"]
 

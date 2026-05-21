@@ -1,6 +1,7 @@
-# codex-fast-proxy uninstall for Codex
+# Codex Model Gateway uninstall for Codex
 
-Use these instructions when an engineer asks Codex to uninstall Codex App Fast proxy.
+Use these instructions when an engineer asks Codex to uninstall Codex Model Gateway
+(`codex-fast-proxy` package and repo).
 
 ## Normal path
 
@@ -21,12 +22,15 @@ Report the printed URL as plain text. The UI uses the manager uninstall path:
   removal of the local runtime state, editable package, repository checkout, skill link, and backup
   directory;
 - if ChatGPT login is active and direct upstream may return 401, the manager returns
-  `confirmation_required` before changing files.
+  `confirmation_required` before changing files and the UI shows the confirmation action.
 
 The normal Control UI path restores the user's familiar Codex model-service setup first, returns a
 final success state to the page, and only then lets the Control UI shut down while a delayed cleanup
 removes the installed repository, editable Python package, skill link, runtime state, and local
 backup directory.
+
+Do not confuse the Control UI URL with the data proxy URL. The normal user should only see the
+Control UI URL and model-service status.
 
 ## CLI fallback
 
@@ -77,4 +81,5 @@ if (Test-Path $backupDir) {
 }
 ```
 
-Never print API key values, `auth.json` contents, ChatGPT tokens, cookies, request bodies, or prompts.
+Never print API key values, `auth.json` contents, provider-auth file contents, ChatGPT tokens,
+cookies, request bodies, or prompts.

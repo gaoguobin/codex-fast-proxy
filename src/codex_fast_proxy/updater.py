@@ -236,7 +236,14 @@ def update_installation(
         else:
             refresh_result = run_python_json(module_args("start", paths.codex_home), timeout=300.0)
     else:
-        refresh_result = run_python_json(module_args("doctor", paths.codex_home, selected_provider), timeout=120.0)
+        try:
+            refresh_result = run_python_json(module_args("doctor", paths.codex_home, selected_provider), timeout=120.0)
+        except ConfigError as exc:
+            refresh_result = {
+                "status": "attention",
+                "command": "doctor",
+                "error": str(exc),
+            }
     final_status = run_python_json(module_args("status", paths.codex_home, selected_provider), timeout=120.0)
 
     return {

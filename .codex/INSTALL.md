@@ -1,6 +1,7 @@
-# codex-fast-proxy install for Codex
+# Codex Model Gateway install for Codex
 
-Use these instructions when an engineer asks Codex to install or enable Codex App Fast proxy.
+Use these instructions when an engineer asks Codex to install or enable Codex Model Gateway
+(`codex-fast-proxy` package and repo).
 
 ## One-paste prompt for engineers
 
@@ -91,8 +92,9 @@ Give the user the returned `url` and say:
 
 If the `ui` command returns `status=error`, report the returned `error` and do not invent a URL.
 
-Do not claim the data proxy is enabled after file-only install. The user should use the Chinese
-Control UI and click `启用`. The UI prepares the current provider path, automatically selects an
+Do not claim the data proxy is enabled after file-only install. The user should use the Control UI
+and click `启用`. The UI defaults to Chinese, supports English and Japanese, and includes system,
+light, and dark appearances. It prepares the current provider path, automatically selects an
 available internal data-proxy port, prepares ChatGPT-login compatibility, then tells the user when
 to restart Codex.
 
@@ -102,12 +104,12 @@ usable from the external browser while Codex restarts.
 
 After restarting Codex App or opening a new CLI process, the user can ask:
 
-- `Open Codex Fast proxy Control UI`
-- `Enable Codex Fast proxy`
-- `Prepare Codex Fast proxy for ChatGPT account login`
-- `Enable global Fast injection for Codex Fast proxy`
-- `Show Codex Fast proxy status`
-- `Stop Codex Fast proxy`
+- `Open Codex Model Gateway Control UI`
+- `Enable Codex Model Gateway`
+- `Prepare Codex Model Gateway for ChatGPT account login`
+- `Enable global Fast injection for Codex Model Gateway`
+- `Show Codex Model Gateway status`
+- `Stop Codex Model Gateway`
 
 Default enable uses `--service-tier-policy auto`. In ChatGPT-login or unclear states this respects
 Codex App/CLI Fast UI choices; in API-key mode it may inject the priority tier when Codex omits
@@ -144,6 +146,17 @@ and auth source by sending one Codex-style `POST /v1/responses` request with `st
 real provider traffic and can consume a small amount of quota. If verification fails, do not retry
 with `--no-verify` unless the user explicitly accepts that the next Codex session may be unable to
 reach the model.
+
+The installed Control UI pages are:
+
+- `概览`: running state and compact summary.
+- `供应商`: read-only Codex config before enable; proxy-managed provider add/edit/switch/delete
+  after enable, with masked key reveal.
+- `请求记录`: recent requests, provider checks, and benchmark summary.
+- `高级`: status summary, log paths, self-check, copy diagnostics, and JSON export.
+
+When ChatGPT account login is detected, the Speed page is hidden because speed selection is handled
+by the Codex App native UI.
 
 Enable also writes the Codex hook feature flags and a trusted hook state entry. Treat
 `startup_hook: true` as installed, enabled, and trusted; if `startup_hook_trust` reports `modified`

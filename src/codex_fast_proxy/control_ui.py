@@ -168,6 +168,15 @@ class ControlHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/status":
             self.respond_json({"status": "ok", "snapshot": collect_snapshot(self.server)})
             return
+        if parsed.path == "/api/doctor":
+            if not self.write_allowed():
+                self.respond_json({"status": "error", "error": "forbidden"}, status=403)
+                return
+            try:
+                self.respond_json(doctor_payload(self.server.codex_home, self.server.provider))
+            except Exception as exc:
+                self.respond_json({"status": "error", "error": str(exc)}, status=400)
+            return
         if parsed.path == "/api/provider-key":
             if not self.write_allowed():
                 self.respond_json({"status": "error", "error": "forbidden"}, status=403)
@@ -331,6 +340,12 @@ def collect_snapshot(server: ControlServer) -> dict[str, Any]:
     return collect_status(server.codex_home, server.provider)
 
 
+def doctor_payload(codex_home: str | None, provider: str | None) -> dict[str, Any]:
+    from .manager import doctor_report
+
+    return {"status": "ok", "doctor": doctor_report(paths_for(codex_home), provider)}
+
+
 def provider_key_payload(codex_home: str | None, provider: str | None) -> dict[str, str]:
     from .auth_store import provider_auth_secret
 
@@ -339,7 +354,7 @@ def provider_key_payload(codex_home: str | None, provider: str | None) -> dict[s
         raise ValueError("Provider 不能为空。")
     api_key = provider_auth_secret(paths_for(codex_home), name)
     if not api_key:
-        raise ValueError("这个 Provider 没有保存 API Key。")
+        raise ValueError("这个 Provider 没有保存接口密钥。")
     return {"status": "ok", "provider": name, "api_key": api_key}
 
 
@@ -439,6 +454,10 @@ def ready_control_ui_result(url: str, *, started_background_process: bool, reuse
     }
 
 
+def is_windows_platform() -> bool:
+    return os.name == "nt"
+
+
 def start_background_server(codex_home: str | None, provider: str | None, host: str, port: int) -> dict[str, Any]:
     command = [
         sys.executable,
@@ -466,7 +485,7 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
         "stderr": stderr,
         "stdin": subprocess.DEVNULL,
         "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        "start_new_session": os.name != "nt",
+        "start_new_session": not is_windows_platform(),
     }
     try:
         process = subprocess.Popen(command, **kwargs)
@@ -517,7 +536,7 @@ def schedule_path_cleanup(path: Path, delay: float = 1.0) -> dict[str, Any]:
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        "start_new_session": os.name != "nt",
+        "start_new_session": not is_windows_platform(),
     }
     try:
         process = subprocess.Popen(command, **kwargs)
@@ -546,7 +565,7 @@ def schedule_install_cleanup(cleanup: dict[str, Any], delay: float = 4.0) -> dic
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        "start_new_session": os.name != "nt",
+        "start_new_session": not is_windows_platform(),
     }
     try:
         process = subprocess.Popen(command, **kwargs)
@@ -592,7 +611,7 @@ def schedule_control_ui_restart(
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        "start_new_session": os.name != "nt",
+        "start_new_session": not is_windows_platform(),
     }
     try:
         process = subprocess.Popen(launcher, **kwargs)

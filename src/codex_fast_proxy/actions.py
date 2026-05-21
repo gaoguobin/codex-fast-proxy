@@ -82,10 +82,11 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
 
     result = manager.update_installation(codex_home, provider)
     if result.get("status") == "blocked":
+        next_action = str(result.get("next_user_action") or "当前安装状态不能安全更新，请打开高级诊断。")
         result["user_state"] = state(
             "update_blocked",
             "更新被暂停",
-            str(result.get("next_user_action") or "当前安装状态不能安全更新，请打开高级诊断。"),
+            f"本地安装有未处理改动，更新已暂停；当前代理状态不受影响。{next_action}",
             "diagnostics",
             "打开高级诊断",
         )
@@ -164,7 +165,7 @@ def run_save_provider(
     result["user_state"] = state(
         "provider_saved",
         "Provider 已保存",
-        "模型服务地址和 API Key 已保存。需要使用它时，点击切换。",
+        "模型服务地址和接口密钥已保存。需要使用它时，点击切换。",
     )
     return result
 
@@ -256,7 +257,7 @@ def run_uninstall(codex_home: str | None, confirm_chatgpt_direct_uninstall: bool
             "停用前需要处理登录方式",
             (
                 "你现在是 ChatGPT 账户登录。直接停用后，Codex 可能无法继续使用当前模型服务。"
-                "建议先切回 API Key 或第三方服务登录，重启 Codex 后再回来停用。"
+                "建议先切回接口密钥或第三方服务登录，重启 Codex 后再回来停用。"
             ),
             "refresh",
             "刷新状态",

@@ -191,7 +191,7 @@ Review rubric:
 
 Operational examples:
 - A user installs the package from GitHub and restarts Codex so the skill is scanned.
-- The user asks Codex to enable Fast proxy; the manager starts the local server and switches base_url.
+- The user asks Codex to enable Codex Model Gateway; the manager starts the local server and switches base_url.
 - The current Codex process may keep its old provider config until restart.
 - A future session fires SessionStart and the hook quietly confirms the proxy is already healthy.
 - If the user updates the repo, explicit manager commands use the new code and can restart stale runtime.

@@ -2226,6 +2226,41 @@ class ManagerConfigTests(unittest.TestCase):
         run_python.assert_not_called()
         self.assertTrue(any(call[2] == "doctor" for call in json_calls))
 
+    def test_update_installation_keeps_unenabled_doctor_failure_as_attention(self) -> None:
+        repo = self.temp_dir / "repo"
+        repo.mkdir()
+        commit = "a" * 40
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            if args == ("rev-parse", "HEAD"):
+                return commit
+            raise AssertionError(args)
+
+        def fake_run_python_json(args, timeout=300.0):
+            if "doctor" in args:
+                raise ConfigError("not enabled")
+            if "status" in args:
+                return {"status": "stopped", "needs_restart": False}
+            raise AssertionError(args)
+
+        with (
+            mock.patch("codex_fast_proxy.updater.check_update", return_value={
+                "status": "checked",
+                "local_changes": False,
+                "relation": "same",
+            }),
+            mock.patch("codex_fast_proxy.updater.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.updater.run_python") as run_python,
+            mock.patch("codex_fast_proxy.updater.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.updater.link_skill_namespace", return_value={"status": "already_linked"}),
+        ):
+            result = manager.update_installation(self.temp_dir / ".codex", repo=repo, branch="main")
+
+        self.assertEqual(result["status"], "already_current")
+        self.assertEqual(result["refresh"]["status"], "attention")
+        self.assertIn("not enabled", result["refresh"]["error"])
+        run_python.assert_not_called()
+
     def test_update_installation_blocks_local_changes_before_pull_or_pip(self) -> None:
         repo = self.temp_dir / "repo"
         repo.mkdir()

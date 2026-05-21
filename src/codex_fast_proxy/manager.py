@@ -1438,7 +1438,7 @@ def add_shared_options(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Codex Fast proxy for OpenAI-compatible Responses API providers.")
+    parser = argparse.ArgumentParser(description="Codex Model Gateway for OpenAI-compatible Responses API providers.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     serve = subparsers.add_parser("serve", help="Run the foreground proxy server.")
