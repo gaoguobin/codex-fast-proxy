@@ -30,7 +30,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.confirmStrictBenchmark": "运行严格测试",
         "button.diagnostics": "打开高级诊断",
         "button.uninstall": "停用并恢复",
-        "button.confirmUninstall": "我知道可能导致模型请求失败，仍要停用",
+        "button.confirmUninstall": "仍要停用",
+        "button.cancelUninstall": "先不停用",
         "button.finishCleanup": "完成清理",
         "button.saveProvider": "保存",
         "button.updateProvider": "更新",
@@ -149,17 +150,17 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.viewDiagnostics": "查看诊断",
         "advanced.runDoctor": "运行自检",
         "advanced.copy": "复制诊断",
-        "advanced.download": "导出 JSON",
+        "advanced.download": "导出文件",
         "advanced.refresh": "刷新状态",
         "advanced.copyDone": "诊断已复制。",
-        "advanced.copyFailed": "浏览器没有允许复制，请改用导出 JSON。",
-        "advanced.exportDone": "诊断 JSON 已生成。",
+        "advanced.copyFailed": "浏览器没有允许复制，请改用导出文件。",
+        "advanced.exportDone": "诊断文件已生成。",
         "advanced.doctorRunning": "正在运行自检...",
         "advanced.doctorPassed": "自检通过。",
         "advanced.doctorFailed": "自检发现需要处理的项目。",
         "advanced.doctorIdle": "还没有运行自检。",
         "advanced.summary": "状态摘要",
-        "advanced.summaryDescription": "优先看这里判断下一步，不需要先读原始 JSON。",
+        "advanced.summaryDescription": "优先看这里判断下一步，不需要先读原始状态。",
         "advanced.runtime": "运行时",
         "advanced.config": "配置入口",
         "advanced.auth": "登录与密钥",
@@ -211,7 +212,14 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.updatesDescription": "先检查远端状态，再决定是否更新本地代理。",
         "settings.updateIdle": "还没有检查更新。",
         "settings.updateNote": "检查更新是只读操作；更新会拉取代码并刷新本地运行时。",
-        "danger.confirmNote": "仍要继续停用只适合你已经理解风险的情况。继续后，当前 ChatGPT 登录可能无法直接使用第三方模型服务。",
+        "danger.eyebrow": "停用确认",
+        "danger.title": "先确认登录路径",
+        "danger.confirmNote": "继续停用后，当前 ChatGPT 登录可能无法直接使用第三方模型服务。建议先切回接口密钥或第三方服务登录，重启 Codex 后再恢复。",
+        "danger.currentRoute": "当前路径",
+        "danger.afterRoute": "停用后",
+        "danger.currentRouteDetail": "ChatGPT 登录 · 本地代理接管",
+        "danger.afterRouteDetail": "直连第三方模型服务",
+        "danger.illustrationLabel": "登录路径示意",
         "hint.chatgptSpeed": "已检测到 ChatGPT 账户登录，速度控制由 Codex App 原生界面接管。",
         "action.enable.prepare.label": "正在准备环境...",
         "action.enable.prepare.message": "正在读取当前 Provider 并准备环境。",
@@ -275,7 +283,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.confirmStrictBenchmark": "Run strict test",
         "button.diagnostics": "Open diagnostics",
         "button.uninstall": "Disable and restore",
-        "button.confirmUninstall": "I understand the risk; disable anyway",
+        "button.confirmUninstall": "Disable anyway",
+        "button.cancelUninstall": "Not now",
         "button.finishCleanup": "Finish cleanup",
         "button.saveProvider": "Save",
         "button.updateProvider": "Update",
@@ -336,13 +345,13 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "config.title": "Codex config",
         "config.readonly": "From config.toml · read-only",
         "config.currentEntry": "Current entry",
-        "config.modelServiceUrl": "Model service URL",
+        "config.modelServiceUrl": "Model service address",
         "config.note": "Before enabling, this page does not manage providers in Codex config. Use your usual config tool for edits.",
         "provider.header": "Provider",
         "provider.note": "After enabling, this page manages only the local proxy config; it does not rewrite Codex config.toml.",
         "provider.saved": "Saved",
         "provider.name": "Name",
-        "provider.modelServiceUrl": "Model service URL",
+        "provider.modelServiceUrl": "Model service address",
         "provider.apiKey": "Key",
         "provider.apiKeyPlaceholder": "Leave blank to keep the saved key",
         "provider.keyPrefix": "Key: ",
@@ -394,17 +403,17 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.viewDiagnostics": "View diagnostics",
         "advanced.runDoctor": "Run self-check",
         "advanced.copy": "Copy diagnostics",
-        "advanced.download": "Export JSON",
+        "advanced.download": "Export file",
         "advanced.refresh": "Refresh status",
         "advanced.copyDone": "Diagnostics copied.",
-        "advanced.copyFailed": "Copy was blocked by the browser. Use Export JSON instead.",
-        "advanced.exportDone": "Diagnostic JSON was generated.",
+        "advanced.copyFailed": "Copy was blocked by the browser. Use Export file instead.",
+        "advanced.exportDone": "Diagnostic file was generated.",
         "advanced.doctorRunning": "Running self-check...",
         "advanced.doctorPassed": "Self-check passed.",
         "advanced.doctorFailed": "Self-check found items that need attention.",
         "advanced.doctorIdle": "Self-check has not run yet.",
         "advanced.summary": "Status summary",
-        "advanced.summaryDescription": "Start here for the next step instead of reading raw JSON first.",
+        "advanced.summaryDescription": "Start here for the next step instead of reading the raw state first.",
         "advanced.runtime": "Runtime",
         "advanced.config": "Config entry",
         "advanced.auth": "Login and key",
@@ -434,7 +443,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.python": "Python",
         "advanced.check.codex_config": "Codex config",
         "advanced.check.active_provider": "Active provider",
-        "advanced.check.provider_base_url": "Model service URL",
+        "advanced.check.provider_base_url": "Model service address",
         "advanced.check.runtime_source": "Runtime source",
         "advanced.check.login_mode": "Login method",
         "advanced.check.user_file_permissions": "User file permissions",
@@ -456,7 +465,14 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.updatesDescription": "Check remote status before updating the local proxy.",
         "settings.updateIdle": "Updates have not been checked yet.",
         "settings.updateNote": "Checking is read-only. Updating pulls code and refreshes the local runtime.",
-        "danger.confirmNote": "Only continue disabling if you understand the risk. After this, the current ChatGPT login may not work directly with the third-party model service.",
+        "danger.eyebrow": "Disable confirmation",
+        "danger.title": "Check the login path first",
+        "danger.confirmNote": "After disabling, the current ChatGPT login may not work directly with the third-party model service. Switch to key or third-party login first, restart Codex, then restore.",
+        "danger.currentRoute": "Current path",
+        "danger.afterRoute": "After disabling",
+        "danger.currentRouteDetail": "ChatGPT login · local proxy managed",
+        "danger.afterRouteDetail": "Direct third-party model service",
+        "danger.illustrationLabel": "Login path illustration",
         "hint.chatgptSpeed": "ChatGPT account login detected. Speed controls are handled by the Codex App.",
         "action.enable.prepare.label": "Preparing...",
         "action.enable.prepare.message": "Reading the current provider and preparing the environment.",
@@ -520,7 +536,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.confirmStrictBenchmark": "厳密テスト",
         "button.diagnostics": "診断を開く",
         "button.uninstall": "無効化して復元",
-        "button.confirmUninstall": "リスクを理解して無効化する",
+        "button.confirmUninstall": "無効化を続行",
+        "button.cancelUninstall": "今はしない",
         "button.finishCleanup": "クリーンアップ完了",
         "button.saveProvider": "保存",
         "button.updateProvider": "更新",
@@ -581,13 +598,13 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "config.title": "Codex 設定",
         "config.readonly": "config.toml 由来 · 読み取り専用",
         "config.currentEntry": "現在のエントリ",
-        "config.modelServiceUrl": "モデルサービス URL",
+        "config.modelServiceUrl": "モデルサービスアドレス",
         "config.note": "有効化前、この画面は Codex 設定内のプロバイダーを管理しません。変更は普段の設定ツールで行ってください。",
         "provider.header": "プロバイダー",
         "provider.note": "有効化後、この画面はローカルプロキシ設定だけを管理します。Codex config.toml は書き換えません。",
         "provider.saved": "保存済み",
         "provider.name": "名前",
-        "provider.modelServiceUrl": "モデルサービス URL",
+        "provider.modelServiceUrl": "モデルサービスアドレス",
         "provider.apiKey": "キー",
         "provider.apiKeyPlaceholder": "保存済みキーを維持する場合は空欄",
         "provider.keyPrefix": "キー：",
@@ -639,17 +656,17 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.viewDiagnostics": "診断を見る",
         "advanced.runDoctor": "セルフチェック",
         "advanced.copy": "診断をコピー",
-        "advanced.download": "JSON を書き出す",
+        "advanced.download": "ファイルを書き出す",
         "advanced.refresh": "状態を更新",
         "advanced.copyDone": "診断をコピーしました。",
-        "advanced.copyFailed": "ブラウザによりコピーがブロックされました。JSON 書き出しを使ってください。",
-        "advanced.exportDone": "診断 JSON を生成しました。",
+        "advanced.copyFailed": "ブラウザによりコピーがブロックされました。ファイル書き出しを使ってください。",
+        "advanced.exportDone": "診断ファイルを生成しました。",
         "advanced.doctorRunning": "セルフチェックを実行中...",
         "advanced.doctorPassed": "セルフチェックは通過しました。",
         "advanced.doctorFailed": "セルフチェックで対応が必要な項目が見つかりました。",
         "advanced.doctorIdle": "セルフチェックはまだ実行されていません。",
         "advanced.summary": "状態サマリー",
-        "advanced.summaryDescription": "生 JSON を読む前に、まず次のアクションをここで確認します。",
+        "advanced.summaryDescription": "生の状態を読む前に、まず次のアクションをここで確認します。",
         "advanced.runtime": "ランタイム",
         "advanced.config": "設定エントリ",
         "advanced.auth": "ログインとキー",
@@ -679,7 +696,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.python": "Python",
         "advanced.check.codex_config": "Codex 設定",
         "advanced.check.active_provider": "現在の provider",
-        "advanced.check.provider_base_url": "モデルサービス URL",
+        "advanced.check.provider_base_url": "モデルサービスアドレス",
         "advanced.check.runtime_source": "ランタイムソース",
         "advanced.check.login_mode": "ログイン方式",
         "advanced.check.user_file_permissions": "ユーザーファイル権限",
@@ -701,7 +718,14 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.updatesDescription": "ローカルプロキシを更新する前に、リモート状態を確認します。",
         "settings.updateIdle": "更新確認はまだ実行していません。",
         "settings.updateNote": "更新確認は読み取り専用です。更新はコードを取得し、ローカルランタイムを更新します。",
-        "danger.confirmNote": "リスクを理解している場合だけ無効化を続行してください。続行後、現在の ChatGPT ログインではサードパーティのモデルサービスを直接使えない可能性があります。",
+        "danger.eyebrow": "無効化の確認",
+        "danger.title": "先にログイン経路を確認",
+        "danger.confirmNote": "無効化すると、現在の ChatGPT ログインではサードパーティのモデルサービスを直接使えない可能性があります。先にキーまたはサードパーティログインへ切り替え、Codex を再起動してから復元してください。",
+        "danger.currentRoute": "現在の経路",
+        "danger.afterRoute": "無効化後",
+        "danger.currentRouteDetail": "ChatGPT ログイン · ローカルプロキシ管理",
+        "danger.afterRouteDetail": "サードパーティモデルサービスへ直接接続",
+        "danger.illustrationLabel": "ログイン経路の図",
         "hint.chatgptSpeed": "ChatGPT アカウントログインを検出しました。速度制御は Codex App 側で行われます。",
         "action.enable.prepare.label": "準備中...",
         "action.enable.prepare.message": "現在のプロバイダーを読み取り、環境を準備しています。",
@@ -776,7 +800,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "updated": {"title": "Update complete"},
         "update_checked_dirty": {"title": "Checked, local changes found", "message": "Remote check completed. Local uncommitted changes will pause updating first."},
         "update_available": {"title": "Update available", "message": "New remote commits are available. After reviewing the workspace, update from Settings."},
-        "provider_saved": {"title": "Provider saved", "message": "The model service URL and key were saved. Switch to it when you want to use it."},
+        "provider_saved": {"title": "Provider saved", "message": "The model service address and key were saved. Switch to it when you want to use it."},
         "provider_verified": {"title": "Model service is usable"},
         "benchmark_saved": {"title": "Benchmark complete", "message": "3 default and priority request pairs finished. Results were saved to Requests."},
         "configured": {"title": "Saved"},
@@ -794,7 +818,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "updated": {"title": "更新完了"},
         "update_checked_dirty": {"title": "確認済み、ローカル変更あり", "message": "リモート確認は完了しました。未コミットのローカル変更があるため、更新は先に停止します。"},
         "update_available": {"title": "更新があります", "message": "リモートに新しいコミットがあります。作業ツリー確認後、設定から更新できます。"},
-        "provider_saved": {"title": "Provider を保存しました", "message": "モデルサービス URL とキーを保存しました。使うときに切り替えてください。"},
+        "provider_saved": {"title": "Provider を保存しました", "message": "モデルサービスアドレスとキーを保存しました。使うときに切り替えてください。"},
         "provider_verified": {"title": "モデルサービスは利用可能です"},
         "benchmark_saved": {"title": "ベンチマーク完了", "message": "標準と優先のリクエスト 3 組が完了し、結果をリクエスト画面に保存しました。"},
         "configured": {"title": "保存しました"},
@@ -1423,21 +1447,40 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
     events = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
     if not events:
         return '<p class="empty-state" data-i18n="requests.empty">还没有请求记录。</p>'
+
+    def cell(
+        label: str,
+        label_key: str,
+        value: str,
+        *,
+        class_name: str = "",
+        title: str = "",
+    ) -> str:
+        class_attr = f' class="{html.escape(class_name, quote=True)}"' if class_name else ""
+        title_attr_value = title_attr(title)
+        return (
+            f"<td{class_attr}{title_attr_value}>"
+            f'<span class="mobile-cell-label" data-i18n="{html.escape(label_key, quote=True)}">{html.escape(label)}</span>'
+            f'<span class="cell-value">{value}</span>'
+            "</td>"
+        )
+
     rows: list[str] = []
     for event in reversed(events):
         status, tone = request_status_label(event)
         method = display_text(event.get("method"), "POST")
         path = display_text(event.get("path"), "n/a")
         detail = event_detail(event)
+        route = f"{method.lower()} {path}"
         rows.append(f"""
             <tr>
-              <td class="time-cell">{render_time_value(event.get("ts"))}</td>
-              <td class="request-route" title="{html.escape(method.lower())} {html.escape(path)}">{html.escape(method.lower())} {html.escape(path)}</td>
-              <td>{render_status_pill(status, tone, detail)}</td>
-              <td class="number-cell" title="首响应：收到上游第一个响应字节或第一个流式事件。">{html.escape(format_duration(event.get("ttfb_ms", event.get("first_event_ms"))))}</td>
-              <td class="number-cell" title="首文本：收到第一个可见文本。没有文本输出的请求显示不适用。">{html.escape(format_optional_duration(request_ttft_value(event)))}</td>
-              <td class="number-cell">{html.escape(format_duration(event.get("duration_ms")))}</td>
-              <td title="{html.escape(detail, quote=True)}">{html.escape(request_speed_label(event))}</td>
+              {cell("时间", "table.time", render_time_value(event.get("ts")), class_name="time-cell")}
+              {cell("请求", "table.request", html.escape(route), class_name="request-route", title=route)}
+              {cell("状态", "table.status", render_status_pill(status, tone, detail))}
+              {cell("首响应", "table.firstResponse", html.escape(format_duration(event.get("ttfb_ms", event.get("first_event_ms")))), class_name="number-cell", title="首响应：收到上游第一个响应字节或第一个流式事件。")}
+              {cell("首文本", "table.firstText", html.escape(format_optional_duration(request_ttft_value(event))), class_name="number-cell", title="首文本：收到第一个可见文本。没有文本输出的请求显示不适用。")}
+              {cell("完整耗时", "table.totalDuration", html.escape(format_duration(event.get("duration_ms"))), class_name="number-cell")}
+              {cell("速度模式", "table.speedMode", html.escape(request_speed_label(event)), title=detail)}
             </tr>
 """)
     return f"""
@@ -1516,7 +1559,7 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
         cards.append(f"""
             <article class="{card_class}" data-provider-name="{name_attr}">
               <div class="provider-main">
-                <span class="provider-avatar">{html.escape((name[:1] or "?").upper())}</span>
+                <span class="provider-avatar">{html.escape(name[:1] or "?")}</span>
                 <div class="provider-info">
                   <strong>{html.escape(name)}</strong>
                   <span class="provider-url">{html.escape(display_text(item.get("base_url"), ui_text("provider.noService")))}</span>
@@ -1587,14 +1630,45 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if show_runtime_controls:
         labels.update({
             "uninstall": "停用并恢复",
-            "confirmUninstall": "我知道可能导致模型请求失败，仍要停用",
+            "confirmUninstall": "仍要停用",
+            "cancelUninstall": "先不停用",
         })
         if primary_action != "uninstall":
             action_buttons = '<button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>'
         danger_zone = f"""
-      <div id="dangerZone" class="danger-zone" style="display:none">
-        <p data-i18n="danger.confirmNote">{ui_text("danger.confirmNote")}</p>
-        <button id="confirmUninstall" class="warn" data-action="confirm-uninstall" data-i18n="button.confirmUninstall">{ui_text("button.confirmUninstall")}</button>
+      <div id="dangerZone" class="danger-zone" hidden>
+        <div class="danger-copy">
+          <span class="danger-eyebrow" data-i18n="danger.eyebrow">{ui_text("danger.eyebrow")}</span>
+          <strong data-i18n="danger.title">{ui_text("danger.title")}</strong>
+          <p data-i18n="danger.confirmNote">{ui_text("danger.confirmNote")}</p>
+          <div class="danger-route" aria-label="停用前后路径">
+            <div>
+              <span data-i18n="danger.currentRoute">{ui_text("danger.currentRoute")}</span>
+              <strong data-i18n="danger.currentRouteDetail">{ui_text("danger.currentRouteDetail")}</strong>
+            </div>
+            <div>
+              <span data-i18n="danger.afterRoute">{ui_text("danger.afterRoute")}</span>
+              <strong data-i18n="danger.afterRouteDetail">{ui_text("danger.afterRouteDetail")}</strong>
+            </div>
+          </div>
+          <div class="danger-actions">
+            <button id="confirmUninstall" class="warn" data-action="confirm-uninstall" data-i18n="button.confirmUninstall">{ui_text("button.confirmUninstall")}</button>
+            <button id="cancelUninstall" class="secondary" type="button" data-i18n="button.cancelUninstall">{ui_text("button.cancelUninstall")}</button>
+          </div>
+        </div>
+        <div class="danger-art" role="img" aria-label="{html.escape(ui_text("danger.illustrationLabel"), quote=True)}">
+          <svg viewBox="0 0 180 132" aria-hidden="true">
+            <path class="art-panel" d="M35 24h72c9 0 16 7 16 16v52c0 9-7 16-16 16H35c-9 0-16-7-16-16V40c0-9 7-16 16-16z"></path>
+            <path class="art-panel muted" d="M103 39h43c7 0 12 5 12 12v44c0 7-5 12-12 12h-43c-7 0-12-5-12-12V51c0-7 5-12 12-12z"></path>
+            <path class="art-line" d="M46 53h44M46 70h31M46 87h51"></path>
+            <path class="art-line" d="M111 62h25M111 79h31"></path>
+            <path class="art-bridge" d="M83 30c14-17 41-19 59-4"></path>
+            <path class="art-bridge" d="M95 113c16 10 41 8 56-8"></path>
+            <path class="art-key" d="M129 20l8 8 13-13"></path>
+            <circle class="art-node" cx="34" cy="38" r="4"></circle>
+            <circle class="art-node" cx="152" cy="96" r="4"></circle>
+          </svg>
+        </div>
       </div>
 """
     elif state_code == "cleanup_pending":
@@ -1730,28 +1804,28 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
   <style>
     :root {{
       color-scheme: light;
-      --bg: #f5f5f7;
-      --sidebar: #eceff3;
+      --bg: #f7f8f9;
+      --sidebar: #eef1f4;
       --surface: #ffffff;
-      --surface-soft: #f4f6f8;
-      --surface-hover: #e9edf2;
-      --border: #d8dee6;
-      --border-strong: #b8c1cc;
+      --surface-soft: #f0f3f6;
+      --surface-hover: #e8edf2;
+      --border: #cfd6dd;
+      --border-strong: #aeb8c3;
       --text: #111316;
-      --muted: #4f5964;
+      --muted: #3f4852;
       --muted-strong: #252b31;
       --blue: #0a84ff;
       --blue-soft: #edf6ff;
-      --green: #10a37f;
-      --green-soft: #eef8f4;
-      --green-text: #08745d;
-      --amber: #8a5a12;
-      --amber-soft: #f7efe0;
-      --red: #7f4942;
-      --red-hover: #6d3f39;
-      --red-soft: #f2e8e5;
-      --danger-border: #e7c7bf;
-      --danger-text: #5f2219;
+      --green: #14866d;
+      --green-soft: #eef7f3;
+      --green-text: #096651;
+      --amber: #78500f;
+      --amber-soft: #f6eedf;
+      --red: #7a4a43;
+      --red-hover: #66413b;
+      --red-soft: #f3e9e6;
+      --danger-border: #d5b8b1;
+      --danger-text: #4f2d28;
       --button-bg: #111316;
       --button-hover: #2b3036;
       --button-text: #ffffff;
@@ -1763,7 +1837,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       --code-bg: #171717;
       --code-text: #eeeeee;
       --radius: 8px;
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-display: ui-rounded, "SF Pro Rounded", "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+      font-family: var(--font-ui);
       letter-spacing: 0;
     }}
     :root[data-theme="dark"] {{
@@ -1776,7 +1853,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       --border: #343a41;
       --border-strong: #4b535d;
       --text: #f1f3f5;
-      --muted: #a9b1ba;
+      --muted: #b4bdc6;
       --muted-strong: #d7dde3;
       --blue: #65a9ff;
       --blue-soft: #182a3b;
@@ -1785,8 +1862,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       --green-text: #7bd7bb;
       --amber: #e1bd78;
       --amber-soft: #332b1b;
-      --red: #b87870;
-      --red-hover: #c9877f;
+      --red: #c08a82;
+      --red-hover: #d09a92;
       --red-soft: #35221f;
       --danger-border: #704842;
       --danger-text: #e5c2bd;
@@ -1807,8 +1884,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-size: 14px;
-      line-height: 1.45;
+      font-family: var(--font-ui);
+      font-size: 15px;
+      line-height: 1.48;
     }}
     .app-shell {{
       background: var(--bg);
@@ -1822,7 +1900,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       display: flex;
       flex-direction: column;
       gap: 22px;
+      height: 100vh;
+      overflow-y: auto;
       padding: 24px 14px;
+      position: sticky;
+      top: 0;
     }}
     .brand {{
       display: grid;
@@ -1832,7 +1914,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .brand strong {{
       color: var(--text);
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 480;
     }}
     .brand span {{
       color: var(--muted);
@@ -1856,7 +1938,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       display: flex;
       font-size: 14px;
       gap: 9px;
-      font-weight: 500;
+      font-weight: 460;
       justify-content: flex-start;
       min-height: 34px;
       padding: 8px 11px;
@@ -1915,8 +1997,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .page-head h1 {{
       color: var(--text);
       font-size: 28px;
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-weight: 400;
+      font-family: var(--font-display);
+      font-weight: 460;
       line-height: 1.15;
       margin: 0 0 6px;
     }}
@@ -1926,9 +2008,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .state {{
       color: var(--text);
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-display);
       font-size: 30px;
-      font-weight: 400;
+      font-weight: 460;
       line-height: 1.12;
       letter-spacing: 0;
       margin: 0 0 10px;
@@ -1983,21 +2065,22 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       align-items: center;
       background: var(--button-bg);
       border: 1px solid var(--button-bg);
-      border-radius: var(--radius);
+      border-radius: 7px;
       color: var(--button-text);
       cursor: pointer;
       display: inline-flex;
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 460;
       justify-content: center;
       line-height: 1.2;
-      min-height: 36px;
-      padding: 8px 14px;
-      transition: background .16s ease, border-color .16s ease, color .16s ease, opacity .16s ease;
+      min-height: 35px;
+      padding: 8px 13px;
+      transition: background .16s ease, border-color .16s ease, color .16s ease, opacity .16s ease, transform .16s ease;
     }}
     button:hover:not(:disabled) {{
       background: var(--button-hover);
       border-color: var(--button-hover);
+      transform: translateY(-1px);
     }}
     button.secondary, .provider-card-actions .provider-edit, .provider-card-actions .provider-check, #cancelProvider, #saveSpeed {{
       background: var(--control-bg);
@@ -2029,16 +2112,116 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       outline-offset: 2px;
     }}
     .danger-zone {{
-      background: var(--red-soft);
+      align-items: stretch;
+      background: color-mix(in srgb, var(--red-soft) 78%, var(--surface));
       border: 1px solid var(--danger-border);
-      border-radius: var(--radius);
+      border-radius: 10px;
+      display: grid;
+      gap: 18px;
+      grid-template-columns: minmax(0, 1fr) 180px;
       margin-top: 18px;
-      padding: 16px;
+      overflow: hidden;
+      padding: 0;
+    }}
+    .danger-copy {{
+      padding: 18px 18px 17px;
+    }}
+    .danger-eyebrow {{
+      color: var(--danger-text);
+      display: block;
+      font-size: 14px;
+      font-weight: 460;
+      margin-bottom: 7px;
+    }}
+    .danger-copy > strong {{
+      color: var(--text);
+      display: block;
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 460;
+      line-height: 1.25;
+      margin-bottom: 8px;
     }}
     .danger-zone p {{
       color: var(--danger-text);
       line-height: 1.6;
-      margin: 0 0 12px;
+      margin: 0;
+      max-width: 680px;
+    }}
+    .danger-route {{
+      border-top: 1px solid color-mix(in srgb, var(--danger-border) 72%, transparent);
+      display: grid;
+      gap: 1px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-top: 15px;
+      max-width: 620px;
+    }}
+    .danger-route > div {{
+      display: grid;
+      gap: 3px;
+      padding: 12px 12px 10px 0;
+    }}
+    .danger-route > div + div {{
+      border-left: 1px solid color-mix(in srgb, var(--danger-border) 72%, transparent);
+      padding-left: 14px;
+    }}
+    .danger-route span {{
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    .danger-route strong {{
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.45;
+    }}
+    .danger-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 14px;
+    }}
+    .danger-art {{
+      align-items: center;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 58%, transparent), transparent);
+      border-left: 1px solid color-mix(in srgb, var(--danger-border) 72%, transparent);
+      display: flex;
+      justify-content: center;
+      min-height: 190px;
+      padding: 16px;
+    }}
+    .danger-art svg {{
+      display: block;
+      height: auto;
+      max-width: 170px;
+      width: 100%;
+    }}
+    .art-panel {{
+      fill: color-mix(in srgb, var(--surface) 82%, var(--red-soft));
+      stroke: var(--danger-border);
+      stroke-width: 1.2;
+    }}
+    .art-panel.muted {{
+      fill: color-mix(in srgb, var(--surface-soft) 74%, var(--red-soft));
+    }}
+    .art-line, .art-bridge, .art-key {{
+      fill: none;
+      stroke: var(--red);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 3;
+    }}
+    .art-line {{
+      opacity: .55;
+      stroke-width: 2.2;
+    }}
+    .art-bridge {{
+      opacity: .28;
+      stroke-width: 2.4;
+    }}
+    .art-node {{
+      fill: var(--red);
+      opacity: .62;
     }}
     .overview-section {{
       padding-top: 0;
@@ -2047,27 +2230,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin-top: 16px;
     }}
     .detail-panel {{
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      margin-bottom: 18px;
+      background: transparent;
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin-bottom: 24px;
       min-width: 0;
-      overflow: hidden;
+      overflow: visible;
     }}
     .detail-panel-head {{
       align-items: flex-start;
-      background: var(--surface-soft);
-      border-bottom: 1px solid var(--border);
+      background: transparent;
+      border-bottom: 0;
       display: flex;
       gap: 14px;
       justify-content: space-between;
-      padding: 15px 18px;
+      padding: 17px 0 14px;
     }}
     .detail-panel-head h2 {{
       color: var(--text);
       font-size: 18px;
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-weight: 400;
+      font-family: var(--font-display);
+      font-weight: 460;
       line-height: 1.25;
       margin: 3px 0 4px;
       overflow-wrap: anywhere;
@@ -2080,7 +2263,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       overflow-wrap: anywhere;
     }}
     .detail-panel-body {{
-      padding: 16px 18px;
+      padding: 0;
     }}
     .panel-actions {{
       align-items: center;
@@ -2106,14 +2289,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .inline-confirm {{
       align-items: center;
-      background: var(--surface-soft);
+      background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       display: flex;
       gap: 16px;
       justify-content: space-between;
       margin-bottom: 16px;
-      padding: 14px;
+      padding: 15px;
     }}
     .inline-confirm strong {{
       color: var(--text);
@@ -2151,6 +2334,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .provider-workspace {{
       padding: 0;
+    }}
+    .provider-workspace.detail-panel {{
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }}
+    .provider-workspace .detail-panel-head {{
+      padding: 15px 18px;
     }}
     .provider-panel-header {{
       align-items: flex-start;
@@ -2215,7 +2406,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       display: inline-flex;
       flex: 0 0 auto;
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 460;
       height: 30px;
       justify-content: center;
       width: 30px;
@@ -2270,8 +2461,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .provider-editor-title h3 {{
       font-size: 18px;
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-weight: 400;
+      font-family: var(--font-display);
+      font-weight: 460;
       margin: 0;
     }}
     .readonly-config {{
@@ -2292,12 +2483,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .readonly-config span {{
       color: var(--muted);
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 460;
     }}
     .readonly-config strong {{
       color: var(--text);
       font-size: 14px;
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-display);
       font-weight: 500;
       overflow-wrap: anywhere;
     }}
@@ -2353,22 +2544,22 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-size: 14px;
     }}
     .status-pill {{
-      border: 1px solid transparent;
-      border-radius: 999px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
       display: inline-flex;
       font-size: 14px;
-      font-weight: 500;
-      padding: 5px 10px;
+      font-weight: 460;
+      padding: 4px 8px;
       white-space: nowrap;
     }}
     .status-pill.ok {{
-      background: var(--green-soft);
-      border-color: rgba(16, 163, 127, .24);
+      background: color-mix(in srgb, var(--green-soft) 70%, transparent);
+      border-color: color-mix(in srgb, var(--green) 25%, var(--border));
       color: var(--green-text);
     }}
     .status-pill.warn {{
-      background: var(--amber-soft);
-      border-color: rgba(138, 90, 18, .2);
+      background: color-mix(in srgb, var(--amber-soft) 72%, transparent);
+      border-color: color-mix(in srgb, var(--amber) 24%, var(--border));
       color: var(--amber);
     }}
     .status-pill.idle {{
@@ -2404,10 +2595,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .status-row span {{
       color: var(--muted);
       font-size: 14px;
-      font-weight: 500;
+      font-weight: 460;
     }}
     .status-row strong {{
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-display);
       font-size: 15px;
       font-weight: 500;
       overflow-wrap: anywhere;
@@ -2433,7 +2624,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .status-metric strong {{
       color: var(--text);
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-display);
       font-size: 16px;
       font-weight: 500;
       overflow-wrap: anywhere;
@@ -2536,13 +2727,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       padding-top: 16px;
     }}
     .empty-state {{
-      background: var(--surface-soft);
-      border: 1px dashed var(--border);
-      border-radius: var(--radius);
+      background: transparent;
+      border: 0;
+      border-left: 2px solid var(--border-strong);
+      border-radius: 0;
       color: var(--muted);
       line-height: 1.6;
       margin: 0;
-      padding: 14px;
+      padding: 3px 0 3px 12px;
     }}
     .request-table-wrap {{
       background: var(--surface);
@@ -2588,9 +2780,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       overflow: hidden;
       text-overflow: ellipsis;
     }}
+    .mobile-cell-label {{
+      display: none;
+    }}
+    .cell-value {{
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }}
     .number-cell {{
       color: var(--text);
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-display);
       font-variant-numeric: tabular-nums;
     }}
     .local-time {{
@@ -2644,7 +2843,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     .signal-metric strong {{
       color: var(--text);
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-display);
       font-size: 15px;
       font-weight: 500;
       overflow-wrap: anywhere;
@@ -2716,8 +2915,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .diagnostic-section-head h3 {{
       color: var(--text);
       font-size: 16px;
-      font-family: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-weight: 400;
+      font-family: var(--font-display);
+      font-weight: 460;
       margin: 0 0 3px;
     }}
     .diagnostic-section-head p {{
@@ -2787,7 +2986,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .diagnostic-path code {{
       background: transparent;
       color: var(--text);
-      font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+      font-family: var(--font-mono);
       font-size: 13px;
       overflow-wrap: anywhere;
     }}
@@ -2876,6 +3075,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       overflow: auto;
       padding: 16px;
     }}
+    @media (prefers-reduced-motion: no-preference) {{
+      .view-page.active {{
+        animation: view-enter .22s ease both;
+      }}
+      .detail-panel,
+      .danger-zone,
+      .provider-card,
+      .status-metric,
+      .diagnostic-row {{
+        transition: background .18s ease, border-color .18s ease, transform .18s ease;
+      }}
+      .provider-card:hover,
+      .diagnostic-row:hover,
+      .status-metric:hover {{
+        transform: translateY(-1px);
+      }}
+    }}
+    @keyframes view-enter {{
+      from {{ opacity: .72; transform: translateY(5px); }}
+      to {{ opacity: 1; transform: translateY(0); }}
+    }}
     @media (min-width: 861px) and (max-width: 1080px) {{
       .content-shell {{ padding: 24px 32px 42px; }}
       .hero {{ grid-template-columns: 1fr; }}
@@ -2886,7 +3106,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         border-bottom: 1px solid var(--border);
         border-right: 0;
         gap: 14px;
+        height: auto;
+        overflow: visible;
         padding: 16px;
+        position: static;
       }}
       .sidebar-nav {{
         display: flex;
@@ -2912,6 +3135,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .content-shell {{ padding: 22px 16px 34px; }}
       .state {{ font-size: 28px; }}
       .hero {{ grid-template-columns: 1fr; }}
+      .danger-zone {{ grid-template-columns: 1fr; }}
+      .danger-art {{ border-left: 0; border-top: 1px solid color-mix(in srgb, var(--danger-border) 72%, transparent); min-height: 128px; }}
+      .danger-route {{ grid-template-columns: 1fr; }}
+      .danger-route > div + div {{ border-left: 0; border-top: 1px solid color-mix(in srgb, var(--danger-border) 72%, transparent); padding-left: 0; }}
       .provider-split {{ grid-template-columns: 1fr; }}
       .inline-confirm {{ align-items: stretch; flex-direction: column; }}
       .inline-confirm-actions {{ justify-content: flex-start; }}
@@ -2951,6 +3178,64 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       .diagnostic-row strong {{
         justify-self: start;
+      }}
+    }}
+    @media (max-width: 640px) {{
+      .request-table-wrap {{
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        overflow: visible;
+      }}
+      .request-table,
+      .request-table tbody,
+      .request-table tr,
+      .request-table td {{
+        display: block;
+        width: 100%;
+      }}
+      .request-table thead {{
+        display: none;
+      }}
+      .request-table tr {{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        margin-bottom: 10px;
+        overflow: hidden;
+      }}
+      .request-table tr:last-child {{
+        margin-bottom: 0;
+      }}
+      .request-table td {{
+        border-bottom: 1px solid var(--surface-soft);
+        display: grid;
+        gap: 10px;
+        grid-template-columns: 88px minmax(0, 1fr);
+        padding: 9px 11px;
+        white-space: normal;
+      }}
+      .request-table td:last-child {{
+        border-bottom: 0;
+      }}
+      .request-table th:nth-child(1), .request-table td:nth-child(1),
+      .request-table th:nth-child(2), .request-table td:nth-child(2),
+      .request-table th:nth-child(3), .request-table td:nth-child(3),
+      .request-table th:nth-child(4), .request-table td:nth-child(4),
+      .request-table th:nth-child(5), .request-table td:nth-child(5),
+      .request-table th:nth-child(6), .request-table td:nth-child(6),
+      .request-table th:nth-child(7), .request-table td:nth-child(7) {{
+        width: auto;
+      }}
+      .mobile-cell-label {{
+        color: var(--muted);
+        display: block;
+        font-size: 14px;
+        font-weight: 460;
+      }}
+      .request-route {{
+        overflow: visible;
+        text-overflow: clip;
       }}
     }}
   </style>
@@ -3057,7 +3342,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             <div class="diagnostic-actions" aria-label="诊断操作">
               <button id="runDoctor" class="secondary" type="button" data-i18n="advanced.runDoctor">运行自检</button>
               <button id="copyDiagnostics" class="secondary" type="button" data-i18n="advanced.copy">复制诊断</button>
-              <button id="downloadDiagnostics" class="secondary" type="button" data-i18n="advanced.download">导出 JSON</button>
+              <button id="downloadDiagnostics" class="secondary" type="button" data-i18n="advanced.download">导出文件</button>
               <button id="refreshDiagnostics" class="secondary" type="button" data-i18n="advanced.refresh">刷新状态</button>
             </div>
           </div>
@@ -3067,7 +3352,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
               <div class="diagnostic-section-head">
                 <div>
                   <h3 data-i18n="advanced.summary">状态摘要</h3>
-                  <p data-i18n="advanced.summaryDescription">优先看这里判断下一步，不需要先读原始 JSON。</p>
+                  <p data-i18n="advanced.summaryDescription">优先看这里判断下一步，不需要先读原始状态。</p>
                 </div>
               </div>
               <div class="diagnostic-grid">
@@ -3270,6 +3555,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         checkUpdate: 'button.checkUpdate',
         uninstall: 'button.uninstall',
         confirmUninstall: 'button.confirmUninstall',
+        cancelUninstall: 'button.cancelUninstall',
         finishCleanup: 'button.finishCleanup',
         saveProvider: 'button.saveProvider',
         saveSpeed: 'button.saveSpeed',
@@ -3370,7 +3656,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const checkButton = `<button class="provider-check" type="button" data-provider-action="verify" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.checkProvider', '检查'))}}</button>`;
       const enableButton = isCurrent ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.switch', '启用'))}}</button>`;
       const deleteButton = record && record.deletable ? `<button class="provider-delete" type="button" data-provider-action="delete" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.delete', '删除'))}}</button>` : '';
-      const avatar = (name.trim().charAt(0) || '?').toUpperCase();
+      const avatar = name.trim().charAt(0) || '?';
       return `
             <article class="provider-card${{isCurrent ? ' current' : ''}}" data-provider-name="${{escapeHtml(name)}}">
               <div class="provider-main">
@@ -3422,11 +3708,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         primary.disabled = false;
         primary.textContent = primaryButtonLabel(userState);
       }}
-      const confirmUninstall = $('confirmUninstall');
       const dangerZone = $('dangerZone');
-      if (dangerZone) dangerZone.style.display = userState.code === 'confirmation_required' ? 'block' : 'none';
+      if (dangerZone) dangerZone.hidden = userState.code !== 'confirmation_required';
       const uninstall = $('uninstall');
-      if (uninstall) uninstall.style.display = userState.code === 'confirmation_required' ? 'none' : 'inline-block';
+      if (uninstall) uninstall.hidden = userState.code === 'confirmation_required';
       const saveSpeed = $('saveSpeed');
       if (saveSpeed) saveSpeed.disabled = !snapshot.base_url;
     }}
@@ -3765,7 +4050,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         else if (!fallbackCopyText(text)) throw new Error('copy blocked');
         setDiagnosticFeedback('advanced.copyDone', '诊断已复制。');
       }} catch (_error) {{
-        setDiagnosticFeedback('advanced.copyFailed', '浏览器没有允许复制，请改用导出 JSON。');
+        setDiagnosticFeedback('advanced.copyFailed', '浏览器没有允许复制，请改用导出文件。');
       }}
     }}
     function downloadDiagnostics() {{
@@ -3778,7 +4063,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setDiagnosticFeedback('advanced.exportDone', '诊断 JSON 已生成。');
+      setDiagnosticFeedback('advanced.exportDone', '诊断文件已生成。');
     }}
     function doctorCheckLabel(name) {{
       return t('advanced.check.' + name, String(name || '').replace(/_/g, ' '));
@@ -4054,7 +4339,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const data = await response.json();
       if (data.status !== 'ok') {{
         if (data.snapshot) render(data.snapshot);
-        throw new Error(data.error || '操作没有完成。');
+        const error = new Error(data.error || '操作没有完成。');
+        error.renderedSnapshot = Boolean(data.snapshot);
+        throw error;
       }}
       if (data.action && data.action.control_ui && data.action.control_ui.url) {{
         await reloadWhenControlUiReady(data.action.control_ui);
@@ -4066,6 +4353,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         return;
       }}
       render(data.snapshot);
+      data.renderedSnapshot = true;
       return data;
     }}
     async function reloadWhenControlUiReady(controlUi) {{
@@ -4111,16 +4399,21 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       button.setAttribute('aria-busy', 'true');
       const oldText = button.textContent;
       const stopProgress = startActionProgress(button, action);
+      let renderedSnapshot = false;
       try {{
-        await requestAction(action, body);
+        const data = await requestAction(action, body);
+        renderedSnapshot = Boolean(data && data.renderedSnapshot);
       }} catch (error) {{
-        $('state').textContent = t('value.needsAttention', '需要处理');
-        $('message').textContent = (error && error.message) ? error.message : String(error);
+        renderedSnapshot = Boolean(error && error.renderedSnapshot);
+        if (!renderedSnapshot) {{
+          $('state').textContent = t('value.needsAttention', '需要处理');
+          $('message').textContent = (error && error.message) ? error.message : String(error);
+        }}
       }} finally {{
         stopProgress();
         button.disabled = false;
         button.removeAttribute('aria-busy');
-        button.textContent = oldText;
+        if (!renderedSnapshot) button.textContent = oldText;
       }}
     }}
     $('primary').addEventListener('click', async (event) => {{
@@ -4139,6 +4432,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('finishCleanup')) $('finishCleanup').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
+    if ($('cancelUninstall')) $('cancelUninstall').addEventListener('click', () => {{
+      const dangerZone = $('dangerZone');
+      if (dangerZone) dangerZone.hidden = true;
+      const uninstall = $('uninstall');
+      if (uninstall) uninstall.hidden = false;
+    }});
     if ($('newProvider')) $('newProvider').addEventListener('click', () => {{
       openProviderEditor(null, 'provider.editor.add');
     }});

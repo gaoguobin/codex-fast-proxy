@@ -69,8 +69,8 @@ Pages:
 - `供应商`: before enable, read-only entries from Codex `config.toml`; after enable, provider add,
   edit, switch, delete, and masked API-key reveal.
 - `请求记录`: recent `/v1/responses` records, provider checks, and quick/strict benchmark results.
-- `高级`: status summary, log paths, self-check, copy diagnostics, and JSON export.
-- `设置`: language, appearance, update checks, and updates.
+- `高级`: status summary, log paths, self-check, copy diagnostics, and diagnostic file export.
+- `设置`: language, appearance, update checks, and updates from the lower-left settings entry.
 
 When Codex is signed in with ChatGPT, proxy-side speed controls are hidden because speed selection
 is controlled by Codex App's native UI. The summary shows `App 控制` for that state.
@@ -148,7 +148,7 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 
 Use the Control UI `高级` page for normal diagnostics. It summarizes runtime, config, auth, startup
 hook, telemetry, and next action. `运行自检` calls the same manager doctor path as the CLI. `复制诊断`
-and `导出 JSON` include redacted status only; they do not include API keys.
+and `导出文件` include redacted status only; they do not include API keys.
 
 CLI source of truth:
 

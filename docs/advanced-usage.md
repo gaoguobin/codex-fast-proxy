@@ -48,13 +48,14 @@ The UI is a lightweight Python SSR page with native JavaScript. It supports:
 
 - Chinese, English, and Japanese locale switching. Chinese is the default.
 - System, light, and dark appearance.
-- Overview, Providers, Requests, and Advanced pages.
-- Settings page for language, appearance, update checks, and updates.
+- Overview, Providers, Requests, Advanced, and Settings pages.
+- Settings stays in the lower-left navigation area on desktop and controls language, appearance,
+  update checks, and updates.
 - Provider management after the proxy is enabled.
 - Provider availability checks from the Providers page.
 - Masked API keys with explicit reveal.
 - Advanced self-check via `/api/doctor`.
-- Copy and JSON export for redacted diagnostics.
+- Copy and diagnostic file export for redacted diagnostics.
 
 Proxy-side speed controls appear inline on Overview only when they are useful. If Codex is signed in
 with ChatGPT, speed is handled by Codex App's native UI and the proxy-side control is hidden.
