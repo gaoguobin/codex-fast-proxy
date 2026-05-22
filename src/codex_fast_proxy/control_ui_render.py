@@ -1597,22 +1597,21 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
         )
         cards.append(f"""
             <article class="{card_class}" data-provider-name="{name_attr}">
-              <div class="provider-card-head">
+              <div class="provider-main">
+                <span class="provider-avatar">{html.escape(name[:1] or "?")}</span>
                 <div class="provider-info">
                   <strong>{html.escape(name)}</strong>
                   <span class="provider-url">{html.escape(display_text(item.get("base_url"), ui_text("provider.noService")))}</span>
+                  <span class="provider-auth-state"><span data-i18n="provider.keyPrefix">{ui_text("provider.keyPrefix")}</span>{html.escape(provider_key_label(item.get("api_key")))}</span>
+                  <span class="provider-row-feedback" data-provider-check-feedback role="status" aria-live="polite" hidden></span>
                 </div>
-                {status_pill}
-              </div>
-              <div class="provider-meta">
-                <span class="provider-auth-state"><strong data-i18n="provider.keyPrefix">{ui_text("provider.keyPrefix")}</strong><span>{html.escape(provider_key_label(item.get("api_key")))}</span></span>
-                <span class="provider-row-feedback idle" data-provider-check-feedback role="status" aria-live="polite"><strong data-i18n="button.checkProvider">{ui_text("button.checkProvider")}</strong><span data-i18n="value.notRun">{ui_text("value.notRun")}</span></span>
               </div>
               <div class="provider-card-actions">
+                {status_pill}
                 {check_button}
+                {enable_button}
                 <button class="provider-edit" type="button" data-provider-action="edit" data-provider="{name_attr}" data-i18n="button.edit">{ui_text("button.edit")}</button>
                 {delete_button}
-                {enable_button}
               </div>
             </article>
 """)
@@ -2408,10 +2407,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       display: grid;
     }}
     .provider-card {{
+      align-items: center;
       background: transparent;
       border-top: 1px solid var(--border);
-      display: grid;
-      gap: 10px;
+      display: flex;
+      gap: 14px;
+      justify-content: space-between;
       padding: 13px 0;
     }}
     .provider-card:last-child {{
@@ -2421,14 +2422,35 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       background: transparent;
     }}
     .provider-card.current {{
-      background: color-mix(in srgb, var(--blue-soft) 48%, transparent);
+      background: color-mix(in srgb, var(--blue-soft) 44%, transparent);
+      border-radius: 10px;
+      border-top-color: transparent;
+      margin: 6px -10px;
+      padding: 12px 10px;
     }}
-    .provider-card-head {{
-      align-items: flex-start;
+    .provider-card.current .provider-avatar {{
+      background: var(--surface);
+      border-color: color-mix(in srgb, var(--blue) 24%, var(--border));
+      color: var(--blue);
+    }}
+    .provider-main {{
       display: flex;
       gap: 12px;
-      justify-content: space-between;
       min-width: 0;
+    }}
+    .provider-avatar {{
+      align-items: center;
+      background: var(--surface-soft);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      color: var(--muted-strong);
+      display: inline-flex;
+      flex: 0 0 auto;
+      font-size: 14px;
+      font-weight: 460;
+      height: 30px;
+      justify-content: center;
+      width: 30px;
     }}
     .provider-info {{
       display: grid;
@@ -2444,46 +2466,32 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-size: 14px;
       overflow-wrap: anywhere;
     }}
-    .provider-meta {{
-      display: grid;
-      gap: 8px;
-      grid-template-columns: minmax(120px, .45fr) minmax(150px, .55fr);
-      min-width: 0;
-    }}
-    .provider-auth-state,
     .provider-row-feedback {{
-      align-items: center;
       color: var(--muted-strong);
-      display: flex;
-      justify-content: space-between;
+      display: grid;
       font-size: 14px;
-      gap: 8px;
+      gap: 2px;
       line-height: 1.45;
-      min-width: 0;
+      margin-top: 2px;
+      max-width: 540px;
       overflow-wrap: anywhere;
     }}
     .provider-row-feedback[hidden] {{
       display: none;
     }}
-    .provider-auth-state strong,
     .provider-row-feedback strong {{
-      color: var(--muted);
       font-weight: 500;
     }}
-    .provider-auth-state span,
     .provider-row-feedback span {{
-      overflow: hidden;
-      text-align: right;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      color: var(--muted);
     }}
-    .provider-row-feedback.checking span {{
+    .provider-row-feedback.checking strong {{
       color: var(--blue);
     }}
-    .provider-row-feedback.ok span {{
+    .provider-row-feedback.ok strong {{
       color: var(--green-text);
     }}
-    .provider-row-feedback.warn span {{
+    .provider-row-feedback.warn strong {{
       color: var(--red);
     }}
     .provider-card-actions {{
@@ -3247,7 +3255,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .diagnostic-row {{
         transition: background .18s ease, border-color .18s ease, transform .18s ease;
       }}
-      .provider-card:hover,
       .diagnostic-row:hover,
       .status-metric:hover {{
         transform: translateY(-1px);
@@ -3301,14 +3308,14 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .danger-route {{ grid-template-columns: 1fr; }}
       .danger-route > div + div {{ border-left: 0; border-top: 1px solid color-mix(in srgb, var(--danger-border) 72%, transparent); padding-left: 0; }}
       .provider-split {{ grid-template-columns: 1fr; }}
+      .provider-split.editing {{ grid-template-columns: 1fr; min-height: auto; }}
       .inline-confirm {{ align-items: stretch; flex-direction: column; }}
       .inline-confirm-actions {{ justify-content: flex-start; }}
       .provider-editor {{
         border-left: 0;
         border-top: 1px solid var(--border);
       }}
-      .overview-preference, .speed-preference-form, .provider-card-head {{ align-items: stretch; flex-direction: column; }}
-      .provider-meta {{ grid-template-columns: 1fr; }}
+      .overview-preference, .speed-preference-form, .provider-card {{ align-items: stretch; flex-direction: column; }}
       .provider-panel-header {{ align-items: stretch; flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
       .actions button {{ width: 100%; }}
@@ -3852,24 +3859,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const checkButton = `<button class="provider-check" type="button" data-provider-action="verify" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.checkProvider', '检查'))}}</button>`;
       const enableButton = isCurrent ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.switch', '启用'))}}</button>`;
       const deleteButton = record && record.deletable ? `<button class="provider-delete" type="button" data-provider-action="delete" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.delete', '删除'))}}</button>` : '';
+      const avatar = name.trim().charAt(0) || '?';
       return `
             <article class="provider-card${{isCurrent ? ' current' : ''}}" data-provider-name="${{escapeHtml(name)}}">
-              <div class="provider-card-head">
+              <div class="provider-main">
+                <span class="provider-avatar">${{escapeHtml(avatar)}}</span>
                 <div class="provider-info">
                   <strong>${{escapeHtml(name)}}</strong>
                   <span class="provider-url">${{escapeHtml(baseUrl)}}</span>
+                  <span class="provider-auth-state">${{escapeHtml(t('provider.keyPrefix', '密钥：'))}}${{escapeHtml(keyLabel(record ? record.api_key : null))}}</span>
+                  <span class="provider-row-feedback" data-provider-check-feedback role="status" aria-live="polite" hidden></span>
                 </div>
-                ${{statusPill}}
-              </div>
-              <div class="provider-meta">
-                <span class="provider-auth-state"><strong>${{escapeHtml(t('provider.keyPrefix', '密钥：'))}}</strong><span>${{escapeHtml(keyLabel(record ? record.api_key : null))}}</span></span>
-                <span class="provider-row-feedback idle" data-provider-check-feedback role="status" aria-live="polite"><strong>${{escapeHtml(t('button.checkProvider', '检查'))}}</strong><span>${{escapeHtml(t('value.notRun', '未运行'))}}</span></span>
               </div>
               <div class="provider-card-actions">
+                ${{statusPill}}
                 ${{checkButton}}
+                ${{enableButton}}
                 <button class="provider-edit" type="button" data-provider-action="edit" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.edit', '编辑'))}}</button>
                 ${{deleteButton}}
-                ${{enableButton}}
               </div>
             </article>
 `;
@@ -3885,9 +3892,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (!target) return;
       const result = providerCheckResults[provider];
       if (!result) {{
-        target.hidden = false;
-        target.className = 'provider-row-feedback idle';
-        target.innerHTML = `<strong>${{escapeHtml(t('button.checkProvider', '检查'))}}</strong><span>${{escapeHtml(t('value.notRun', '未运行'))}}</span>`;
+        target.hidden = true;
+        target.className = 'provider-row-feedback';
+        target.textContent = '';
         target.removeAttribute('title');
         target.removeAttribute('aria-label');
         return;
@@ -3896,7 +3903,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       target.className = `provider-row-feedback ${{result.tone || 'checking'}}`;
       target.title = result.message || '';
       target.setAttribute('aria-label', `${{result.title || ''}}：${{result.message || ''}}`);
-      target.innerHTML = `<strong>${{escapeHtml(t('button.checkProvider', '检查'))}}</strong><span>${{escapeHtml(result.title || '')}}</span>`;
+      target.innerHTML = `<strong>${{escapeHtml(result.title || '')}}</strong><span>${{escapeHtml(result.message || '')}}</span>`;
     }}
     function setProviderCheckResult(provider, result) {{
       if (!provider) return;

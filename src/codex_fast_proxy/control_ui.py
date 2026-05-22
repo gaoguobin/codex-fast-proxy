@@ -181,6 +181,9 @@ class ControlHandler(BaseHTTPRequestHandler):
         if parsed.path in {"/", "/index.html"}:
             self.respond_html(render_page(collect_snapshot(self.server), self.server.token))
             return
+        if parsed.path == "/favicon.ico":
+            self.respond_empty()
+            return
         if parsed.path == "/api/ping":
             self.respond_json({
                 "status": "ok",
@@ -363,6 +366,12 @@ class ControlHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def respond_empty(self, status: int = 204) -> None:
+        self.send_response(status)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def respond_json(self, value: dict[str, Any], status: int = 200) -> None:
         encoded = json.dumps(value, ensure_ascii=False).encode("utf-8")

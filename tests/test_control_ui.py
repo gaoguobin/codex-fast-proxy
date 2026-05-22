@@ -1137,6 +1137,15 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(response["action"]["control_ui"]["pid"], 4321)
         self.assertTrue(response["action"]["control_ui"]["wait_for_disconnect"])
 
+    def test_favicon_request_returns_empty_success(self) -> None:
+        handler = object.__new__(ControlHandler)
+        handler.path = "/favicon.ico"
+        handler.respond_empty = mock.Mock()
+
+        handler.do_GET()
+
+        handler.respond_empty.assert_called_once_with()
+
     def test_scheduled_control_ui_restart_waits_for_old_port_to_close(self) -> None:
         with mock.patch("subprocess.Popen") as popen:
             popen.return_value.pid = 4321
