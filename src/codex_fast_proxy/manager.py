@@ -79,7 +79,7 @@ from .hooks import (
 from .models import ProxyPaths, ProxySettings, paths_for, read_settings, settings_from_dict, write_settings
 from .ports import find_available_port
 from .proxy import RUNTIME_ID, compact_json
-from .runtime_status import runtime_status
+from .runtime_status import health_matches_proxy_identity, runtime_status
 from .skill_link import (
     is_windows_platform,
     link_skill_namespace,
@@ -283,6 +283,34 @@ def launch_background(
         start_policy=start_policy,
         sync=("os", "subprocess", "is_port_available", "child_environment", "wait_for_proxy_health", "terminate_process"),
     )
+
+
+def replace_running_proxy(
+    paths: ProxyPaths,
+    old_settings: ProxySettings,
+    new_settings: ProxySettings,
+    verbose_proxy: bool,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    pid, running, health, _healthy, _pending_restart, _runtime_matches = proxy_runtime_state(paths, old_settings)
+    if running and health_matches_proxy_identity(health, old_settings, pid):
+        stop_result = stop_process(paths, force=True)
+        wait_for_proxy_port_release(new_settings)
+        start_result = launch_background(paths, new_settings, verbose_proxy)
+        return {
+            "status": "restarted",
+            "reason": reason,
+            "old_pid": pid,
+            "old_runtime_id": health.get("runtime_id") if isinstance(health, dict) else None,
+            "runtime_id": RUNTIME_ID,
+            "provider": new_settings.provider,
+            "base_url": new_settings.base_url,
+            "upstream_base": new_settings.upstream_base,
+            "stop_result": stop_result,
+            "start_result": start_result,
+        }
+    return start_background(paths, new_settings, verbose_proxy)
 
 
 def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
@@ -907,7 +935,13 @@ def save_provider(
                 else {"status": "skipped"}
             )
             write_settings(paths, new_settings)
-            start_result = start_background(paths, new_settings, False)
+            start_result = replace_running_proxy(
+                paths,
+                settings,
+                new_settings,
+                False,
+                reason="provider_saved",
+            )
         except Exception:
             if start_result and start_result.get("status") in {"started", "restarted"}:
                 stop_process(paths, force=True)
@@ -919,6 +953,10 @@ def save_provider(
                 paths.settings_path.unlink(missing_ok=True)
             else:
                 paths.settings_path.write_bytes(settings_bytes_before)
+            try:
+                start_background(paths, settings, False)
+            except Exception:
+                pass
             raise
 
         login = detect_login_mode(paths.codex_home)
@@ -1039,7 +1077,13 @@ def switch_provider(
     start_result = None
     try:
         write_settings(paths, new_settings)
-        start_result = start_background(paths, new_settings, False)
+        start_result = replace_running_proxy(
+            paths,
+            settings,
+            new_settings,
+            False,
+            reason="provider_switched",
+        )
     except Exception:
         if start_result and start_result.get("status") in {"started", "restarted"}:
             stop_process(paths, force=True)

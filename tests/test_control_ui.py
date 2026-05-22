@@ -1448,6 +1448,62 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(stored_auth["providers"]["acme"]["api_key"], "new-provider-secret")
         self.assertEqual(stored_auth["providers"]["acme"]["base_url"], "https://api.new.test/v1")
 
+    def test_save_current_provider_restarts_running_proxy_when_only_key_changes(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(self.paths, "acme", api_key="old-secret", base_url=settings.upstream_base)
+        manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+        calls: list[tuple[str, object]] = []
+
+        def fake_health(_settings):
+            return {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": settings.proxy_base,
+                "upstream_base": settings.upstream_base,
+                "service_tier": settings.service_tier,
+                "service_tier_policy": settings.service_tier_policy,
+                "service_tier_effective_policy": "preserve",
+                "upstream_api_key_env": None,
+                "upstream_api_key_file": True,
+                "runtime_id": manager.RUNTIME_ID,
+            }
+
+        def fake_stop(_paths, force=False):
+            calls.append(("stop", force))
+            return {"status": "stopped", "pid": 9999}
+
+        def fake_launch(_paths, launch_settings, _verbose_proxy, **_kwargs):
+            calls.append(("launch", launch_settings.provider))
+            return {"status": "started", "pid": 1234, "upstream_base": launch_settings.upstream_base}
+
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", side_effect=fake_health),
+            mock.patch("codex_fast_proxy.manager.stop_process", side_effect=fake_stop),
+            mock.patch("codex_fast_proxy.manager.launch_background", side_effect=fake_launch),
+        ):
+            result = run_save_provider(
+                str(self.codex_home),
+                "acme",
+                settings.upstream_base,
+                "new-secret",
+            )
+
+        self.assertEqual(result["status"], "provider_saved")
+        self.assertEqual(result["start_result"]["status"], "restarted")
+        self.assertEqual(result["start_result"]["reason"], "provider_saved")
+        self.assertEqual(calls, [("stop", True), ("launch", "acme")])
+
     def test_switch_provider_updates_proxy_settings_without_mutating_user_config(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
@@ -1486,6 +1542,65 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(config["model_provider"], "acme")
         self.assertEqual(manager.provider_base_url(config, "acme"), settings.base_url)
         self.assertEqual(manager.provider_base_url(config, "other"), "https://api.other.test/v1")
+
+    def test_switch_provider_restarts_running_proxy_even_when_upstream_matches(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.shared.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(self.paths, "acme", api_key="old-secret", base_url=settings.upstream_base)
+        manager.write_provider_auth_entry(self.paths, "other", api_key="new-secret", base_url=settings.upstream_base)
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n\n'
+            "[model_providers.other]\n"
+            f'base_url = "{settings.upstream_base}"\n',
+            encoding="utf-8",
+        )
+        calls: list[tuple[str, object]] = []
+
+        def fake_health(_settings):
+            return {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": settings.proxy_base,
+                "upstream_base": settings.upstream_base,
+                "service_tier": settings.service_tier,
+                "service_tier_policy": settings.service_tier_policy,
+                "service_tier_effective_policy": "preserve",
+                "upstream_api_key_env": None,
+                "upstream_api_key_file": True,
+                "runtime_id": manager.RUNTIME_ID,
+            }
+
+        def fake_stop(_paths, force=False):
+            calls.append(("stop", force))
+            return {"status": "stopped", "pid": 9999}
+
+        def fake_launch(_paths, launch_settings, _verbose_proxy, **_kwargs):
+            calls.append(("launch", launch_settings.provider))
+            return {"status": "started", "pid": 1234, "upstream_base": launch_settings.upstream_base}
+
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", side_effect=fake_health),
+            mock.patch("codex_fast_proxy.manager.stop_process", side_effect=fake_stop),
+            mock.patch("codex_fast_proxy.manager.launch_background", side_effect=fake_launch),
+        ):
+            result = run_switch_provider(str(self.codex_home), "other")
+
+        self.assertEqual(result["status"], "provider_switched")
+        self.assertEqual(result["start_result"]["status"], "restarted")
+        self.assertEqual(result["start_result"]["reason"], "provider_switched")
+        self.assertEqual(calls, [("stop", True), ("launch", "other")])
 
     def test_delete_provider_removes_saved_entry_without_mutating_user_config(self) -> None:
         settings = manager.ProxySettings(
