@@ -138,6 +138,9 @@ DEFER_STOP_SESSION_EFFECT = (
     "Restart Codex App, then resume the same conversation if desired, or open a new CLI process; then run uninstall again "
     "to stop the proxy and remove files."
 )
+ProxyStartPolicy = _runtime_process.ProxyStartPolicy
+INTERACTIVE_PROXY_START_POLICY = _runtime_process.INTERACTIVE_PROXY_START_POLICY
+AUTOSTART_PROXY_START_POLICY = _runtime_process.AUTOSTART_PROXY_START_POLICY
 
 
 def _call_runtime(name: str, *args: Any, sync: tuple[str, ...] = (), **kwargs: Any) -> Any:
@@ -174,6 +177,7 @@ _RUNTIME_IMPLS = {
         "stop_process",
         "subprocess",
         "terminate_process",
+        "wait_for_proxy_port_release",
         "wait_for_proxy_health",
         "windows_process_running",
     )
@@ -190,6 +194,7 @@ is_process_running = _runtime_process.is_process_running
 windows_process_running = _runtime_process.windows_process_running
 terminate_process = _runtime_process.terminate_process
 is_port_available = _runtime_process.is_port_available
+wait_for_proxy_port_release = _runtime_process.wait_for_proxy_port_release
 proxy_health = _runtime_process.proxy_health
 child_environment = _runtime_process.child_environment
 already_running_result = _runtime_process.already_running_result
@@ -230,6 +235,7 @@ def restart_background(
     *,
     reason: str = "runtime_changed",
     force_stop: bool = False,
+    start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
 ) -> dict[str, Any]:
     return _call_runtime(
         "restart_background",
@@ -240,7 +246,8 @@ def restart_background(
         health,
         reason=reason,
         force_stop=force_stop,
-        sync=("stop_process", "launch_background"),
+        start_policy=start_policy,
+        sync=("stop_process", "launch_background", "wait_for_proxy_port_release", "is_port_available"),
     )
 
 
@@ -249,24 +256,31 @@ def start_background(
     settings: ProxySettings,
     verbose_proxy: bool,
     *,
-    restart_stale_runtime: bool = True,
+    start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
 ) -> dict[str, Any]:
     return _call_runtime(
         "start_background",
         paths,
         settings,
         verbose_proxy,
-        restart_stale_runtime=restart_stale_runtime,
+        start_policy=start_policy,
         sync=("proxy_runtime_state", "already_running_result", "restart_background", "launch_background"),
     )
 
 
-def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: bool) -> dict[str, Any]:
+def launch_background(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    verbose_proxy: bool,
+    *,
+    start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
+) -> dict[str, Any]:
     return _call_runtime(
         "launch_background",
         paths,
         settings,
         verbose_proxy,
+        start_policy=start_policy,
         sync=("os", "subprocess", "is_port_available", "child_environment", "wait_for_proxy_health", "terminate_process"),
     )
 
@@ -285,9 +299,9 @@ def autostart_control_ui(paths: ProxyPaths) -> dict[str, Any]:
     if not provider_name_for_base_url(config, settings.base_url):
         return {"status": "skipped", "reason": "config_not_proxy", "provider": settings.provider}
 
-    from .control_ui import open_control_ui
+    from .control_ui import ensure_control_ui_for_hook
 
-    return open_control_ui(str(paths.codex_home), None, DEFAULT_HOST, 8786)
+    return ensure_control_ui_for_hook(str(paths.codex_home), None, DEFAULT_HOST, 8786)
 
 
 def resolve_upstream_base(
@@ -1104,17 +1118,25 @@ def command_start(args: argparse.Namespace) -> int:
 
 def command_autostart(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
+    started_at = time.monotonic()
+    timings: dict[str, float] = {}
     try:
+        proxy_started_at = time.monotonic()
         proxy_result = autostart_proxy(paths, args.verbose_proxy)
     except Exception as exc:
         proxy_result = {"status": "error", "error": str(exc)}
+    timings["proxy"] = round((time.monotonic() - proxy_started_at) * 1000, 1)
 
     result = {**proxy_result, "status": proxy_result.get("status", "unknown"), "proxy": proxy_result}
     if proxy_result.get("status") not in {"error", "skipped"}:
         try:
+            ui_started_at = time.monotonic()
             result["control_ui"] = autostart_control_ui(paths)
         except Exception as exc:
             result["control_ui"] = {"status": "error", "error": str(exc)}
+        timings["control_ui"] = round((time.monotonic() - ui_started_at) * 1000, 1)
+    timings["total"] = round((time.monotonic() - started_at) * 1000, 1)
+    result["timing_ms"] = timings
 
     if should_log_autostart_event(result, args.quiet):
         append_autostart_event(paths, result)
@@ -1146,6 +1168,8 @@ def autostart_hook_context(result: dict[str, Any]) -> str | None:
     if proxy_status in {"started", "restarted"}:
         action = "started" if proxy_status == "started" else "restarted"
         return f"Codex Model Gateway {action}{provider_text}{ui_text}."
+    if proxy_status == "starting":
+        return f"Codex Model Gateway is starting{provider_text}{ui_text}."
     if control_ui.get("started_background_process"):
         return f"Codex Model Gateway proxy is already running{provider_text}; Control UI started at {ui_url}."
     return None
@@ -1261,7 +1285,7 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
         {"name": "provider_base_url", "ok": bool(upstream_base), "detail": upstream_base},
         {"name": "runtime_source", "ok": True, "detail": runtime_status(paths, health)},
         {"name": "login_mode", "ok": True, "detail": login.login_mode},
-        {"name": "user_file_permissions", "ok": file_permissions["ok"], "detail": file_permissions},
+        {"name": "user_file_permissions", "ok": file_permissions["ok"], "severity": "warning", "detail": file_permissions},
     ]
     if settings_data:
         checks.extend([
@@ -1295,8 +1319,12 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
         checks.append({"name": "proxy_settings", "ok": False, "detail": str(paths.settings_path)})
 
     required_checks = checks if settings_data else checks[:4]
+    functional_checks = [check for check in required_checks if check.get("severity") != "warning"]
+    warnings = [check for check in checks if check.get("severity") == "warning" and not check["ok"]]
     return {
-        "ok": all(check["ok"] for check in required_checks),
+        "ok": all(check["ok"] for check in functional_checks),
+        "functional_ok": all(check["ok"] for check in functional_checks),
+        "warnings": warnings,
         "installed": bool(settings_data),
         "running": running,
         "pid": pid,

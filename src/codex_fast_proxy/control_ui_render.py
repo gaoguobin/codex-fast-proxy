@@ -44,6 +44,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.save": "保存",
         "button.switch": "启用",
         "button.delete": "删除",
+        "button.confirmDelete": "确认删除",
         "button.enable": "启用",
         "button.reenable": "重新启用",
         "button.refresh": "刷新状态",
@@ -165,6 +166,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.exportDone": "诊断文件已生成。",
         "advanced.doctorRunning": "正在运行自检...",
         "advanced.doctorPassed": "自检通过。",
+        "advanced.doctorWarnings": "功能链路正常，有权限安全建议。",
         "advanced.doctorFailed": "自检发现需要处理的项目。",
         "advanced.doctorIdle": "还没有运行自检。",
         "advanced.summary": "状态摘要",
@@ -306,6 +308,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.save": "Save",
         "button.switch": "Enable",
         "button.delete": "Delete",
+        "button.confirmDelete": "Confirm delete",
         "button.enable": "Enable",
         "button.reenable": "Enable again",
         "button.refresh": "Refresh status",
@@ -427,6 +430,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.exportDone": "Diagnostic file was generated.",
         "advanced.doctorRunning": "Running self-check...",
         "advanced.doctorPassed": "Self-check passed.",
+        "advanced.doctorWarnings": "Functional checks passed; permission advice is available.",
         "advanced.doctorFailed": "Self-check found items that need attention.",
         "advanced.doctorIdle": "Self-check has not run yet.",
         "advanced.summary": "Status summary",
@@ -568,6 +572,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.save": "保存",
         "button.switch": "有効化",
         "button.delete": "削除",
+        "button.confirmDelete": "削除を確認",
         "button.enable": "有効化",
         "button.reenable": "再度有効化",
         "button.refresh": "状態を更新",
@@ -689,6 +694,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.exportDone": "診断ファイルを生成しました。",
         "advanced.doctorRunning": "セルフチェックを実行中...",
         "advanced.doctorPassed": "セルフチェックは通過しました。",
+        "advanced.doctorWarnings": "機能チェックは正常です。権限の推奨事項があります。",
         "advanced.doctorFailed": "セルフチェックで対応が必要な項目が見つかりました。",
         "advanced.doctorIdle": "セルフチェックはまだ実行されていません。",
         "advanced.summary": "状態サマリー",
@@ -1289,32 +1295,38 @@ def render_status_metric(label: str, value: str, tone: str = "idle", label_key: 
 
 
 def render_speed_metric(snapshot: dict[str, Any]) -> str:
+    return render_status_metric(
+        "速度",
+        short_speed_label(snapshot),
+        speed_summary_tone(snapshot),
+        "summary.speed",
+    )
+
+
+def render_overview_speed_panel(snapshot: dict[str, Any]) -> str:
     if not speed_controls_available(snapshot):
-        return render_status_metric(
-            "速度",
-            short_speed_label(snapshot),
-            speed_summary_tone(snapshot),
-            "summary.speed",
-        )
+        return ""
     speed_mode = speed_mode_from_snapshot(snapshot)
     fast_checked = " checked" if speed_mode == "fast" else ""
     standard_checked = " checked" if speed_mode == "standard" else ""
     speed_label = html.escape(speed_mode_label(snapshot))
     return f"""
-            <div class="status-metric summary-speed-control {html.escape(speed_summary_tone(snapshot))}">
-              <span data-i18n="summary.speed">速度</span>
-              <strong id="providerSpeed">{speed_label}</strong>
-              <form id="speedForm" class="summary-speed-form" aria-label="速度模式">
-                <fieldset>
-                  <div class="segments summary-segments">
-                    <label><input type="radio" name="speedMode" value="fast"{fast_checked}><span data-i18n="value.fast">快速</span></label>
-                    <label><input type="radio" name="speedMode" value="standard"{standard_checked}><span data-i18n="value.standard">标准</span></label>
-                  </div>
-                </fieldset>
-                <p class="speed-hint" data-i18n="speed.inlineHint">快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。</p>
-                <button id="saveSpeed" class="secondary" type="submit" data-i18n="button.saveSpeed">保存</button>
-              </form>
+      <section id="overviewSpeedPreference" class="overview-preference" aria-label="速度模式">
+        <div class="preference-copy">
+          <span data-i18n="summary.speed">速度</span>
+          <strong id="providerSpeed">{speed_label}</strong>
+          <p class="speed-hint" data-i18n="speed.inlineHint">快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。</p>
+        </div>
+        <form id="speedForm" class="speed-preference-form" aria-label="速度模式">
+          <fieldset>
+            <div class="segments compact-segments">
+              <label><input type="radio" name="speedMode" value="fast"{fast_checked}><span data-i18n="value.fast">快速</span></label>
+              <label><input type="radio" name="speedMode" value="standard"{standard_checked}><span data-i18n="value.standard">标准</span></label>
             </div>
+          </fieldset>
+          <button id="saveSpeed" class="secondary" type="submit" data-i18n="button.saveSpeed">保存</button>
+        </form>
+      </section>
 """
 
 
@@ -1585,21 +1597,22 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
         )
         cards.append(f"""
             <article class="{card_class}" data-provider-name="{name_attr}">
-              <div class="provider-main">
-                <span class="provider-avatar">{html.escape(name[:1] or "?")}</span>
+              <div class="provider-card-head">
                 <div class="provider-info">
                   <strong>{html.escape(name)}</strong>
                   <span class="provider-url">{html.escape(display_text(item.get("base_url"), ui_text("provider.noService")))}</span>
-                  <span class="provider-auth-state"><span data-i18n="provider.keyPrefix">{ui_text("provider.keyPrefix")}</span>{html.escape(provider_key_label(item.get("api_key")))}</span>
-                  <span class="provider-row-feedback" data-provider-check-feedback role="status" aria-live="polite" hidden></span>
                 </div>
+                {status_pill}
+              </div>
+              <div class="provider-meta">
+                <span class="provider-auth-state"><strong data-i18n="provider.keyPrefix">{ui_text("provider.keyPrefix")}</strong><span>{html.escape(provider_key_label(item.get("api_key")))}</span></span>
+                <span class="provider-row-feedback idle" data-provider-check-feedback role="status" aria-live="polite"><strong data-i18n="button.checkProvider">{ui_text("button.checkProvider")}</strong><span data-i18n="value.notRun">{ui_text("value.notRun")}</span></span>
               </div>
               <div class="provider-card-actions">
-                {status_pill}
                 {check_button}
-                {enable_button}
                 <button class="provider-edit" type="button" data-provider-action="edit" data-provider="{name_attr}" data-i18n="button.edit">{ui_text("button.edit")}</button>
                 {delete_button}
+                {enable_button}
               </div>
             </article>
 """)
@@ -1715,6 +1728,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         summary_url = html.escape(display_text(selected_record.get("base_url"), "未设置模型服务"))
         labels.update({
             "saveProvider": "保存",
+            "confirmDelete": "确认删除",
         })
         selected_provider_name = str(selected_record.get("name") or selected_provider or "")
         provider_management = f"""
@@ -2394,12 +2408,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       display: grid;
     }}
     .provider-card {{
-      align-items: center;
       background: transparent;
       border-top: 1px solid var(--border);
-      display: flex;
-      gap: 14px;
-      justify-content: space-between;
+      display: grid;
+      gap: 10px;
       padding: 13px 0;
     }}
     .provider-card:last-child {{
@@ -2411,29 +2423,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .provider-card.current {{
       background: color-mix(in srgb, var(--blue-soft) 48%, transparent);
     }}
-    .provider-card.current .provider-avatar {{
-      background: var(--surface);
-      border-color: color-mix(in srgb, var(--blue) 24%, var(--border));
-      color: var(--blue);
-    }}
-    .provider-main {{
+    .provider-card-head {{
+      align-items: flex-start;
       display: flex;
       gap: 12px;
+      justify-content: space-between;
       min-width: 0;
-    }}
-    .provider-avatar {{
-      align-items: center;
-      background: var(--surface-soft);
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      color: var(--muted-strong);
-      display: inline-flex;
-      flex: 0 0 auto;
-      font-size: 14px;
-      font-weight: 460;
-      height: 30px;
-      justify-content: center;
-      width: 30px;
     }}
     .provider-info {{
       display: grid;
@@ -2449,32 +2444,46 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-size: 14px;
       overflow-wrap: anywhere;
     }}
-    .provider-row-feedback {{
-      color: var(--muted-strong);
+    .provider-meta {{
       display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(120px, .45fr) minmax(150px, .55fr);
+      min-width: 0;
+    }}
+    .provider-auth-state,
+    .provider-row-feedback {{
+      align-items: center;
+      color: var(--muted-strong);
+      display: flex;
+      justify-content: space-between;
       font-size: 14px;
-      gap: 2px;
+      gap: 8px;
       line-height: 1.45;
-      margin-top: 2px;
-      max-width: 540px;
+      min-width: 0;
       overflow-wrap: anywhere;
     }}
     .provider-row-feedback[hidden] {{
       display: none;
     }}
+    .provider-auth-state strong,
     .provider-row-feedback strong {{
+      color: var(--muted);
       font-weight: 500;
     }}
+    .provider-auth-state span,
     .provider-row-feedback span {{
-      color: var(--muted);
+      overflow: hidden;
+      text-align: right;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }}
-    .provider-row-feedback.checking strong {{
+    .provider-row-feedback.checking span {{
       color: var(--blue);
     }}
-    .provider-row-feedback.ok strong {{
+    .provider-row-feedback.ok span {{
       color: var(--green-text);
     }}
-    .provider-row-feedback.warn strong {{
+    .provider-row-feedback.warn span {{
       color: var(--red);
     }}
     .provider-card-actions {{
@@ -2492,6 +2501,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .provider-card-actions .provider-delete {{
       background: var(--surface);
       border-color: var(--border-strong);
+      color: var(--red);
+    }}
+    .provider-card-actions .provider-delete.confirming {{
+      background: var(--red-soft);
+      border-color: var(--red);
       color: var(--red);
     }}
     .provider-card-actions .provider-delete:hover:not(:disabled) {{
@@ -2686,22 +2700,44 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .status-metric.ok strong {{ color: var(--green-text); }}
     .status-metric.warn strong {{ color: var(--red); }}
     .status-metric.idle strong {{ color: var(--muted-strong); }}
-    .summary-speed-control {{
-      gap: 8px;
+    .overview-preference {{
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 16px;
+      justify-content: space-between;
+      margin: -2px 0 18px;
+      min-width: 0;
+      padding: 13px 0;
     }}
-    .summary-speed-form {{
+    .preference-copy {{
       display: grid;
-      gap: 8px;
-      margin-top: 1px;
+      gap: 3px;
+      min-width: 0;
     }}
-    .summary-segments {{ gap: 6px; }}
+    .preference-copy span {{
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    .preference-copy strong {{
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 500;
+    }}
     .speed-hint {{
       color: var(--muted);
       font-size: 14px;
       line-height: 1.5;
       margin: 0;
     }}
-    .summary-speed-form button {{
+    .speed-preference-form {{
+      align-items: center;
+      display: flex;
+      flex: 0 0 auto;
+      gap: 8px;
+    }}
+    .speed-preference-form button {{
       min-height: 32px;
       padding: 6px 10px;
     }}
@@ -2768,7 +2804,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin: 0;
       padding: 0;
     }}
-    .segments.summary-segments label {{
+    .segments.compact-segments {{
+      gap: 6px;
+    }}
+    .segments.compact-segments label {{
       flex: 1 1 76px;
       font-size: 14px;
       min-height: 34px;
@@ -3268,7 +3307,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         border-left: 0;
         border-top: 1px solid var(--border);
       }}
-      .provider-panel-header, .provider-card {{ align-items: stretch; flex-direction: column; }}
+      .overview-preference, .speed-preference-form, .provider-card-head {{ align-items: stretch; flex-direction: column; }}
+      .provider-meta {{ grid-template-columns: 1fr; }}
+      .provider-panel-header {{ align-items: stretch; flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
       .actions button {{ width: 100%; }}
       .provider-card-actions button, #newProvider, #cancelProvider, #updatePrimary {{ width: auto; }}
@@ -3395,6 +3436,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           </div>
           {render_top_summary(snapshot)}
           </div>
+          {render_overview_speed_panel(snapshot)}
           {danger_zone}
         <section class="overview-section status-center">
           {render_status_panel(snapshot)}
@@ -3612,6 +3654,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     let currentTheme = supportedThemes.includes(storedTheme) ? storedTheme : 'system';
     let currentSnapshot = initialSnapshot;
     let providerCheckResults = {{}};
+    let pendingProviderDelete = {{ provider: '', timer: 0 }};
     const labels = {labels_json};
     const actionProgress = {{
       enable: [
@@ -3809,24 +3852,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const checkButton = `<button class="provider-check" type="button" data-provider-action="verify" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.checkProvider', '检查'))}}</button>`;
       const enableButton = isCurrent ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.switch', '启用'))}}</button>`;
       const deleteButton = record && record.deletable ? `<button class="provider-delete" type="button" data-provider-action="delete" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.delete', '删除'))}}</button>` : '';
-      const avatar = name.trim().charAt(0) || '?';
       return `
             <article class="provider-card${{isCurrent ? ' current' : ''}}" data-provider-name="${{escapeHtml(name)}}">
-              <div class="provider-main">
-                <span class="provider-avatar">${{escapeHtml(avatar)}}</span>
+              <div class="provider-card-head">
                 <div class="provider-info">
                   <strong>${{escapeHtml(name)}}</strong>
                   <span class="provider-url">${{escapeHtml(baseUrl)}}</span>
-                  <span class="provider-auth-state">${{escapeHtml(t('provider.keyPrefix', '密钥：'))}}${{escapeHtml(keyLabel(record ? record.api_key : null))}}</span>
-                  <span class="provider-row-feedback" data-provider-check-feedback role="status" aria-live="polite" hidden></span>
                 </div>
+                ${{statusPill}}
+              </div>
+              <div class="provider-meta">
+                <span class="provider-auth-state"><strong>${{escapeHtml(t('provider.keyPrefix', '密钥：'))}}</strong><span>${{escapeHtml(keyLabel(record ? record.api_key : null))}}</span></span>
+                <span class="provider-row-feedback idle" data-provider-check-feedback role="status" aria-live="polite"><strong>${{escapeHtml(t('button.checkProvider', '检查'))}}</strong><span>${{escapeHtml(t('value.notRun', '未运行'))}}</span></span>
               </div>
               <div class="provider-card-actions">
-                ${{statusPill}}
                 ${{checkButton}}
-                ${{enableButton}}
                 <button class="provider-edit" type="button" data-provider-action="edit" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.edit', '编辑'))}}</button>
                 ${{deleteButton}}
+                ${{enableButton}}
               </div>
             </article>
 `;
@@ -3842,9 +3885,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (!target) return;
       const result = providerCheckResults[provider];
       if (!result) {{
-        target.hidden = true;
-        target.className = 'provider-row-feedback';
-        target.textContent = '';
+        target.hidden = false;
+        target.className = 'provider-row-feedback idle';
+        target.innerHTML = `<strong>${{escapeHtml(t('button.checkProvider', '检查'))}}</strong><span>${{escapeHtml(t('value.notRun', '未运行'))}}</span>`;
         target.removeAttribute('title');
         target.removeAttribute('aria-label');
         return;
@@ -3853,17 +3896,35 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       target.className = `provider-row-feedback ${{result.tone || 'checking'}}`;
       target.title = result.message || '';
       target.setAttribute('aria-label', `${{result.title || ''}}：${{result.message || ''}}`);
-      target.innerHTML = `<strong>${{escapeHtml(result.title || '')}}</strong><span>${{escapeHtml(result.message || '')}}</span>`;
+      target.innerHTML = `<strong>${{escapeHtml(t('button.checkProvider', '检查'))}}</strong><span>${{escapeHtml(result.title || '')}}</span>`;
     }}
     function setProviderCheckResult(provider, result) {{
       if (!provider) return;
       providerCheckResults = {{ ...providerCheckResults, [provider]: result }};
       updateProviderCheckRow(provider);
     }}
+    function resetPendingProviderDelete() {{
+      if (pendingProviderDelete.timer) window.clearTimeout(pendingProviderDelete.timer);
+      document.querySelectorAll('.provider-delete.confirming').forEach((button) => {{
+        button.classList.remove('confirming');
+        button.dataset.confirming = 'false';
+        button.textContent = t('button.delete', '删除');
+      }});
+      pendingProviderDelete = {{ provider: '', timer: 0 }};
+    }}
+    function requestProviderDeleteConfirmation(provider, button) {{
+      resetPendingProviderDelete();
+      pendingProviderDelete.provider = provider;
+      button.dataset.confirming = 'true';
+      button.classList.add('confirming');
+      button.textContent = t('button.confirmDelete', '确认删除');
+      pendingProviderDelete.timer = window.setTimeout(resetPendingProviderDelete, 3500);
+    }}
     function renderProviderList(snapshot) {{
       providerRecords = Array.isArray(snapshot.providers) ? snapshot.providers : providerRecords;
       const list = $('providerList');
       if (list) {{
+        resetPendingProviderDelete();
         const currentName = currentProviderName(snapshot);
         list.innerHTML = providerRecords.map((item) => renderProviderCard(item, currentName)).join('');
         Object.keys(providerCheckResults).forEach((provider) => updateProviderCheckRow(provider));
@@ -4341,8 +4402,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       target.innerHTML = `<div class="doctor-list">${{checks.map((check) => {{
         const ok = Boolean(check && check.ok);
+        const warning = !ok && check && check.severity === 'warning';
         const tone = ok ? 'ok' : 'warn';
-        const status = ok ? t('value.normal', '正常') : t('value.abnormal', '异常');
+        const status = ok ? t('value.normal', '正常') : (warning ? t('value.needsAttention', '需处理') : t('value.abnormal', '异常'));
         return `<div class="doctor-row">
           <strong>${{escapeHtml(doctorCheckLabel(check.name))}}</strong>
           <span class="doctor-detail">${{escapeHtml(doctorDetailText(check.detail))}}</span>
@@ -4367,9 +4429,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         const data = await response.json();
         if (!response.ok || data.status !== 'ok') throw new Error(data.error || 'doctor failed');
         latestDoctorReport = data.doctor || null;
+        try {{
+          await refreshSnapshot();
+        }} catch (_refreshError) {{}}
         renderDoctorReport(latestDoctorReport);
-        setDiagnosticFeedback(latestDoctorReport && latestDoctorReport.ok ? 'advanced.doctorPassed' : 'advanced.doctorFailed',
-          latestDoctorReport && latestDoctorReport.ok ? '自检通过。' : '自检发现需要处理的项目。');
+        const hasWarnings = latestDoctorReport && Array.isArray(latestDoctorReport.warnings) && latestDoctorReport.warnings.length > 0;
+        if (latestDoctorReport && latestDoctorReport.ok && hasWarnings) {{
+          setDiagnosticFeedback('advanced.doctorWarnings', '功能链路正常，有权限安全建议。');
+        }} else {{
+          setDiagnosticFeedback(latestDoctorReport && latestDoctorReport.ok ? 'advanced.doctorPassed' : 'advanced.doctorFailed',
+            latestDoctorReport && latestDoctorReport.ok ? '自检通过。' : '自检发现需要处理的项目。');
+        }}
       }} catch (error) {{
         const message = (error && error.message) ? error.message : String(error);
         const target = $('doctorResult');
@@ -4538,6 +4608,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     async function requestAction(action, body, options = {{}}) {{
       const response = await fetch('/api/actions/' + action, {{
         method: 'POST',
+        cache: 'no-store',
         headers: {{ [headerName]: token, 'Content-Type': 'application/json' }},
         body: body ? JSON.stringify(body) : undefined
       }});
@@ -4566,6 +4637,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       render(data.snapshot);
       data.renderedSnapshot = true;
       return data;
+    }}
+    async function refreshSnapshot() {{
+      const response = await fetch('/api/status', {{
+        headers: {{ [headerName]: token }},
+        cache: 'no-store'
+      }});
+      const data = await response.json();
+      if (!response.ok || data.status !== 'ok') throw new Error(data.error || 'refresh failed');
+      if (data.snapshot) render(data.snapshot);
+      return data.snapshot || null;
     }}
     async function reloadWhenControlUiReady(controlUi) {{
       const url = controlUi.url;
@@ -4613,8 +4694,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       let renderedSnapshot = false;
       let ok = false;
       let caughtError = null;
+      let responseData = null;
       try {{
         const data = await requestAction(action, body, options);
+        responseData = data || null;
         renderedSnapshot = Boolean(data && data.renderedSnapshot);
         ok = true;
       }} catch (error) {{
@@ -4633,7 +4716,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         button.removeAttribute('aria-busy');
         if (!renderedSnapshot) button.textContent = oldText;
       }}
-      return {{ ok, error: caughtError, renderedSnapshot }};
+      return {{ ok, error: caughtError, renderedSnapshot, data: responseData }};
     }}
     $('primary').addEventListener('click', async (event) => {{
       const action = event.currentTarget.dataset.action;
@@ -4718,10 +4801,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             title: t('provider.check.warn', '异常'),
             message
           }});
+        }} else if (result.data && result.data.snapshot) {{
+          render(result.data.snapshot);
         }}
       }}
       if (button.dataset.providerAction === 'delete') {{
-        if (window.confirm(`${{t('button.delete', '删除')}} ${{provider}}?`)) await runButton(button, 'delete-provider', {{ provider }});
+        if (pendingProviderDelete.provider !== provider || button.dataset.confirming !== 'true') {{
+          requestProviderDeleteConfirmation(provider, button);
+          return;
+        }}
+        resetPendingProviderDelete();
+        await runButton(button, 'delete-provider', {{ provider }});
       }}
     }});
     if ($('runBenchmark')) $('runBenchmark').addEventListener('click', () => showBenchmarkConfirm(true));

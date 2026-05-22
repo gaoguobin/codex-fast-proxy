@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,28 @@ from .storage import ensure_private_dir, open_private_append, write_private_text
 RESERVED_PORTS = {8787}
 PORT_SEARCH_ATTEMPTS = 100
 CONTROL_UI_SERVER = "codex_fast_proxy_control_ui"
+
+
+@dataclass(frozen=True)
+class ControlUiOpenPolicy:
+    existing_attempts: int
+    existing_probe_timeout: float
+    port_search_attempts: int
+    ready_timeout: float | None
+
+
+INTERACTIVE_CONTROL_UI_POLICY = ControlUiOpenPolicy(
+    existing_attempts=PORT_SEARCH_ATTEMPTS,
+    existing_probe_timeout=0.2,
+    port_search_attempts=PORT_SEARCH_ATTEMPTS,
+    ready_timeout=5.0,
+)
+AUTOSTART_CONTROL_UI_POLICY = ControlUiOpenPolicy(
+    existing_attempts=8,
+    existing_probe_timeout=0.05,
+    port_search_attempts=8,
+    ready_timeout=None,
+)
 DELAYED_RMTREE_SCRIPT = """
 import shutil
 import sys
@@ -430,16 +453,27 @@ def open_control_ui(
     port: int,
     *,
     reuse_existing: bool = True,
+    policy: ControlUiOpenPolicy = INTERACTIVE_CONTROL_UI_POLICY,
 ) -> dict[str, Any]:
     identity = control_ui_identity(codex_home, provider)
-    existing_port = find_existing_control_ui(host, port, identity=identity) if reuse_existing else None
+    existing_port = (
+        find_existing_control_ui(
+            host,
+            port,
+            identity=identity,
+            attempts=policy.existing_attempts,
+            probe_timeout=policy.existing_probe_timeout,
+        )
+        if reuse_existing
+        else None
+    )
     if existing_port is not None:
         url = f"http://{host}:{existing_port}/"
         return ready_control_ui_result(url, started_background_process=False, reused_existing=True)
 
-    selected_port = find_available_port(host, port, attempts=PORT_SEARCH_ATTEMPTS, reserved_ports=RESERVED_PORTS)
+    selected_port = find_available_port(host, port, attempts=policy.port_search_attempts, reserved_ports=RESERVED_PORTS)
     if selected_port is None:
-        port_range = f"{host}:{port}-{port + PORT_SEARCH_ATTEMPTS - 1}"
+        port_range = f"{host}:{port}-{port + policy.port_search_attempts - 1}"
         return {
             "status": "error",
             "code": "control_ui_port_unavailable",
@@ -458,7 +492,9 @@ def open_control_ui(
             "open_instruction": None,
             "start": start_result,
         }
-    if not wait_for_status(host, selected_port, identity=identity):
+    if policy.ready_timeout is None:
+        return starting_control_ui_result(url, start_result)
+    if not wait_for_status(host, selected_port, timeout=policy.ready_timeout, identity=identity):
         return {
             "status": "error",
             "code": "control_ui_start_failed",
@@ -471,6 +507,16 @@ def open_control_ui(
     return ready_control_ui_result(url, started_background_process=True, reused_existing=False)
 
 
+def ensure_control_ui_for_hook(codex_home: str | None, provider: str | None, host: str, port: int) -> dict[str, Any]:
+    return open_control_ui(
+        codex_home,
+        provider,
+        host,
+        port,
+        policy=AUTOSTART_CONTROL_UI_POLICY,
+    )
+
+
 def ready_control_ui_result(url: str, *, started_background_process: bool, reused_existing: bool) -> dict[str, Any]:
     return {
         "status": "ready",
@@ -479,11 +525,22 @@ def ready_control_ui_result(url: str, *, started_background_process: bool, reuse
         "background_process": True,
         "started_background_process": started_background_process,
         "reused_existing": reused_existing,
+        "ready_waited": True,
         "approval_reason": (
             "Starts a local background Control UI server. In sandboxed Codex environments, "
             "run this command with approval so the server can stay alive after the launcher exits."
         ),
     }
+
+
+def starting_control_ui_result(url: str, start_result: dict[str, Any]) -> dict[str, Any]:
+    result = ready_control_ui_result(url, started_background_process=True, reused_existing=False)
+    result.update({
+        "status": "starting",
+        "ready_waited": False,
+        "start": start_result,
+    })
+    return result
 
 
 def is_windows_platform() -> bool:
@@ -671,9 +728,10 @@ def find_existing_control_ui(
     *,
     identity: dict[str, str | None],
     attempts: int = PORT_SEARCH_ATTEMPTS,
+    probe_timeout: float = 0.2,
 ) -> int | None:
     for candidate in range(port, port + attempts):
-        if probe_control_ui(host, candidate, timeout=0.2, fallback_status=False, identity=identity):
+        if probe_control_ui(host, candidate, timeout=probe_timeout, fallback_status=False, identity=identity):
             return candidate
     return None
 

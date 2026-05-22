@@ -2036,6 +2036,69 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertNotIn(("pull",), calls)
         self.assertNotIn(("fetch",), calls)
 
+    def test_check_update_ignores_tool_managed_install_file_deletions(self) -> None:
+        repo = self.temp_dir / "repo"
+        original_run_git = updater.run_git
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            if args == ("rev-parse", "--is-inside-work-tree"):
+                return "true"
+            if args == ("branch", "--show-current"):
+                return "main"
+            if args == ("rev-parse", "HEAD"):
+                return "a" * 40
+            if args == ("status", "--porcelain"):
+                paths = sorted(updater.TOOL_MANAGED_DELETION_PATHS)
+                return "\n".join([f"D {paths[0]}", *(f" D {path}" for path in paths[1:])])
+            if args == ("remote", "get-url", "origin"):
+                return "https://github.com/example/repo.git"
+            if args == ("ls-remote", "origin", "refs/heads/main"):
+                return f"{'b' * 40}\trefs/heads/main"
+            if args == ("cat-file", "-e", f"{'b' * 40}^{{commit}}"):
+                raise ConfigError("missing remote commit")
+            raise AssertionError(args)
+
+        updater.run_git = fake_run_git
+        try:
+            result = manager.check_update(repo)
+        finally:
+            updater.run_git = original_run_git
+
+        self.assertFalse(result["local_changes"])
+        self.assertEqual(result["next_action"], "run update")
+        self.assertEqual(set(result["tool_managed_deletions"]), updater.TOOL_MANAGED_DELETION_PATHS)
+
+    def test_check_update_keeps_real_changes_blocking_when_tool_files_are_deleted(self) -> None:
+        repo = self.temp_dir / "repo"
+        original_run_git = updater.run_git
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            if args == ("rev-parse", "--is-inside-work-tree"):
+                return "true"
+            if args == ("branch", "--show-current"):
+                return "main"
+            if args == ("rev-parse", "HEAD"):
+                return "a" * 40
+            if args == ("status", "--porcelain"):
+                return " D .codex/UPDATE.md\n M README.md\n M .codex/INSTALL.md"
+            if args == ("remote", "get-url", "origin"):
+                return "https://github.com/example/repo.git"
+            if args == ("ls-remote", "origin", "refs/heads/main"):
+                return f"{'b' * 40}\trefs/heads/main"
+            if args == ("cat-file", "-e", f"{'b' * 40}^{{commit}}"):
+                raise ConfigError("missing remote commit")
+            raise AssertionError(args)
+
+        updater.run_git = fake_run_git
+        try:
+            result = manager.check_update(repo)
+        finally:
+            updater.run_git = original_run_git
+
+        self.assertTrue(result["local_changes"])
+        self.assertEqual(result["tool_managed_deletions"], [".codex/UPDATE.md"])
+        self.assertEqual(result["next_action"], "review local changes before updating")
+
     def test_check_update_reports_up_to_date(self) -> None:
         repo = self.temp_dir / "repo"
         commit = "a" * 40
@@ -3221,7 +3284,7 @@ class ManagerConfigTests(unittest.TestCase):
             self.assertFalse(force)
             return {"status": "stopped", "pid": 9999}
 
-        def fake_launch_background(paths, settings, verbose_proxy):
+        def fake_launch_background(paths, settings, verbose_proxy, **_kwargs):
             calls.append("start")
             return {"status": "started", "pid": 1234, "base_url": settings.base_url}
 
@@ -3274,7 +3337,7 @@ class ManagerConfigTests(unittest.TestCase):
             self.assertFalse(force)
             return {"status": "stopped", "pid": 9999}
 
-        def fake_launch_background(paths, settings, verbose_proxy):
+        def fake_launch_background(paths, settings, verbose_proxy, **_kwargs):
             calls.append("start")
             return {"status": "started", "pid": 1234, "base_url": settings.base_url}
 
@@ -3339,7 +3402,7 @@ class ManagerConfigTests(unittest.TestCase):
             self.assertTrue(force)
             return {"status": "stopped", "pid": 9999}
 
-        def fake_launch_background(paths, settings, verbose_proxy):
+        def fake_launch_background(paths, settings, verbose_proxy, **_kwargs):
             calls.append("start")
             return {"status": "started", "pid": 1234, "base_url": settings.base_url}
 
@@ -3365,6 +3428,54 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["status"], "restarted")
         self.assertEqual(result["reason"], "settings_changed")
         self.assertEqual(calls, ["stop:True", "start"])
+
+    def test_restart_waits_for_port_release_before_launching_replacement(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        health = {
+            "ok": True,
+            "pid": 9999,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.old.test/v1",
+            "service_tier": "priority",
+            "runtime_id": manager.RUNTIME_ID,
+        }
+        availability = [False, False, True]
+        checks: list[tuple[str, int]] = []
+        calls: list[str] = []
+        original_stop_process = manager.stop_process
+        original_launch_background = manager.launch_background
+        original_is_port_available = manager.is_port_available
+
+        def fake_is_port_available(host, port):
+            checks.append((host, port))
+            return availability.pop(0)
+
+        def fake_launch_background(paths, launch_settings, verbose_proxy, **_kwargs):
+            calls.append(launch_settings.upstream_base)
+            return {"status": "started", "pid": 1234, "base_url": launch_settings.base_url}
+
+        manager.stop_process = lambda _paths, force=False: {"status": "stopped", "pid": 9999}
+        manager.launch_background = fake_launch_background
+        manager.is_port_available = fake_is_port_available
+        try:
+            result = manager.restart_background(paths, settings, False, 9999, health, force_stop=True)
+        finally:
+            manager.stop_process = original_stop_process
+            manager.launch_background = original_launch_background
+            manager.is_port_available = original_is_port_available
+
+        self.assertEqual(result["status"], "restarted")
+        self.assertEqual(calls, ["https://api.new.test/v1"])
+        self.assertEqual(checks, [("127.0.0.1", 18787), ("127.0.0.1", 18787), ("127.0.0.1", 18787)])
 
     def test_restart_restores_previous_proxy_when_new_launch_fails(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -3393,7 +3504,7 @@ class ManagerConfigTests(unittest.TestCase):
         original_launch_background = manager.launch_background
         calls: list[str] = []
 
-        def fake_launch_background(paths, launch_settings, verbose_proxy):
+        def fake_launch_background(paths, launch_settings, verbose_proxy, **_kwargs):
             calls.append(launch_settings.upstream_base)
             if launch_settings.upstream_base == "https://api.new.test/v1":
                 raise ConfigError("new proxy failed")
@@ -3452,6 +3563,52 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn("preserve", captured["command"])
         self.assertEqual(captured["kwargs"]["start_new_session"], manager.os.name != "nt")
 
+    def test_hook_launch_background_keeps_slow_starting_proxy_alive(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+        terminated: list[int] = []
+
+        class FakeProcess:
+            pid = 1234
+
+            def poll(self) -> None:
+                return None
+
+        original_is_port_available = manager.is_port_available
+        original_wait_for_proxy_health = manager.wait_for_proxy_health
+        original_popen = manager.subprocess.Popen
+        original_terminate_process = manager.terminate_process
+
+        manager.is_port_available = lambda _host, _port: True
+        manager.wait_for_proxy_health = lambda *_args, **_kwargs: (_ for _ in ()).throw(ConfigError("not ready"))
+        manager.subprocess.Popen = lambda *_args, **_kwargs: FakeProcess()
+        manager.terminate_process = lambda pid: terminated.append(pid)
+        try:
+            result = manager.launch_background(
+                paths,
+                settings,
+                verbose_proxy=False,
+                start_policy=manager.ProxyStartPolicy(health_timeout=0.01, defer_health_timeout=True),
+            )
+        finally:
+            manager.is_port_available = original_is_port_available
+            manager.wait_for_proxy_health = original_wait_for_proxy_health
+            manager.subprocess.Popen = original_popen
+            manager.terminate_process = original_terminate_process
+
+        self.assertEqual(result["status"], "starting")
+        self.assertEqual(result["pid"], 1234)
+        self.assertEqual(result["health_check"], "deferred")
+        self.assertEqual(terminated, [])
+
     def test_launch_background_passes_upstream_key_env_name_not_secret(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
@@ -3499,12 +3656,12 @@ class ManagerConfigTests(unittest.TestCase):
         args = argparse.Namespace(codex_home=str(codex_home), quiet=True, verbose_proxy=False)
         original_autostart_proxy = manager.autostart_proxy
 
-        manager.autostart_proxy = lambda _paths, _verbose_proxy: {"status": "already_running", "pid": 1234}
+        manager.autostart_proxy = lambda _paths, _verbose_proxy, **_kwargs: {"status": "already_running", "pid": 1234}
         try:
             self.assertEqual(manager.command_autostart(args), 0)
             self.assertFalse(event_path.exists())
 
-            manager.autostart_proxy = lambda _paths, _verbose_proxy: {"status": "skipped", "reason": "config_not_proxy"}
+            manager.autostart_proxy = lambda _paths, _verbose_proxy, **_kwargs: {"status": "skipped", "reason": "config_not_proxy"}
             self.assertEqual(manager.command_autostart(args), 0)
             self.assertFalse(event_path.exists())
         finally:
@@ -3517,7 +3674,7 @@ class ManagerConfigTests(unittest.TestCase):
         args = argparse.Namespace(codex_home=str(codex_home), quiet=True, verbose_proxy=False)
         original_autostart_proxy = manager.autostart_proxy
 
-        manager.autostart_proxy = lambda _paths, _verbose_proxy: {"status": "restarted", "reason": "runtime_changed"}
+        manager.autostart_proxy = lambda _paths, _verbose_proxy, **_kwargs: {"status": "restarted", "reason": "runtime_changed"}
         try:
             self.assertEqual(manager.command_autostart(args), 0)
         finally:
@@ -3538,7 +3695,7 @@ class ManagerConfigTests(unittest.TestCase):
             "status": "already_running",
             "proxy": {"status": "already_running", "pid": 1234},
             "control_ui": {
-                "status": "ready",
+                "status": "starting",
                 "url": "http://127.0.0.1:8786/",
                 "started_background_process": True,
             },
@@ -3548,6 +3705,13 @@ class ManagerConfigTests(unittest.TestCase):
         restarted = {"status": "restarted", "proxy": {"status": "restarted", "reason": "runtime_changed"}}
         self.assertIn("restarted", manager.autostart_hook_context(restarted) or "")
 
+        starting = {
+            "status": "starting",
+            "proxy": {"status": "starting", "provider": "acme"},
+            "control_ui": {"status": "starting", "url": "http://127.0.0.1:8786/"},
+        }
+        self.assertIn("is starting for acme", manager.autostart_hook_context(starting) or "")
+
     def test_quiet_autostart_hook_summary_writes_context_for_hook(self) -> None:
         codex_home = self.temp_dir / ".codex"
         args = argparse.Namespace(codex_home=str(codex_home), quiet=True, hook_summary=True, verbose_proxy=False)
@@ -3555,7 +3719,7 @@ class ManagerConfigTests(unittest.TestCase):
         with (
             mock.patch("codex_fast_proxy.manager.autostart_proxy", return_value={"status": "started"}),
             mock.patch("codex_fast_proxy.manager.autostart_control_ui", return_value={
-                "status": "ready",
+                "status": "starting",
                 "url": "http://127.0.0.1:8786/",
             }),
             contextlib.redirect_stdout(io.StringIO()) as output,
@@ -3573,7 +3737,7 @@ class ManagerConfigTests(unittest.TestCase):
         with (
             mock.patch("codex_fast_proxy.manager.autostart_proxy", return_value={"status": "already_running", "pid": 1234}),
             mock.patch("codex_fast_proxy.manager.autostart_control_ui", return_value={
-                "status": "ready",
+                "status": "starting",
                 "url": "http://127.0.0.1:8786/",
                 "started_background_process": True,
             }) as control_ui,
@@ -3585,6 +3749,7 @@ class ManagerConfigTests(unittest.TestCase):
         event_text = event_path.read_text(encoding="utf-8")
         self.assertIn('"control_ui"', event_text)
         self.assertIn('"started_background_process":true', event_text)
+        self.assertIn('"timing_ms"', event_text)
 
     def test_uninstall_defer_stop_restores_config_and_keeps_proxy_for_restart(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -3923,6 +4088,45 @@ class ManagerConfigTests(unittest.TestCase):
         )
         report = doctor_report(paths_for(codex_home), None)
         self.assertFalse(report["ok"])
+
+    def test_doctor_treats_file_permissions_as_security_warning(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n\n'
+            "[features]\n"
+            "hooks = true\n",
+            encoding="utf-8",
+        )
+        manager.write_settings(
+            paths,
+            manager.ProxySettings(
+                provider="acme",
+                host="127.0.0.1",
+                port=18787,
+                proxy_base="/v1",
+                upstream_base="https://api.acme.test/v1",
+                service_tier="priority",
+            ),
+        )
+        install_startup_hook(paths)
+
+        with mock.patch("codex_fast_proxy.manager.user_file_permission_report", return_value={
+            "ok": False,
+            "checked": 1,
+            "loose": [{"path": str(paths.config_path), "mode": "0o644", "owner_only": False}],
+        }):
+            report = doctor_report(paths, None)
+
+        checks = {check["name"]: check for check in report["checks"]}
+        self.assertTrue(report["ok"])
+        self.assertTrue(report["functional_ok"])
+        self.assertEqual(checks["user_file_permissions"]["severity"], "warning")
+        self.assertFalse(checks["user_file_permissions"]["ok"])
+        self.assertEqual([item["name"] for item in report["warnings"]], ["user_file_permissions"])
 
     def test_doctor_reports_runtime_mismatch_as_pending_restart(self) -> None:
         codex_home = self.temp_dir / ".codex"

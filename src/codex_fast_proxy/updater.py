@@ -14,6 +14,15 @@ from .skill_link import link_skill_namespace
 from .storage import read_json
 
 
+TOOL_MANAGED_DELETION_PATHS = frozenset({
+    ".codex-plugin/plugin.json",
+    ".codex/INSTALL.md",
+    ".codex/SET_UPSTREAM.md",
+    ".codex/UNINSTALL.md",
+    ".codex/UPDATE.md",
+})
+
+
 def source_repo_root() -> Path:
     path = Path(__file__).resolve()
     if path.parents[1].name == "src":
@@ -34,6 +43,33 @@ def run_git(repo: Path, *args: str, timeout: float = 30.0) -> str:
         detail = (result.stderr or result.stdout).strip()
         raise ConfigError(redact_url_secrets(detail) or f"git {' '.join(args)} failed")
     return result.stdout.strip()
+
+
+def _porcelain_path(line: str) -> str:
+    if len(line) > 2 and line[:2] in {"D ", "M ", "A ", "R ", "C "} and line[2] != " ":
+        path = line[2:]
+    else:
+        path = line[3:] if len(line) > 3 else ""
+    return path.strip()
+
+
+def _is_tool_managed_deletion(line: str) -> bool:
+    status = line[:2]
+    path = _porcelain_path(line)
+    return path in TOOL_MANAGED_DELETION_PATHS and status in {" D", "D "}
+
+
+def classify_local_changes(status_output: str) -> tuple[list[str], list[str]]:
+    relevant: list[str] = []
+    tool_managed_deletions: list[str] = []
+    for line in status_output.splitlines():
+        if not line:
+            continue
+        if _is_tool_managed_deletion(line):
+            tool_managed_deletions.append(_porcelain_path(line))
+        else:
+            relevant.append(line)
+    return relevant, tool_managed_deletions
 
 
 def current_git_branch(repo: Path) -> str:
@@ -83,7 +119,8 @@ def check_update(repo: Path | None = None, branch: str | None = None, remote: st
     run_git(repo, "rev-parse", "--is-inside-work-tree")
     selected_branch = branch or current_git_branch(repo)
     local_commit = run_git(repo, "rev-parse", "HEAD").lower()
-    local_changes = bool(run_git(repo, "status", "--porcelain"))
+    relevant_changes, tool_managed_deletions = classify_local_changes(run_git(repo, "status", "--porcelain"))
+    local_changes = bool(relevant_changes)
     remote_url = safe_url_display(run_git(repo, "remote", "get-url", remote))
     remote_commit = remote_commit_for(repo, remote, selected_branch)
     relation = commit_relation(repo, local_commit, remote_commit)
@@ -109,6 +146,7 @@ def check_update(repo: Path | None = None, branch: str | None = None, remote: st
         "remote_commit": remote_commit,
         "relation": relation,
         "local_changes": local_changes,
+        "tool_managed_deletions": tool_managed_deletions,
         "update_available": update_available,
         "next_action": next_action,
     }

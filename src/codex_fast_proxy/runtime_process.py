@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,21 @@ from .runtime_status import (
 )
 from .status_rules import LEGACY_SERVICE_TIER_POLICY, effective_service_tier_policy
 from .storage import append_private_text, ensure_private_dir, open_private_append, read_json
+
+
+@dataclass(frozen=True)
+class ProxyStartPolicy:
+    health_timeout: float
+    defer_health_timeout: bool = False
+    restart_stale_runtime: bool = True
+
+
+INTERACTIVE_PROXY_START_POLICY = ProxyStartPolicy(health_timeout=5.0)
+AUTOSTART_PROXY_START_POLICY = ProxyStartPolicy(
+    health_timeout=1.0,
+    defer_health_timeout=True,
+    restart_stale_runtime=False,
+)
 
 
 def current_process(paths: ProxyPaths) -> tuple[int | None, bool]:
@@ -87,6 +103,18 @@ def terminate_process(pid: int) -> None:
 
 def is_port_available(host: str, port: int) -> bool:
     return find_available_port(host, port, attempts=1) == port
+
+
+def wait_for_proxy_port_release(settings: ProxySettings, timeout: float = 5.0, interval: float = 0.05) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        if is_port_available(settings.host, settings.port):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(interval, remaining))
+    raise ConfigError(f"Port {settings.port} is still in use on {settings.host} after stopping the previous proxy.")
 
 
 def auto_select_proxy_port(host: str, preferred: int) -> tuple[int, dict[str, Any]]:
@@ -234,10 +262,17 @@ def restart_background(
     *,
     reason: str = "runtime_changed",
     force_stop: bool = False,
+    start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
 ) -> dict[str, Any]:
     stop_result = stop_process(paths, force=force_stop)
+    wait_for_proxy_port_release(settings)
     try:
-        start_result = launch_background(paths, settings, verbose_proxy)
+        start_result = launch_background(
+            paths,
+            settings,
+            verbose_proxy,
+            start_policy=start_policy,
+        )
     except Exception as exc:
         previous_settings = ProxySettings(
             provider=settings.provider,
@@ -251,6 +286,7 @@ def restart_background(
             upstream_api_key_file=bool(health.get("upstream_api_key_file")),
         )
         try:
+            wait_for_proxy_port_release(previous_settings)
             launch_background(paths, previous_settings, verbose_proxy)
         except Exception as restore_exc:
             raise ConfigError(
@@ -276,7 +312,7 @@ def start_background(
     settings: ProxySettings,
     verbose_proxy: bool,
     *,
-    restart_stale_runtime: bool = True,
+    start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
 ) -> dict[str, Any]:
     ensure_private_dir(paths.app_home)
     ensure_private_dir(paths.state_dir)
@@ -286,9 +322,16 @@ def start_background(
         if healthy:
             if runtime_matches:
                 return already_running_result(paths, settings, pid, health)
-            if not restart_stale_runtime:
+            if not start_policy.restart_stale_runtime:
                 return already_running_result(paths, settings, pid, health, runtime_matches=False)
-            return restart_background(paths, settings, verbose_proxy, pid, health)
+            return restart_background(
+                paths,
+                settings,
+                verbose_proxy,
+                pid,
+                health,
+                start_policy=start_policy,
+            )
         if health_matches_proxy_identity(health, settings, pid):
             return restart_background(
                 paths,
@@ -298,14 +341,26 @@ def start_background(
                 health,
                 reason="settings_changed",
                 force_stop=True,
+                start_policy=start_policy,
             )
         raise ConfigError(f"Existing proxy process {pid} is running with different or unhealthy settings. Stop it first.")
     paths.pid_path.unlink(missing_ok=True)
 
-    return launch_background(paths, settings, verbose_proxy)
+    return launch_background(
+        paths,
+        settings,
+        verbose_proxy,
+        start_policy=start_policy,
+    )
 
 
-def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: bool) -> dict[str, Any]:
+def launch_background(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    verbose_proxy: bool,
+    *,
+    start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
+) -> dict[str, Any]:
     ensure_private_dir(paths.app_home)
     ensure_private_dir(paths.state_dir)
 
@@ -362,8 +417,27 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
         )
 
     try:
-        health = wait_for_proxy_health(settings, process, service_tier_effective_policy=effective_policy)
+        health = wait_for_proxy_health(
+            settings,
+            process,
+            timeout=start_policy.health_timeout,
+            service_tier_effective_policy=effective_policy,
+        )
     except ConfigError:
+        if start_policy.defer_health_timeout and process.poll() is None:
+            return {
+                "status": "starting",
+                "pid": process.pid,
+                "healthy": False,
+                "provider": settings.provider,
+                "base_url": settings.base_url,
+                "upstream_base": settings.upstream_base,
+                "health_timeout_ms": round(start_policy.health_timeout * 1000, 1),
+                "health_check": "deferred",
+                "log": str(paths.log_path),
+                "stdout": str(paths.stdout_path),
+                "stderr": str(paths.stderr_path),
+            }
         error_text = paths.stderr_path.read_text(encoding="utf-8", errors="replace") if paths.stderr_path.exists() else ""
         detail = f" {error_text.strip()}" if error_text.strip() else ""
         terminate_process(process.pid)
@@ -396,6 +470,13 @@ def should_log_autostart_event(event: dict[str, Any], quiet: bool) -> bool:
         return True
     if isinstance(control_ui, dict) and control_ui.get("started_background_process"):
         return True
+    timing = event.get("timing_ms")
+    if isinstance(timing, dict):
+        try:
+            if float(timing.get("total") or 0) >= 1000:
+                return True
+        except (TypeError, ValueError):
+            pass
     return event.get("status") not in {"already_running", "skipped"}
 
 
@@ -409,4 +490,9 @@ def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:
     if not provider_name_for_base_url(config, settings.base_url):
         return {"status": "skipped", "reason": "config_not_proxy", "provider": settings.provider}
 
-    return start_background(paths, settings, verbose_proxy, restart_stale_runtime=False)
+    return start_background(
+        paths,
+        settings,
+        verbose_proxy,
+        start_policy=AUTOSTART_PROXY_START_POLICY,
+    )

@@ -33,6 +33,7 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     control_ui_runtime_paths,
     doctor_payload,
     find_existing_control_ui,
+    ensure_control_ui_for_hook,
     is_loopback_host,
     open_control_ui,
     provider_key_payload,
@@ -727,6 +728,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn('"uninstall": "停用并恢复"', html)
         self.assertIn('"confirmUninstall": "仍要停用"', html)
         self.assertIn('"cancelUninstall": "先不停用"', html)
+        self.assertIn('"confirmDelete": "确认删除"', html)
         self.assertIn('"saveProvider": "保存"', html)
         self.assertIn("providerEditorActionLabel(saveProvider.dataset.providerMode)", html)
         self.assertIn('"saveSpeed": "保存"', html)
@@ -747,7 +749,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("button[aria-busy=\"true\"]", html)
         self.assertIn("button.setAttribute('aria-busy', 'true');", html)
         self.assertIn("button.removeAttribute('aria-busy');", html)
-        self.assertIn("return { ok, error: caughtError, renderedSnapshot };", html)
+        self.assertIn("return { ok, error: caughtError, renderedSnapshot, data: responseData };", html)
         self.assertIn("startActionProgress(button, action, options)", html)
         self.assertIn("!options.suppressGlobalProgress", html)
         self.assertIn("cursor: not-allowed;", html)
@@ -776,6 +778,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("ping.pid === replacementPid", html)
         self.assertIn("let disconnected = !waitForDisconnect;", html)
         self.assertIn("controlUi.reload_after_ms", html)
+        self.assertIn("async function refreshSnapshot", html)
+        self.assertIn("cache: 'no-store'", html)
+        self.assertIn("data: responseData", html)
         self.assertIn("shouldReloadForSnapshot(snapshot)", html)
         self.assertIn("const hasRuntimeControls = Boolean($('dangerZone') || $('uninstall'));", html)
         self.assertNotIn("Boolean($('update') || $('uninstall'))", html)
@@ -792,6 +797,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn("border-left: 3px solid var(--blue)", html)
         self.assertNotIn("border-left: 2px solid var(--border-strong)", html)
         self.assertNotIn("currentAction !== action", html)
+        self.assertIn("render(result.data.snapshot);", html)
+        self.assertIn("requestProviderDeleteConfirmation(provider, button);", html)
+        self.assertNotIn("window.confirm", html)
 
     def test_control_page_maps_preserve_policy_to_standard_speed_mode(self) -> None:
         html = render_page(
@@ -813,7 +821,8 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertNotIn('data-page="speed"', html)
         self.assertNotIn('id="speedPanel"', html)
-        self.assertIn('class="status-metric summary-speed-control', html)
+        self.assertIn('id="overviewSpeedPreference"', html)
+        self.assertNotIn('summary-speed-control', html)
         self.assertIn("快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。", html)
         self.assertIn('name="speedMode" value="standard" checked', html)
         self.assertIn('name="speedMode" value="fast"', html)
@@ -1671,6 +1680,8 @@ class ControlUiTests(unittest.TestCase):
             "127.0.0.1",
             8786,
             identity=control_ui_identity(str(self.codex_home), None),
+            attempts=100,
+            probe_timeout=0.2,
         )
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["url"], "http://127.0.0.1:8789/")
@@ -1687,6 +1698,28 @@ class ControlUiTests(unittest.TestCase):
             port = find_existing_control_ui("127.0.0.1", 8786, identity=identity, attempts=4)
 
         self.assertEqual(port, 8788)
+
+    def test_hook_control_ui_start_uses_short_best_effort_path(self) -> None:
+        with (
+            mock.patch("codex_fast_proxy.control_ui.find_existing_control_ui", return_value=None) as find_existing,
+            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
+            mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value={"status": "started", "pid": 1234}),
+            mock.patch("codex_fast_proxy.control_ui.wait_for_status") as wait_for_status,
+        ):
+            result = ensure_control_ui_for_hook(str(self.codex_home), None, "127.0.0.1", 8786)
+
+        find_existing.assert_called_once_with(
+            "127.0.0.1",
+            8786,
+            identity=control_ui_identity(str(self.codex_home), None),
+            attempts=8,
+            probe_timeout=0.05,
+        )
+        wait_for_status.assert_not_called()
+        self.assertEqual(result["status"], "starting")
+        self.assertEqual(result["url"], "http://127.0.0.1:8786/")
+        self.assertTrue(result["started_background_process"])
+        self.assertFalse(result["ready_waited"])
 
     def test_loopback_host_parses_ipv6_bracket_host_header(self) -> None:
         self.assertTrue(is_loopback_host("[::1]:8786"))
