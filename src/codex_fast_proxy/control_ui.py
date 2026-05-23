@@ -386,7 +386,7 @@ class ControlHandler(BaseHTTPRequestHandler):
 def collect_snapshot(server: ControlServer) -> dict[str, Any]:
     from .state import collect_status
 
-    return collect_status(server.codex_home, server.provider)
+    return collect_status(server.codex_home, server.provider, apply_idle_pending=True)
 
 
 def doctor_payload(codex_home: str | None, provider: str | None) -> dict[str, Any]:
@@ -421,8 +421,27 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
 def user_error_detail(detail: str | None) -> str | None:
     if not detail:
         return None
-    if "could not find an api key" in detail.lower():
+    lowered = detail.lower()
+    if "could not find an api key" in lowered or "does not contain an api key" in lowered:
         return "没有可用于验证的接口密钥；请填写接口密钥，或确认该 Provider 已保存 key。"
+    if "http 401" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
+        return "HTTP 401：接口密钥无效或未被该模型服务接受，请检查这个 Provider 的 key。"
+    if "http 402" in lowered or "insufficient_quota" in lowered or "quota" in lowered or "billing" in lowered:
+        return "额度或计费状态不可用；请检查供应商账户余额、套餐或计费状态。"
+    if "http 403" in lowered or "forbidden" in lowered:
+        return "HTTP 403：供应商拒绝了验证请求，请检查 key 权限、模型权限或账户状态。"
+    if "http 404" in lowered or "not found" in lowered:
+        return "HTTP 404：模型服务地址可能不支持 /v1/responses，请确认 base_url 指向兼容的 API 入口。"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "连接超时；请检查模型服务地址、网络连通性，或稍后重试。"
+    if "connection refused" in lowered or "errno 61" in lowered or "errno 10061" in lowered:
+        return "模型服务地址拒绝连接；请确认 base_url 正确，且供应商服务当前可访问。"
+    if "getaddrinfo" in lowered or "name or service not known" in lowered or "nodename nor servname" in lowered:
+        return "模型服务地址无法解析；请检查 base_url 的域名或网络 DNS 设置。"
+    if "did not return sse" in lowered:
+        return "模型服务没有返回流式 SSE 响应；请确认该供应商支持 Responses API 的 stream=true。"
+    if "responses api side-path verification failed" in lowered:
+        return "模型服务验证失败；请检查 base_url、接口密钥和网络连通性。"
     return detail
 
 

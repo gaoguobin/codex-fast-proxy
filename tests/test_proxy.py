@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy.core import safe_url_display  # noqa: E402
 from codex_fast_proxy.proxy import (  # noqa: E402
+    FastProxyServer,
     FastProxyHandler,
     copy_request_headers,
     parse_args,
@@ -77,6 +78,44 @@ class FakeConnection:
 
 
 class ProxyPatchTests(unittest.TestCase):
+    def test_server_activity_snapshot_tracks_requests_and_streams(self) -> None:
+        log_path = ROOT / ".test_tmp" / f"proxy-activity-{uuid.uuid4().hex}.log"
+        log_path.parent.mkdir(exist_ok=True)
+        server = FastProxyServer(
+            ("127.0.0.1", 0),
+            log_path,
+            "https://api.acme.test/v1",
+            "/v1",
+            "priority",
+            "auto",
+            "preserve",
+            None,
+            None,
+            False,
+        )
+        try:
+            self.assertTrue(server.activity_snapshot()["idle"])
+
+            server.request_started()
+            server.stream_started()
+            activity = server.activity_snapshot()
+
+            self.assertEqual(activity["active_requests"], 1)
+            self.assertEqual(activity["active_streams"], 1)
+            self.assertFalse(activity["idle"])
+
+            server.stream_finished()
+            server.request_finished()
+            activity = server.activity_snapshot()
+
+            self.assertEqual(activity["active_requests"], 0)
+            self.assertEqual(activity["active_streams"], 0)
+            self.assertTrue(activity["idle"])
+            self.assertIsNotNone(activity["last_request_started_at"])
+            self.assertIsNotNone(activity["last_request_finished_at"])
+        finally:
+            server.server_close()
+
     def test_injects_missing_service_tier_without_changing_payload_fields(self) -> None:
         payload = {
             "model": "gpt-5.4",
@@ -214,6 +253,7 @@ class ProxyPatchTests(unittest.TestCase):
             upstream_api_key_env="CODEX_FAST_PROXY_UPSTREAM_API_KEY",
             public_upstream_api_key_env=None,
             upstream_api_key_source="provider_auth_file",
+            activity_snapshot=lambda: {"active_requests": 0, "active_streams": 0, "idle": True},
         )
         handler.send_response = lambda _status: None
         handler.send_header = lambda _name, _value: None
@@ -309,6 +349,8 @@ class ProxyPatchTests(unittest.TestCase):
                 log_lock=threading.Lock(),
                 verbose=False,
                 open_connection=lambda: connection,
+                request_started=lambda: None,
+                request_finished=lambda: None,
             )
 
             def raise_client_disconnect(_response: Any, **_kwargs: Any) -> None:

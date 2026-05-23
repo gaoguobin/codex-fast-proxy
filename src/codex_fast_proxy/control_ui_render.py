@@ -199,7 +199,11 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.checks": "自检结果",
         "advanced.check.python": "Python",
         "advanced.check.codex_config": "Codex 配置",
-        "advanced.check.active_provider": "当前 provider",
+        "advanced.check.active_provider": "Codex 当前 provider",
+        "advanced.check.codex_model_provider": "Codex 配置 provider",
+        "advanced.check.codex_proxy_provider": "本地代理入口",
+        "advanced.check.proxy_upstream_provider": "上游供应商",
+        "advanced.check.provider_route": "请求路径",
         "advanced.check.provider_base_url": "模型服务地址",
         "advanced.check.runtime_source": "运行时来源",
         "advanced.check.login_mode": "登录方式",
@@ -463,7 +467,11 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.checks": "Self-check result",
         "advanced.check.python": "Python",
         "advanced.check.codex_config": "Codex config",
-        "advanced.check.active_provider": "Active provider",
+        "advanced.check.active_provider": "Codex active provider",
+        "advanced.check.codex_model_provider": "Codex config provider",
+        "advanced.check.codex_proxy_provider": "Local proxy route",
+        "advanced.check.proxy_upstream_provider": "Upstream provider",
+        "advanced.check.provider_route": "Request route",
         "advanced.check.provider_base_url": "Model service address",
         "advanced.check.runtime_source": "Runtime source",
         "advanced.check.login_mode": "Login method",
@@ -727,7 +735,11 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.checks": "セルフチェック結果",
         "advanced.check.python": "Python",
         "advanced.check.codex_config": "Codex 設定",
-        "advanced.check.active_provider": "現在の provider",
+        "advanced.check.active_provider": "Codex 現在の provider",
+        "advanced.check.codex_model_provider": "Codex 設定 provider",
+        "advanced.check.codex_proxy_provider": "ローカルプロキシ経路",
+        "advanced.check.proxy_upstream_provider": "上流プロバイダー",
+        "advanced.check.provider_route": "リクエスト経路",
         "advanced.check.provider_base_url": "モデルサービスアドレス",
         "advanced.check.runtime_source": "ランタイムソース",
         "advanced.check.login_mode": "ログイン方式",
@@ -806,6 +818,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "zh": {
         "working": {"title": "运行正常", "message": "Codex 已准备好继续使用当前模型服务。"},
         "restart_required": {"title": "已启用，重启后接管", "message": "当前对话可以继续。Codex 重启后，新会话会走本地代理，并按速度模式处理请求。"},
+        "restart_deferred_active": {"title": "已保存，等待当前请求结束", "message": "当前有模型请求正在返回。新设置已保存，请求结束后控制面板会自动应用。"},
         "cleanup_pending": {"title": "已停用", "message": "Codex 已恢复到原模型服务。你可以重新启用，或完成清理并移除本地代理状态。"},
         "ready_to_enable": {"title": "准备启用", "message": "点击启用后，会自动准备当前模型服务路径，并提前准备 ChatGPT 账户登录兼容性。"},
         "missing_provider": {"title": "需要先配置供应商", "message": "没有检测到可接管的第三方模型服务入口；当前还没有发起上游请求。请先在 Codex config.toml 配置 provider，再回到控制面板启用。"},
@@ -824,6 +837,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "en": {
         "working": {"title": "Running normally", "message": "Codex is ready to keep using the current model service."},
         "restart_required": {"title": "Enabled after restart", "message": "You can continue this conversation. After restarting Codex, new sessions will use the local proxy and the selected speed mode."},
+        "restart_deferred_active": {"title": "Saved, waiting for the current request", "message": "A model request is still streaming. The new settings are saved and will be applied automatically after it finishes."},
         "cleanup_pending": {"title": "Disabled", "message": "Codex was restored to the original model service. You can enable again or finish cleanup to remove local proxy state."},
         "ready_to_enable": {"title": "Ready to enable", "message": "Enabling will prepare the current model service route and ChatGPT account compatibility."},
         "missing_provider": {"title": "Configure a provider first", "message": "No third-party model service entry was found, and no upstream requests have been made yet. Configure a provider in Codex config.toml, then return here to enable."},
@@ -842,6 +856,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "ja": {
         "working": {"title": "正常に動作中", "message": "Codex は現在のモデルサービスを引き続き使用できます。"},
         "restart_required": {"title": "再起動後に有効化", "message": "この会話は続行できます。Codex 再起動後、新しいセッションはローカルプロキシと選択した速度モードを使用します。"},
+        "restart_deferred_active": {"title": "保存済み、現在のリクエスト待ち", "message": "モデルリクエストがまだストリーミング中です。新しい設定は保存され、完了後に自動適用されます。"},
         "cleanup_pending": {"title": "無効化済み", "message": "Codex は元のモデルサービスに復元されました。再度有効化するか、クリーンアップを完了してローカルプロキシ状態を削除できます。"},
         "ready_to_enable": {"title": "有効化の準備完了", "message": "有効化すると、現在のモデルサービス経路と ChatGPT アカウント互換性を準備します。"},
         "missing_provider": {"title": "先にプロバイダーを設定", "message": "接管できるサードパーティのモデルサービスエントリが見つからず、上流リクエストもまだありません。Codex config.toml に provider を設定してから戻ってください。"},
@@ -957,6 +972,24 @@ def compact_url(value: Any, fallback: str = "未启用") -> str:
     if not isinstance(value, str) or not value:
         return fallback
     return value.replace("https://", "").replace("http://", "")
+
+
+def provider_route_chain(snapshot: dict[str, Any]) -> str:
+    codex_provider = display_text(
+        snapshot.get("codex_model_provider") or snapshot.get("active_provider") or snapshot.get("config_provider"),
+        "",
+    )
+    local_proxy = compact_url(snapshot.get("base_url"), "")
+    config_base = compact_url(snapshot.get("config_base_url"), "")
+    upstream_provider = display_text(
+        snapshot.get("proxy_upstream_provider") or snapshot.get("managed_upstream_provider") or snapshot.get("provider"),
+        "",
+    )
+    upstream = compact_url(snapshot.get("upstream_base"), "")
+    if not (local_proxy and snapshot.get("config_matches")):
+        return " -> ".join(part for part in (codex_provider, config_base or upstream) if part)
+    parts = [part for part in (codex_provider, local_proxy, upstream_provider, upstream) if part]
+    return " -> ".join(parts)
 
 
 def short_login_label(snapshot: dict[str, Any]) -> str:
@@ -1350,10 +1383,10 @@ def diagnostic_runtime(snapshot: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 def diagnostic_config(snapshot: dict[str, Any]) -> tuple[str, str, str, str]:
-    provider = snapshot.get("provider") or snapshot.get("config_provider")
+    codex_provider = snapshot.get("codex_model_provider") or snapshot.get("config_provider")
     base_url = snapshot.get("config_base_url") or snapshot.get("upstream_base")
-    if provider and base_url:
-        return "已检测到 provider", "ok", "advanced.providerReady", f"{provider} · {compact_url(base_url)}"
+    if codex_provider and base_url:
+        return "路由已就绪", "ok", "advanced.providerReady", provider_route_chain(snapshot)
     return "未检测到 provider", "warn", "advanced.noProvider", ui_text("advanced.noProviderDetail")
 
 
@@ -1545,9 +1578,14 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
 def render_status_panel(snapshot: dict[str, Any]) -> str:
     chatgpt_login = bool(snapshot.get("chatgpt_auth"))
     auth_text = "ChatGPT 账户登录" if chatgpt_login else "接口密钥 / 第三方登录"
-    provider = display_text(snapshot.get("provider"), "未选择")
+    provider = display_text(snapshot.get("proxy_upstream_provider") or snapshot.get("provider"), "未选择")
     base_url = compact_url(snapshot.get("base_url"), "未启用")
     upstream = compact_url(snapshot.get("upstream_base") or snapshot.get("config_base_url"), "未配置")
+    route = provider_route_chain(snapshot)
+    route_markup = (
+        f'<div class="route-chain" id="statusRouteChain">{html.escape(route)}</div>'
+        if route else ""
+    )
     return f"""
       <section id="statusPanel" class="status-strip" aria-label="运行状态">
         <div class="status-list">
@@ -1567,6 +1605,7 @@ def render_status_panel(snapshot: dict[str, Any]) -> str:
             <small id="statusProviderDetail">{html.escape(upstream)}</small>
           </div>
         </div>
+        {route_markup}
       </section>
 """
 
@@ -2684,6 +2723,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       font-size: 14px;
       overflow-wrap: anywhere;
     }}
+    .route-chain {{
+      color: var(--muted-strong);
+      font-size: 14px;
+      line-height: 1.45;
+      margin-top: 10px;
+      overflow-wrap: anywhere;
+    }}
     .status-metric {{
       background: transparent;
       border-bottom: 1px solid var(--border);
@@ -3716,6 +3762,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     let loadedApiKey = '';
     let loadedApiKeyProvider = '';
     let latestDoctorReport = null;
+    let pendingRefreshTimer = null;
     function escapeHtml(value) {{
       return String(value).replace(/[&<>"']/g, (char) => ({{
         '&': '&amp;',
@@ -3819,9 +3866,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const proxyDetail = $('statusProxyDetail');
       if (proxyDetail) proxyDetail.textContent = compactUrl(snapshot.base_url, t('value.notEnabled', '未启用'));
       const providerValue = $('statusProviderValue');
-      if (providerValue) providerValue.textContent = displayValue(snapshot.provider, t('value.notSelected', '未选择'));
+      if (providerValue) providerValue.textContent = displayValue(snapshot.proxy_upstream_provider || snapshot.provider, t('value.notSelected', '未选择'));
       const providerDetail = $('statusProviderDetail');
       if (providerDetail) providerDetail.textContent = compactUrl(snapshot.upstream_base || snapshot.config_base_url, t('value.notConfigured', '未配置'));
+      const routeChain = $('statusRouteChain');
+      if (routeChain) routeChain.textContent = providerRouteChain(snapshot);
     }}
     function applyLocale(snapshot = currentSnapshot) {{
       updateStaticTranslations();
@@ -3845,6 +3894,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     function currentProviderName(snapshot) {{
       const records = Array.isArray(providerRecords) ? providerRecords : [];
+      if (snapshot && typeof snapshot.proxy_upstream_provider === 'string' && snapshot.proxy_upstream_provider) return snapshot.proxy_upstream_provider;
       if (snapshot && typeof snapshot.current_provider === 'string' && snapshot.current_provider) return snapshot.current_provider;
       if (snapshot && typeof snapshot.provider === 'string' && snapshot.provider) return snapshot.provider;
       const current = records.find((item) => item && item.current && item.name);
@@ -4179,6 +4229,15 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (typeof value !== 'string' || !value) return fallback;
       return value.replace('https://', '').replace('http://', '');
     }}
+    function providerRouteChain(snapshot) {{
+      const codexProvider = displayValue(snapshot.codex_model_provider || snapshot.active_provider || snapshot.config_provider, '');
+      const localProxy = compactUrl(snapshot.base_url, '');
+      const configBase = compactUrl(snapshot.config_base_url, '');
+      const upstreamProvider = displayValue(snapshot.proxy_upstream_provider || snapshot.managed_upstream_provider || snapshot.provider, '');
+      const upstream = compactUrl(snapshot.upstream_base, '');
+      if (!(localProxy && snapshot.config_matches)) return [codexProvider, configBase || upstream].filter(Boolean).join(' -> ');
+      return [codexProvider, localProxy, upstreamProvider, upstream].filter(Boolean).join(' -> ');
+    }}
     function withCount(key, fallback, count) {{
       return t(key, fallback).replace('{{count}}', String(count));
     }}
@@ -4199,10 +4258,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       return [t('value.notEnabled', '未启用'), 'idle', t('advanced.noProxySettings', '代理尚未启用，因此没有本地代理设置。')];
     }}
     function diagnosticConfigInfo(snapshot) {{
-      const provider = snapshot.provider || snapshot.config_provider || '';
+      const provider = snapshot.codex_model_provider || snapshot.config_provider || '';
       const baseUrl = snapshot.config_base_url || snapshot.upstream_base || '';
       if (provider && baseUrl) {{
-        return [t('advanced.providerReady', '已检测到 provider'), 'ok', `${{provider}} · ${{compactUrl(baseUrl, '')}}`];
+        return [t('advanced.providerReady', '已检测到 provider'), 'ok', providerRouteChain(snapshot)];
       }}
       return [t('advanced.noProvider', '未检测到 provider'), 'warn', t('advanced.noProviderDetail', '请先在 Codex config.toml 配置可接管的第三方模型服务。')];
     }}
@@ -4558,6 +4617,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         hasProviderPanel !== shouldShowProviderPanel ||
         hasSpeedForm !== shouldShowSpeedForm;
     }}
+    function hasActiveTraffic(snapshot) {{
+      const activity = snapshot && snapshot.proxy_activity && typeof snapshot.proxy_activity === 'object' ? snapshot.proxy_activity : {{}};
+      return Number(activity.active_requests || 0) > 0 || Number(activity.active_streams || 0) > 0;
+    }}
+    function schedulePendingRefresh(snapshot) {{
+      if (pendingRefreshTimer) {{
+        window.clearTimeout(pendingRefreshTimer);
+        pendingRefreshTimer = null;
+      }}
+      const userState = snapshot && snapshot.user_state ? snapshot.user_state : {{}};
+      const waiting = userState.code === 'restart_deferred_active' || (snapshot && snapshot.needs_restart && hasActiveTraffic(snapshot));
+      if (!waiting) return;
+      pendingRefreshTimer = window.setTimeout(async () => {{
+        pendingRefreshTimer = null;
+        try {{
+          await refreshSnapshot();
+        }} catch (_error) {{
+          schedulePendingRefresh(currentSnapshot);
+        }}
+      }}, 2000);
+    }}
     function render(snapshot) {{
       currentSnapshot = snapshot || {{}};
       if (shouldReloadForSnapshot(snapshot)) {{
@@ -4577,10 +4657,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       updateStatusPanel(snapshot);
       updateStateText(snapshot);
       applyLocale(snapshot);
+      schedulePendingRefresh(snapshot);
     }}
     applyTheme();
     applyLocale(currentSnapshot);
     renderLocalTimes();
+    schedulePendingRefresh(currentSnapshot);
     const savedView = window.sessionStorage.getItem(viewStorageKey);
     if (savedView) showView(savedView);
     document.querySelectorAll('.nav-item[data-view]').forEach((item) => {{

@@ -22,6 +22,28 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 
 页面提示准备完成后，重启 Codex App，或者新开 CLI，让 Codex 重新加载 provider 配置。
 
+如果 Control UI 提示没有检测到 provider，先在 Codex 里配置一个供应商，再回到 UI：
+
+```toml
+model_provider = "example"
+model = "your-model"
+
+[model_providers.example]
+name = "example"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+```
+
+启用时 manager 只写它负责的文件：
+
+| 文件 | 作用 |
+| --- | --- |
+| `~/.codex/config.toml` | 把当前 provider 的 `base_url` 指向本地 proxy |
+| `~/.codex/codex-fast-proxy-state/provider-auth.json` | 保存 proxy 管理的 provider URL/key |
+| `~/.codex/hooks.json` | 安装受信任的 `SessionStart` 启动 hook |
+| `~/.codex/backups/codex-fast-proxy` | 保存卸载和恢复用的备份 |
+
 ## Control UI
 
 随时可以打开：
@@ -64,7 +86,7 @@ ChatGPT 账户登录态下，代理侧速度控制会隐藏，因为速度选择
 
 ## ChatGPT 登录提示
 
-如果你想使用插件市场、GitHub/Apps/connectors、Fast 手动选择、状态提示和语音输入等 Codex App UI，先让 Codex 准备供应商鉴权：
+如果你想使用插件市场、GitHub/Apps/connectors、Fast 手动选择、状态提示和语音输入等 Codex App UI，正常从 Control UI 首次启用时会自动准备供应商鉴权。旧安装、CLI 兜底或恢复场景下，可以手动让 Codex 准备：
 
 ```text
 准备 Codex Model Gateway 的 ChatGPT 账户登录兼容性
@@ -90,6 +112,8 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 普通用户优先看 Control UI 的「高级」页。它会把运行时、配置入口、登录与密钥、启动钩子、请求日志和下一步操作合并成状态摘要，不需要先读原始状态。
 
 `运行自检` 使用与 CLI `doctor` 相同的 manager 检查。`复制诊断` 和 `导出文件` 只包含脱敏状态，不包含 API key、Cookie、请求体、prompt、tool 参数或响应内容。
+
+诊断会区分功能状态和安全建议。例如 Windows 文件权限 warning 是加固建议，不等于 proxy 不可用。
 
 CLI 源数据：
 

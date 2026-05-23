@@ -85,7 +85,10 @@ def windows_process_running(pid: int) -> bool:
 
 def terminate_process(pid: int) -> None:
     if os.name != "nt":
-        os.kill(pid, signal.SIGTERM)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
         return
 
     kernel32 = ctypes.windll.kernel32
@@ -161,6 +164,50 @@ def proxy_runtime_state(
     pending_restart = settings_restart_pending(health, settings, pid, effective_policy) if settings and running else False
     runtime_matches = health_matches_runtime(health) if healthy or pending_restart else None
     return pid, running, health, healthy, pending_restart, runtime_matches
+
+
+def proxy_activity(health: dict[str, Any] | None) -> dict[str, Any]:
+    activity = health.get("activity") if isinstance(health, dict) else None
+    if isinstance(activity, dict):
+        return activity
+    return {
+        "active_requests": 0,
+        "active_streams": 0,
+        "idle": True,
+        "last_request_started_at": None,
+        "last_request_finished_at": None,
+    }
+
+
+def proxy_has_active_traffic(health: dict[str, Any] | None) -> bool:
+    activity = proxy_activity(health)
+    try:
+        return int(activity.get("active_requests") or 0) > 0 or int(activity.get("active_streams") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def deferred_restart_result(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    pid: int | None,
+    health: dict[str, Any] | None,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "status": "deferred",
+        "reason": reason,
+        "defer_reason": "active_requests",
+        "pid": pid,
+        "needs_restart": True,
+        "provider": settings.provider,
+        "base_url": settings.base_url,
+        "upstream_base": settings.upstream_base,
+        "activity": proxy_activity(health),
+        "log": str(paths.log_path),
+        "next_action": "The new settings are saved and will apply after the active model request finishes.",
+    }
 
 
 def wait_for_proxy_health(
@@ -324,6 +371,8 @@ def start_background(
                 return already_running_result(paths, settings, pid, health)
             if not start_policy.restart_stale_runtime:
                 return already_running_result(paths, settings, pid, health, runtime_matches=False)
+            if proxy_has_active_traffic(health):
+                return deferred_restart_result(paths, settings, pid, health, reason="runtime_changed")
             return restart_background(
                 paths,
                 settings,
@@ -333,6 +382,8 @@ def start_background(
                 start_policy=start_policy,
             )
         if health_matches_proxy_identity(health, settings, pid):
+            if proxy_has_active_traffic(health):
+                return deferred_restart_result(paths, settings, pid, health, reason="settings_changed")
             return restart_background(
                 paths,
                 settings,

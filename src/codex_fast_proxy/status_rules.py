@@ -20,11 +20,13 @@ LEGACY_SERVICE_TIER_POLICY = "inject_missing"
 
 
 def effective_service_tier_policy(settings: Any, login: Any) -> str:
+    if getattr(login, "chatgpt_auth", False):
+        return "preserve"
     if settings.service_tier_policy in EFFECTIVE_SERVICE_TIER_POLICIES:
         return settings.service_tier_policy
     if settings.service_tier_policy != "auto":
         raise ConfigError(f"Invalid service tier policy: {settings.service_tier_policy}")
-    if login.login_mode == "api_key":
+    if getattr(login, "login_mode", None) == "api_key":
         return "inject_missing"
     return "preserve"
 
@@ -32,6 +34,8 @@ def effective_service_tier_policy(settings: Any, login: Any) -> str:
 def fast_behavior(settings: Any | None, login: Any | None = None) -> str:
     if not settings:
         return "unknown"
+    if login and getattr(login, "chatgpt_auth", False):
+        return "app_controlled"
     if settings.service_tier_policy == "preserve":
         return "preserve_only"
     if settings.service_tier_policy == "inject_missing":

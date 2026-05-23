@@ -96,16 +96,20 @@ The old proxy-hosted diagnostics page remains an advanced read-only fallback. It
 `GET /v1/models` as provider metadata checks so they do not crowd out real model-generation
 traffic. Ordinary users should open the independent Control UI instead.
 
+Doctor output separates functional state from hardening advice. A Windows
+`user_file_permissions` warning does not make the gateway functionally unhealthy when proxy health,
+config routing, startup hook, and runtime checks are OK.
+
 ## Provider Management
 
 Before enable, the Providers page is read-only and shows provider entries from Codex `config.toml`.
 
 After enable, the Providers page manages proxy-owned provider state:
 
-- Add provider: saves upstream URL and API key to the provider auth file after verification.
-- Edit current provider: updates the saved upstream and restarts the proxy after verification.
-- Switch provider: verifies the target and updates proxy settings without mutating Codex
-  `config.toml`.
+- Add provider: verifies and saves upstream URL and API key to the provider auth file.
+- Edit current provider: verifies the target URL/key and refreshes the running proxy after saving.
+- Switch provider: verifies the target, updates proxy settings without mutating Codex `config.toml`,
+  and refreshes the running proxy so the next request uses the selected URL/key.
 - Delete provider: removes an inactive proxy-owned saved entry. The current provider cannot be
   deleted.
 
@@ -119,12 +123,17 @@ python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/
 `set-upstream`, provider save, and provider switch send one side-path Codex-style
 `POST /v1/responses` request with `stream=true` before writing settings unless explicitly told
 otherwise. This is real provider traffic and can consume a small amount of quota.
+Successful provider changes can briefly interrupt in-flight proxy-backed requests while the runtime
+reloads.
 
 ## ChatGPT Login Compatibility
 
 Codex App plugin marketplace, GitHub, Apps/connectors, manual Fast controls, status hints, and
 voice input can depend on ChatGPT account login. Third-party provider model requests should still
 use the provider key, not ChatGPT account auth.
+
+First enable from the Control UI prepares provider auth automatically when a working provider key is
+available. Use the following commands for old installs, CLI fallback, or recovery.
 
 Dry-run provider key discovery:
 
@@ -263,6 +272,8 @@ status reporting.
 
 If local changes exist, update returns `status="blocked"` with `code="local_changes"` and does not
 overwrite the worktree.
+Tool-managed install-file deletions from older installs are restored before `git pull` and are
+reported separately from user local changes.
 
 If an update changes skill files, restart Codex App or open a new CLI process so skill discovery
 reloads.

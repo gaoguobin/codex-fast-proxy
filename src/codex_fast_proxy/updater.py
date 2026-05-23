@@ -72,6 +72,22 @@ def classify_local_changes(status_output: str) -> tuple[list[str], list[str]]:
     return relevant, tool_managed_deletions
 
 
+def restore_tool_managed_deletions(repo: Path, paths: list[str]) -> list[str]:
+    restore_paths = sorted(path for path in set(paths) if path in TOOL_MANAGED_DELETION_PATHS)
+    if not restore_paths:
+        return []
+
+    status_output = run_git(repo, "status", "--porcelain", "--", *restore_paths)
+    relevant_changes, tool_managed_deletions = classify_local_changes(status_output)
+    if relevant_changes:
+        raise ConfigError("Tool-managed install files have unexpected local changes.")
+    if not tool_managed_deletions:
+        return []
+
+    run_git(repo, "restore", "--source=HEAD", "--staged", "--worktree", "--", *tool_managed_deletions)
+    return sorted(tool_managed_deletions)
+
+
 def current_git_branch(repo: Path) -> str:
     branch = run_git(repo, "branch", "--show-current")
     return branch or "main"
@@ -236,6 +252,10 @@ def update_installation(
                 "check_update": check,
                 "next_user_action": "当前安装不是可安全快进的状态，请让 Codex 查看高级诊断后再处理。",
             }
+        restored_tool_managed_deletions = restore_tool_managed_deletions(
+            repo_path,
+            list(check.get("tool_managed_deletions") or []),
+        )
         if check["relation"] == "same":
             after_commit = before_commit
             code_update = {
@@ -243,6 +263,7 @@ def update_installation(
                 "before_commit": before_commit,
                 "after_commit": after_commit,
                 "check_update": check,
+                "restored_tool_managed_deletions": restored_tool_managed_deletions,
             }
         else:
             pull_output = run_git(repo_path, "pull", "--ff-only", remote, selected_branch, timeout=120.0)
@@ -255,6 +276,7 @@ def update_installation(
                 "pull": "ff_only",
                 "pull_output": pull_output,
                 "check_update": check,
+                "restored_tool_managed_deletions": restored_tool_managed_deletions,
             }
     else:
         after_commit = before_commit

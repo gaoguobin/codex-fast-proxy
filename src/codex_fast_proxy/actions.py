@@ -10,6 +10,15 @@ SPEED_MODE_POLICIES = {
 }
 
 
+def active_restart_deferred(result: dict[str, Any]) -> bool:
+    start_result = result.get("start_result")
+    return (
+        isinstance(start_result, dict)
+        and start_result.get("status") == "deferred"
+        and start_result.get("defer_reason") == "active_requests"
+    )
+
+
 def state(code: str, title: str, message: str, primary_action: str = "refresh", primary_label: str = "刷新状态") -> dict[str, str]:
     return {
         "code": code,
@@ -276,7 +285,13 @@ def run_configure_upstream(
         api_key,
         service_tier_policy=service_tier_policy_for_speed_mode(speed_mode),
     )
-    if result.get("restart_required"):
+    if active_restart_deferred(result):
+        result["user_state"] = state(
+            "restart_deferred_active",
+            "已保存，等待当前请求结束",
+            "当前有模型请求正在返回。新的模型服务和速度模式已保存，会在请求结束后自动应用。",
+        )
+    elif result.get("restart_required"):
         result["user_state"] = state(
             "restart_required",
             "配置已保存，重启后接管",
@@ -302,11 +317,18 @@ def run_save_provider(
     if not provider or not upstream_base:
         raise ValueError("Provider 和模型服务地址都不能为空。")
     result = manager.save_provider(codex_home, provider, upstream_base, api_key)
-    result["user_state"] = state(
-        "provider_saved",
-        "Provider 已保存",
-        "模型服务地址和接口密钥已保存。需要使用它时，点击切换。",
-    )
+    if active_restart_deferred(result):
+        result["user_state"] = state(
+            "restart_deferred_active",
+            "Provider 已保存，等待当前请求结束",
+            "当前有模型请求正在返回。新配置已保存，会在请求结束后自动应用。",
+        )
+    else:
+        result["user_state"] = state(
+            "provider_saved",
+            "Provider 已保存",
+            "模型服务地址和接口密钥已保存。需要使用它时，点击切换。",
+        )
     return result
 
 
@@ -330,7 +352,13 @@ def run_switch_provider(codex_home: str | None, provider: str | None) -> dict[st
     if not provider:
         raise ValueError("请选择 Provider。")
     result = manager.switch_provider(codex_home, provider)
-    if result.get("restart_required"):
+    if active_restart_deferred(result):
+        result["user_state"] = state(
+            "restart_deferred_active",
+            "供应商已切换，等待当前请求结束",
+            "当前有模型请求正在返回。新的供应商已保存，会在请求结束后自动应用。",
+        )
+    elif result.get("restart_required"):
         result["user_state"] = state(
             "restart_required",
             "Provider 已切换，重启后接管",
@@ -362,7 +390,13 @@ def run_set_speed_mode(codex_home: str | None, speed_mode: str | None) -> dict[s
         None,
         service_tier_policy=service_tier_policy_for_speed_mode(speed_mode),
     )
-    if result.get("restart_required"):
+    if active_restart_deferred(result):
+        result["user_state"] = state(
+            "restart_deferred_active",
+            "速度模式已保存，等待当前请求结束",
+            "当前有模型请求正在返回。新的速度模式会在请求结束后自动应用。",
+        )
+    elif result.get("restart_required"):
         result["user_state"] = state(
             "restart_required",
             "速度模式已保存，重启后接管",

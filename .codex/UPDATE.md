@@ -12,6 +12,8 @@ If the Codex environment uses sandbox or approval controls, request approval/esc
 running the gate because it may fetch from GitHub, reinstall the package, refresh hooks or skill
 links, and start a local background Control UI server.
 
+On Windows PowerShell, run:
+
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
     'python'
@@ -24,6 +26,13 @@ $repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
 if (-not (Test-Path $repoRoot)) {
     throw 'codex-fast-proxy is not installed. Follow INSTALL.md first.'
 }
+$toolManaged = @(
+    '.codex-plugin/plugin.json',
+    '.codex/INSTALL.md',
+    '.codex/SET_UPSTREAM.md',
+    '.codex/UNINSTALL.md',
+    '.codex/UPDATE.md'
+)
 $hasManagerUpdate = $false
 try {
     & $pythonCmd -m codex_fast_proxy update --help *> $null
@@ -32,6 +41,16 @@ try {
     $hasManagerUpdate = $false
 }
 if (-not $hasManagerUpdate) {
+    $deletedToolFiles = @()
+    foreach ($path in $toolManaged) {
+        $status = git -C $repoRoot status --porcelain -- $path
+        if ($status -match '^\s*D\s+') {
+            $deletedToolFiles += $path
+        }
+    }
+    if ($deletedToolFiles.Count -gt 0) {
+        git -C $repoRoot restore --source=HEAD --staged --worktree -- $deletedToolFiles
+    }
     git -C $repoRoot pull --ff-only
     & $pythonCmd -m pip install --user -e $repoRoot
     & $pythonCmd -m codex_fast_proxy update --repo $repoRoot --skip-self-update
@@ -44,6 +63,57 @@ if (-not $hasManagerUpdate) {
         & $pythonCmd -m codex_fast_proxy ui
     }
 }
+```
+
+On macOS/Linux shell, run:
+
+```sh
+python_cmd="$(command -v python3 || command -v python || true)"
+if [ -z "$python_cmd" ]; then
+  echo "Python 3 is required before updating codex-fast-proxy." >&2
+  exit 1
+fi
+repo_root="$HOME/.codex/codex-fast-proxy"
+if [ ! -e "$repo_root" ]; then
+  echo "codex-fast-proxy is not installed. Follow INSTALL.md first." >&2
+  exit 1
+fi
+
+has_manager_update=0
+if "$python_cmd" -m codex_fast_proxy update --help >/dev/null 2>&1; then
+  has_manager_update=1
+fi
+
+if [ "$has_manager_update" -eq 0 ]; then
+  tool_managed_paths="
+.codex-plugin/plugin.json
+.codex/INSTALL.md
+.codex/SET_UPSTREAM.md
+.codex/UNINSTALL.md
+.codex/UPDATE.md
+"
+  deleted_tool_files=""
+  for path in $tool_managed_paths; do
+    status="$(git -C "$repo_root" status --porcelain -- "$path")"
+    case "$status" in
+      *" D "*|D\ *) deleted_tool_files="$deleted_tool_files $path" ;;
+    esac
+  done
+  if [ -n "$deleted_tool_files" ]; then
+    # shellcheck disable=SC2086
+    git -C "$repo_root" restore --source=HEAD --staged --worktree -- $deleted_tool_files
+  fi
+  git -C "$repo_root" pull --ff-only
+  "$python_cmd" -m pip install --user -e "$repo_root"
+  "$python_cmd" -m codex_fast_proxy update --repo "$repo_root" --skip-self-update
+else
+  check_json="$("$python_cmd" -m codex_fast_proxy check-update --repo "$repo_root")"
+  if printf '%s' "$check_json" | grep -q '"update_available"[[:space:]]*:[[:space:]]*true'; then
+    "$python_cmd" -m codex_fast_proxy update --repo "$repo_root"
+  else
+    "$python_cmd" -m codex_fast_proxy ui
+  fi
+fi
 ```
 
 If the gate ran `update`, report the returned update JSON. That bootstrap is the update; after it
@@ -74,6 +144,8 @@ The UI action delegates to `python -m codex_fast_proxy update`; it owns git pull
 skill link refresh, enabled-runtime refresh, and final status reporting. Do not reimplement those
 steps in chat. If local changes exist, the update must stop with `status=blocked` and
 `code=local_changes`; do not overwrite the user's worktree.
+Tool-managed install-file deletions from older installs are restored before the pull and must not be
+reported as user local changes.
 
 After an update, reopen or reload the Control UI and verify the visible user state. The current UI
 uses pages for Overview, Providers, Requests, Advanced, and Settings. The Advanced page should

@@ -38,6 +38,8 @@ Use this only when the UI cannot be opened or the user explicitly asks Codex to 
 sandbox or approval controls apply, request approval because uninstall may restore
 `~/.codex/config.toml`, edit `~/.codex/hooks.json`, and stop a background proxy.
 
+On Windows PowerShell:
+
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
     'python'
@@ -57,6 +59,24 @@ if ($status.config_matches -eq $true) {
 & $pythonCmd -m codex_fast_proxy uninstall
 ```
 
+On macOS/Linux shell:
+
+```sh
+python_cmd="$(command -v python3 || command -v python || true)"
+if [ -z "$python_cmd" ]; then
+  echo "Python 3 is required before uninstalling codex-fast-proxy." >&2
+  exit 1
+fi
+repo_root="$HOME/.codex/codex-fast-proxy"
+status_json="$("$python_cmd" -m codex_fast_proxy status)"
+if printf '%s' "$status_json" | grep -q '"config_matches"[[:space:]]*:[[:space:]]*true'; then
+  "$python_cmd" -m codex_fast_proxy uninstall --defer-stop
+  echo 'restart_required_before_cleanup=true'
+  exit 0
+fi
+"$python_cmd" -m codex_fast_proxy uninstall
+```
+
 If uninstall returns `confirmation_required`, no uninstall changes were applied. Report
 `direct_upstream_auth_warning` and ask whether the user wants to keep the proxy enabled, switch back
 to API-key/third-party provider auth before uninstalling, or explicitly continue despite the
@@ -66,6 +86,8 @@ After cleanup, tell the user to restart Codex App or open a new CLI process so C
 restored provider config. If the UI cannot be used and the user explicitly asks for complete
 cleanup after the proxy has already been disabled, use the manager-owned skill unlink before
 deleting files:
+
+Windows PowerShell:
 
 ```powershell
 if (Test-Path $repoRoot) {
@@ -79,6 +101,22 @@ $backupDir = Join-Path (Join-Path (Join-Path $HOME '.codex') 'backups') 'codex-f
 if (Test-Path $backupDir) {
     Remove-Item -LiteralPath $backupDir -Recurse -Force
 }
+```
+
+macOS/Linux shell:
+
+```sh
+if [ -e "$repo_root" ]; then
+  "$python_cmd" -m codex_fast_proxy unlink-skill --repo-root "$repo_root"
+fi
+"$python_cmd" -m pip uninstall -y codex-fast-proxy
+if [ -e "$repo_root" ]; then
+  rm -rf "$repo_root"
+fi
+backup_dir="$HOME/.codex/backups/codex-fast-proxy"
+if [ -e "$backup_dir" ]; then
+  rm -rf "$backup_dir"
+fi
 ```
 
 Never print API key values, `auth.json` contents, provider-auth file contents, ChatGPT tokens,

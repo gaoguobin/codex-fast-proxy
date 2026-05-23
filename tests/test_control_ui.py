@@ -149,9 +149,17 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(snapshot["config_matches"])
         self.assertEqual(snapshot["provider"], "other")
         self.assertEqual(snapshot["config_provider"], "acme")
+        self.assertEqual(snapshot["codex_model_provider"], "acme")
+        self.assertEqual(snapshot["codex_proxy_provider"], "acme")
+        self.assertEqual(snapshot["proxy_upstream_provider"], "other")
+        self.assertEqual(snapshot["provider_route"]["codex_model_provider"], "acme")
+        self.assertEqual(snapshot["provider_route"]["proxy_upstream_provider"], "other")
         self.assertEqual(providers["other"]["base_url"], "https://api.other.test/v1")
         self.assertTrue(providers["other"]["current"])
         self.assertNotIn("acme", providers)
+
+        html = render_page(snapshot, "token")
+        self.assertIn("acme -&gt; 127.0.0.1:18787/v1 -&gt; other -&gt; api.other.test/v1", html)
 
     def test_status_snapshot_maps_restored_proxy_to_cleanup_state(self) -> None:
         manager.write_settings(
@@ -171,6 +179,73 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(snapshot["user_state"]["code"], "cleanup_pending")
         self.assertEqual(snapshot["user_state"]["title"], "已停用")
         self.assertEqual(snapshot["user_state"]["primary_action"], "enable")
+
+    def test_status_snapshot_auto_applies_pending_restart_when_proxy_is_idle(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+        probes = []
+
+        def runtime_probe(_paths, _settings):
+            probes.append("probe")
+            health = {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.old.test/v1",
+                "service_tier": "priority",
+                "runtime_id": manager.RUNTIME_ID,
+                "activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            }
+            if len(probes) > 1:
+                health = {**health, "pid": 1234, "upstream_base": "https://api.new.test/v1"}
+                return 1234, True, health, True, False, True
+            return 9999, True, health, True, True, True
+
+        with mock.patch("codex_fast_proxy.state.start_background", return_value={"status": "restarted", "pid": 1234}) as start:
+            snapshot = collect_status(str(self.codex_home), runtime_probe=runtime_probe, apply_idle_pending=True)
+
+        self.assertEqual(start.call_count, 1)
+        self.assertEqual(len(probes), 2)
+        self.assertEqual(snapshot["auto_apply_result"]["status"], "restarted")
+        self.assertFalse(snapshot["needs_restart"])
+
+    def test_status_snapshot_keeps_pending_restart_while_proxy_is_active(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+
+        def runtime_probe(_paths, _settings):
+            return 9999, True, {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.old.test/v1",
+                "service_tier": "priority",
+                "runtime_id": manager.RUNTIME_ID,
+                "activity": {"active_requests": 1, "active_streams": 1, "idle": False},
+            }, True, True, True
+
+        with mock.patch("codex_fast_proxy.state.start_background", side_effect=AssertionError("should not restart")):
+            snapshot = collect_status(str(self.codex_home), runtime_probe=runtime_probe, apply_idle_pending=True)
+
+        self.assertTrue(snapshot["needs_restart"])
+        self.assertEqual(snapshot["user_state"]["code"], "restart_deferred_active")
+        self.assertEqual(snapshot["proxy_activity"]["active_streams"], 1)
 
     def test_status_snapshot_uses_clear_refresh_label_for_restart_state(self) -> None:
         snapshot = user_state({
@@ -903,7 +978,25 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertIn("没有切换。请选择已保存且可验证的 Provider。", message)
         self.assertIn("HTTP 403", message)
+        self.assertIn("key 权限", message)
         self.assertNotIn("HTTP 404", message)
+
+    def test_provider_errors_map_common_upstream_failures(self) -> None:
+        cases = [
+            ("Responses API side-path verification returned HTTP 401.", "接口密钥无效"),
+            ("Responses API side-path verification returned HTTP 402.", "额度或计费状态不可用"),
+            ("Responses API side-path verification returned HTTP 404.", "/v1/responses"),
+            ("Responses API side-path verification failed: timed out", "连接超时"),
+            ("Responses API side-path verification failed: [Errno 61] Connection refused", "拒绝连接"),
+            ("Responses API side-path verification failed: getaddrinfo ENOTFOUND", "无法解析"),
+            ("Responses API side-path verification failed: remote disconnected", "模型服务验证失败"),
+            ("Responses API side-path verification did not return SSE content: application/json.", "stream=true"),
+        ]
+        for detail, expected in cases:
+            with self.subTest(detail=detail):
+                message = user_error_message("verify-provider", {}, detail)
+                self.assertIn(expected, message)
+                self.assertNotIn("Responses API side-path", message)
 
     def test_update_action_reports_already_current_without_reload_prompt(self) -> None:
         with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
@@ -1174,6 +1267,17 @@ class ControlUiTests(unittest.TestCase):
             provider_key_payload(str(self.codex_home), "missing")
 
     def test_doctor_payload_returns_sanitized_control_ui_report(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+
         payload = doctor_payload(str(self.codex_home), None)
 
         self.assertEqual(payload["status"], "ok")
@@ -1183,6 +1287,10 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("python", names)
         self.assertIn("codex_config", names)
         self.assertIn("active_provider", names)
+        self.assertIn("codex_model_provider", names)
+        self.assertIn("codex_proxy_provider", names)
+        self.assertIn("proxy_upstream_provider", names)
+        self.assertIn("provider_route", names)
         self.assertNotIn("provider-secret", json.dumps(payload, ensure_ascii=False))
 
     def test_uninstall_control_action_schedules_state_cleanup(self) -> None:
@@ -1499,6 +1607,7 @@ class ControlUiTests(unittest.TestCase):
             mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
             mock.patch("codex_fast_proxy.manager.proxy_health", side_effect=fake_health),
             mock.patch("codex_fast_proxy.manager.stop_process", side_effect=fake_stop),
+            mock.patch("codex_fast_proxy.manager.wait_for_proxy_port_release"),
             mock.patch("codex_fast_proxy.manager.launch_background", side_effect=fake_launch),
         ):
             result = run_save_provider(
@@ -1602,6 +1711,7 @@ class ControlUiTests(unittest.TestCase):
             mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
             mock.patch("codex_fast_proxy.manager.proxy_health", side_effect=fake_health),
             mock.patch("codex_fast_proxy.manager.stop_process", side_effect=fake_stop),
+            mock.patch("codex_fast_proxy.manager.wait_for_proxy_port_release"),
             mock.patch("codex_fast_proxy.manager.launch_background", side_effect=fake_launch),
         ):
             result = run_switch_provider(str(self.codex_home), "other")

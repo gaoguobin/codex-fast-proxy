@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import tomllib
 import unittest
 from pathlib import Path
+
+from codex_fast_proxy import __version__
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +42,13 @@ class SkillMetadataTests(unittest.TestCase):
         )
         self.assertIn("link-skill", install_update)
         self.assertIn("unlink-skill", install_update)
+
+    def test_package_and_plugin_versions_match(self) -> None:
+        pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        plugin = json.loads((ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(pyproject["project"]["version"], __version__)
+        self.assertEqual(plugin["version"], __version__)
 
 
 if __name__ == "__main__":

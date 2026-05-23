@@ -18,6 +18,9 @@ Report the printed URL as plain text. The UI saves through the manager, verifies
 `POST /v1/responses` route before committing settings, stores API keys only in the proxy-managed
 provider auth file, and never prints the key. It supports provider add, edit, switch, delete, and
 masked key reveal after the proxy is enabled.
+Save, edit, and switch actions verify both the upstream URL and the target key before committing.
+Successful changes immediately refresh the running proxy so the next model request uses the new
+URL/key; this can briefly interrupt in-flight proxy-backed requests.
 
 Do not edit the active provider `base_url` in `~/.codex/config.toml` directly while the proxy is
 enabled. That field should keep pointing to the local proxy.

@@ -759,6 +759,34 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(manager.effective_service_tier_policy(settings, chatgpt_login), "preserve")
         self.assertEqual(manager.fast_behavior(settings, chatgpt_login), "app_controlled")
 
+    def test_chatgpt_auth_preserves_even_when_policy_requests_injection(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            service_tier_policy="inject_missing",
+        )
+
+        (codex_home / "auth.json").write_text(json.dumps({"tokens": {"access_token": "secret"}}), encoding="utf-8")
+        chatgpt_login = manager.detect_login_mode(codex_home)
+        self.assertEqual(chatgpt_login.login_mode, "chatgpt")
+        self.assertEqual(manager.effective_service_tier_policy(settings, chatgpt_login), "preserve")
+        self.assertEqual(manager.fast_behavior(settings, chatgpt_login), "app_controlled")
+
+        (codex_home / "auth.json").write_text(
+            json.dumps({"tokens": {"access_token": "secret"}, "OPENAI_API_KEY": "provider-secret"}),
+            encoding="utf-8",
+        )
+        mixed_login = manager.detect_login_mode(codex_home)
+        self.assertEqual(mixed_login.login_mode, "mixed")
+        self.assertEqual(manager.effective_service_tier_policy(settings, mixed_login), "preserve")
+        self.assertEqual(manager.fast_behavior(settings, mixed_login), "app_controlled")
+
     def test_provider_auth_preparation_reports_non_secret_state(self) -> None:
         login = manager.LoginDiagnosis("chatgpt", False, True, "chatgpt_auth_detected")
 
@@ -1226,6 +1254,7 @@ class ManagerConfigTests(unittest.TestCase):
                 "service_tier": "priority",
                 "service_tier_policy": "inject_missing",
                 "runtime_id": manager.RUNTIME_ID,
+                "activity": {"active_requests": 1, "active_streams": 0},
             }
             manager.stop_process = fake_stop_process
             set_args = argparse.Namespace(
@@ -1341,6 +1370,182 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertFalse(result["restart_required"])
         self.assertEqual(result["start_result"]["status"], "already_running")
         self.assertFalse(result["start_result"]["needs_restart"])
+
+    def test_replace_running_proxy_restarts_when_idle(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        old_settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.old.test/v1",
+            service_tier="priority",
+        )
+        new_settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        calls: list[str] = []
+
+        def fake_health(_settings):
+            return {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.old.test/v1",
+                "service_tier": "priority",
+                "service_tier_policy": "auto",
+                "service_tier_effective_policy": "preserve",
+                "runtime_id": manager.RUNTIME_ID,
+                "activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            }
+
+        def fake_stop(_paths, force=False):
+            calls.append(f"stop:{force}")
+            return {"status": "stopped", "pid": 9999}
+
+        def fake_launch(_paths, settings, _verbose_proxy, **_kwargs):
+            calls.append(f"launch:{settings.provider}")
+            return {"status": "started", "pid": 1234, "upstream_base": settings.upstream_base}
+
+        with (
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", side_effect=fake_health),
+            mock.patch("codex_fast_proxy.manager.stop_process", side_effect=fake_stop),
+            mock.patch("codex_fast_proxy.manager.wait_for_proxy_port_release"),
+            mock.patch("codex_fast_proxy.manager.launch_background", side_effect=fake_launch),
+        ):
+            result = manager.replace_running_proxy(
+                paths,
+                old_settings,
+                new_settings,
+                False,
+                reason="provider_switched",
+            )
+
+        self.assertEqual(result["status"], "restarted")
+        self.assertEqual(result["reason"], "provider_switched")
+        self.assertEqual(result["provider"], "other")
+        self.assertEqual(calls, ["stop:True", "launch:other"])
+
+    def test_replace_running_proxy_defers_when_stream_is_active(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        old_settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.old.test/v1",
+            service_tier="priority",
+        )
+        new_settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+
+        def fake_health(_settings):
+            return {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.old.test/v1",
+                "service_tier": "priority",
+                "service_tier_policy": "auto",
+                "service_tier_effective_policy": "preserve",
+                "runtime_id": manager.RUNTIME_ID,
+                "activity": {"active_requests": 1, "active_streams": 1, "idle": False},
+            }
+
+        with (
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", side_effect=fake_health),
+            mock.patch("codex_fast_proxy.manager.stop_process", side_effect=AssertionError("should not stop")),
+            mock.patch("codex_fast_proxy.manager.launch_background", side_effect=AssertionError("should not launch")),
+        ):
+            result = manager.replace_running_proxy(
+                paths,
+                old_settings,
+                new_settings,
+                False,
+                reason="provider_switched",
+            )
+
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(result["defer_reason"], "active_requests")
+        self.assertTrue(result["needs_restart"])
+        self.assertEqual(result["provider"], "other")
+        self.assertEqual(result["activity"]["active_streams"], 1)
+
+    def test_replace_running_proxy_restores_previous_proxy_when_launch_fails(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        old_settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.old.test/v1",
+            service_tier="priority",
+        )
+        new_settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        calls: list[str] = []
+
+        def fake_health(_settings):
+            return {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.old.test/v1",
+                "service_tier": "priority",
+                "service_tier_policy": "auto",
+                "service_tier_effective_policy": "preserve",
+                "runtime_id": manager.RUNTIME_ID,
+                "activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            }
+
+        def fake_launch(_paths, settings, _verbose_proxy, **_kwargs):
+            calls.append(f"launch:{settings.provider}")
+            if settings.provider == "other":
+                raise manager.ConfigError("candidate failed")
+            return {"status": "started", "pid": 1234, "provider": settings.provider}
+
+        with (
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", side_effect=fake_health),
+            mock.patch("codex_fast_proxy.manager.stop_process", return_value={"status": "stopped", "pid": 9999}),
+            mock.patch("codex_fast_proxy.manager.wait_for_proxy_port_release"),
+            mock.patch("codex_fast_proxy.manager.launch_background", side_effect=fake_launch),
+        ):
+            with self.assertRaisesRegex(manager.ConfigError, "restored the previous proxy"):
+                manager.replace_running_proxy(
+                    paths,
+                    old_settings,
+                    new_settings,
+                    False,
+                    reason="provider_switched",
+                )
+
+        self.assertEqual(calls, ["launch:other", "launch:acme"])
 
     def test_set_upstream_verifies_candidate_before_writing_settings(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -2269,6 +2474,51 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn(("-m", "pip", "install", "--user", "-e", str(repo.resolve())), python_calls)
         self.assertTrue(any(call[2] == "install" and "--start" in call for call in json_calls))
 
+    def test_update_installation_restores_tool_managed_deletions_before_pull(self) -> None:
+        repo = self.temp_dir / "repo"
+        repo.mkdir()
+        commit_before = "a" * 40
+        commit_after = "b" * 40
+        git_calls: list[tuple[str, ...]] = []
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            git_calls.append(args)
+            if args == ("rev-parse", "HEAD"):
+                return commit_before if git_calls.count(args) == 1 else commit_after
+            if args == ("status", "--porcelain", "--", ".codex/UPDATE.md"):
+                return " D .codex/UPDATE.md"
+            if args == ("restore", "--source=HEAD", "--staged", "--worktree", "--", ".codex/UPDATE.md"):
+                return ""
+            if args == ("pull", "--ff-only", "origin", "main"):
+                return "Updating a..b"
+            raise AssertionError(args)
+
+        def fake_run_python_json(args, timeout=300.0):
+            if "doctor" in args:
+                return {"ok": True}
+            if "status" in args:
+                return {"status": "stopped", "needs_restart": False}
+            raise AssertionError(args)
+
+        with (
+            mock.patch("codex_fast_proxy.updater.check_update", return_value={
+                "status": "checked",
+                "local_changes": False,
+                "relation": "remote_ahead",
+                "tool_managed_deletions": [".codex/UPDATE.md"],
+            }),
+            mock.patch("codex_fast_proxy.updater.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.updater.run_python", return_value=""),
+            mock.patch("codex_fast_proxy.updater.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.updater.link_skill_namespace", return_value={"status": "already_linked"}),
+        ):
+            result = manager.update_installation(self.temp_dir / ".codex", repo=repo, branch="main")
+
+        restore_call = ("restore", "--source=HEAD", "--staged", "--worktree", "--", ".codex/UPDATE.md")
+        pull_call = ("pull", "--ff-only", "origin", "main")
+        self.assertLess(git_calls.index(restore_call), git_calls.index(pull_call))
+        self.assertEqual(result["code_update"]["restored_tool_managed_deletions"], [".codex/UPDATE.md"])
+
     def test_update_installation_skips_pull_and_pip_when_already_current(self) -> None:
         repo = self.temp_dir / "repo"
         repo.mkdir()
@@ -2529,6 +2779,7 @@ class ManagerConfigTests(unittest.TestCase):
             "service_tier_effective_policy": "inject_missing",
             "upstream_api_key_env": None,
             "runtime_id": manager.RUNTIME_ID,
+            "activity": {"active_requests": 1, "active_streams": 0},
         }
         try:
             set_args = argparse.Namespace(
@@ -2593,6 +2844,7 @@ class ManagerConfigTests(unittest.TestCase):
             "upstream_api_key_env": None,
             "upstream_api_key_file": True,
             "runtime_id": manager.RUNTIME_ID,
+            "activity": {"active_requests": 1, "active_streams": 0},
         }
         try:
             set_args = argparse.Namespace(

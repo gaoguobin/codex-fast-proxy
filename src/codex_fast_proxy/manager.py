@@ -295,9 +295,22 @@ def replace_running_proxy(
 ) -> dict[str, Any]:
     pid, running, health, _healthy, _pending_restart, _runtime_matches = proxy_runtime_state(paths, old_settings)
     if running and health_matches_proxy_identity(health, old_settings, pid):
+        if _runtime_process.proxy_has_active_traffic(health):
+            return _runtime_process.deferred_restart_result(paths, new_settings, pid, health, reason=reason)
         stop_result = stop_process(paths, force=True)
         wait_for_proxy_port_release(new_settings)
-        start_result = launch_background(paths, new_settings, verbose_proxy)
+        try:
+            start_result = launch_background(paths, new_settings, verbose_proxy)
+        except Exception as exc:
+            try:
+                wait_for_proxy_port_release(old_settings)
+                launch_background(paths, old_settings, verbose_proxy)
+            except Exception as restore_exc:
+                raise ConfigError(
+                    f"codex-fast-proxy restart failed and restoring the previous proxy also failed: {exc}; "
+                    f"restore_error={restore_exc}"
+                ) from exc
+            raise ConfigError(f"codex-fast-proxy restart failed; restored the previous proxy: {exc}") from exc
         return {
             "status": "restarted",
             "reason": reason,
@@ -737,14 +750,17 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
         write_settings(paths, new_settings)
         if running and not args.restart:
             restart_required = bool(pending_restart or not healthy or runtime_matches is False or auth_source_requested)
-            start_result = already_running_result(paths, new_settings, _pid, health, runtime_matches=runtime_matches is not False)
             if restart_required:
-                start_result = {
-                    **start_result,
-                    "status": "deferred",
-                    "reason": "running_proxy_left_untouched",
-                    "next_action": "restart Codex App, open a new CLI process, or run start to apply the new upstream",
-                }
+                start_result = replace_running_proxy(
+                    paths,
+                    old_settings,
+                    new_settings,
+                    args.verbose_proxy,
+                    reason="settings_updated",
+                )
+                restart_required = start_result.get("status") == "deferred"
+            else:
+                start_result = already_running_result(paths, new_settings, _pid, health, runtime_matches=runtime_matches is not False)
         else:
             start_result = start_background(paths, new_settings, args.verbose_proxy)
         set_provider_base_url(paths.config_path, config_provider, new_settings.base_url)
@@ -961,6 +977,7 @@ def save_provider(
 
         login = detect_login_mode(paths.codex_home)
         auth = upstream_auth_status(paths, new_settings)
+        restart_required = bool(start_result and start_result.get("status") == "deferred")
         return {
             "status": "provider_saved",
             "provider": name,
@@ -975,7 +992,7 @@ def save_provider(
             "upstream_api_key_source": auth["upstream_api_key_source"],
             "api_key_changed": bool(stripped_key),
             "config_changed": False,
-            "restart_required": False,
+            "restart_required": restart_required,
             "verification": verification,
             "start_result": start_result,
             "provider_inventory": provider_inventory(paths.codex_home, name),
@@ -1103,6 +1120,7 @@ def switch_provider(
 
     login = detect_login_mode(paths.codex_home)
     auth = upstream_auth_status(paths, new_settings)
+    restart_required = bool(start_result and start_result.get("status") == "deferred")
     return {
         "status": "provider_switched",
         "provider": name,
@@ -1116,7 +1134,7 @@ def switch_provider(
         "upstream_api_key_file": auth["upstream_api_key_file"],
         "upstream_api_key_source": auth["upstream_api_key_source"],
         "prepare_chatgpt_login": prepare_result,
-        "restart_required": False,
+        "restart_required": restart_required,
         "start_result": start_result,
         "config_changed": False,
         "provider_inventory": provider_inventory(paths.codex_home, name),
@@ -1207,6 +1225,8 @@ def autostart_hook_context(result: dict[str, Any]) -> str | None:
         return "Codex Model Gateway autostart failed; open Control UI diagnostics for details."
     if ui_status == "error":
         return "Codex Model Gateway proxy is available, but Control UI autostart failed; open diagnostics when convenient."
+    if proxy_status == "deferred":
+        return f"Codex Model Gateway saved new settings{provider_text}; it will apply them after the active model request finishes{ui_text}."
     if proxy.get("needs_restart"):
         return f"Codex Model Gateway is running with an older runtime{provider_text}; restart Codex or run update/start when convenient{ui_text}."
     if proxy_status in {"started", "restarted"}:
@@ -1311,7 +1331,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
     config_proxy_provider = provider_name_for_base_url(config, settings.base_url) if settings else None
-    selected_provider = provider or config_proxy_provider or active_provider_name(config)
+    codex_model_provider = active_provider_name(config)
+    selected_provider = provider or config_proxy_provider or codex_model_provider
     upstream_base = provider_base_url(config, selected_provider) if selected_provider else None
     pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
     hooks_enabled = hooks_feature_enabled(config)
@@ -1326,6 +1347,7 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
         {"name": "python", "ok": sys.version_info >= (3, 11), "detail": sys.version.split()[0]},
         {"name": "codex_config", "ok": paths.config_path.exists(), "detail": str(paths.config_path)},
         {"name": "active_provider", "ok": bool(selected_provider), "detail": selected_provider},
+        {"name": "codex_model_provider", "ok": bool(codex_model_provider), "detail": codex_model_provider},
         {"name": "provider_base_url", "ok": bool(upstream_base), "detail": upstream_base},
         {"name": "runtime_source", "ok": True, "detail": runtime_status(paths, health)},
         {"name": "login_mode", "ok": True, "detail": login.login_mode},
@@ -1335,6 +1357,15 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
         checks.extend([
             {"name": "proxy_settings", "ok": True, "detail": str(paths.settings_path)},
             {"name": "config_points_to_proxy", "ok": bool(config_proxy_provider), "detail": upstream_base},
+            {"name": "codex_proxy_provider", "ok": bool(config_proxy_provider), "detail": config_proxy_provider},
+            {"name": "proxy_upstream_provider", "ok": bool(settings.provider), "detail": settings.provider},
+            {"name": "provider_route", "ok": bool(config_proxy_provider and settings.provider), "detail": {
+                "codex_model_provider": codex_model_provider,
+                "codex_proxy_provider": config_proxy_provider,
+                "local_proxy": settings.base_url,
+                "proxy_upstream_provider": settings.provider,
+                "upstream_base": settings.upstream_base,
+            }},
             {"name": "upstream_saved", "ok": bool(settings.upstream_base), "detail": settings.upstream_base},
             {"name": "service_tier_policy", "ok": effective_policy in EFFECTIVE_SERVICE_TIER_POLICIES, "detail": {
                 "configured": settings.service_tier_policy,

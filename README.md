@@ -6,7 +6,7 @@ Codex Model Gateway is the user-facing name for the `codex-fast-proxy` repo and 
 lets Codex App stay signed in with ChatGPT for the full App UI while model requests continue to use
 your third-party OpenAI-compatible provider.
 
-[中文指南](docs/README.zh-CN.md) · [Quick Start](#quick-start) · [Control UI](#control-ui) · [Common Workflows](#common-workflows) · [Diagnostics](#diagnostics) · [Safety](#safety) · [Advanced Usage](docs/advanced-usage.md) · [Sponsor](#sponsor)
+[中文指南](docs/README.zh-CN.md) · [Quick Start](#quick-start) · [Control UI](#control-ui) · [Common Workflows](#common-workflows) · [Diagnostics](#diagnostics) · [Safety](#safety) · [Advanced Usage](docs/advanced-usage.md) · [Changelog](CHANGELOG.md) · [Sponsor](#sponsor)
 
 ![Codex Model Gateway overview](docs/assets/codex-fast-proxy-promo.gif)
 
@@ -48,6 +48,29 @@ click `启用`.
 
 After the UI reports that setup is ready, restart Codex App or open a new Codex CLI process so Codex
 reloads its provider config. Future sessions use the installed startup hook.
+
+If the Control UI says no provider was found, configure one provider in Codex first, then reopen the
+UI. A minimal `~/.codex/config.toml` entry looks like this:
+
+```toml
+model_provider = "example"
+model = "your-model"
+
+[model_providers.example]
+name = "example"
+base_url = "https://api.example.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+```
+
+When you enable the gateway, the manager writes only the files it owns:
+
+| File | What changes |
+| --- | --- |
+| `~/.codex/config.toml` | Active provider `base_url` points to the local proxy |
+| `~/.codex/codex-fast-proxy-state/provider-auth.json` | Proxy-owned provider URL/key state |
+| `~/.codex/hooks.json` | Trusted `SessionStart` hook for future startup |
+| `~/.codex/backups/codex-fast-proxy` | Restore points for uninstall and recovery |
 
 ## Control UI
 
@@ -121,7 +144,9 @@ Signing in with ChatGPT is optional. Use it if you want the full Codex App UI, s
 marketplace, GitHub/Apps/connectors, manual Fast controls, status hints, or voice input. The proxy's
 auth split keeps model requests on your third-party provider after that sign-in.
 
-Before switching Codex App to ChatGPT login, ask Codex to prepare provider auth:
+First enable from the Control UI prepares provider auth automatically when a working provider key is
+available. For old installs, CLI fallback, or recovery, ask Codex to prepare provider auth before
+switching Codex App to ChatGPT login:
 
 ```text
 Prepare Codex Model Gateway for ChatGPT account login
@@ -150,6 +175,9 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 Use the Control UI `高级` page for normal diagnostics. It summarizes runtime, config, auth, startup
 hook, telemetry, and next action. `运行自检` calls the same manager doctor path as the CLI. `复制诊断`
 and `导出文件` include redacted status only; they do not include API keys.
+
+Diagnostics separate functional state from security advice. For example, a Windows file-permission
+warning should be treated as a hardening recommendation, not as proof that the proxy is unusable.
 
 CLI source of truth:
 

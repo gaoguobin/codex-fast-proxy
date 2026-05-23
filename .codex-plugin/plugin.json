@@ -1,7 +1,7 @@
 {
   "name": "codex-fast-proxy",
-  "version": "0.1.0",
-  "description": "Codex App auth-split proxy for signing in with ChatGPT while using third-party OpenAI-compatible APIs.",
+  "version": "0.2.0",
+  "description": "Codex Model Gateway for using Codex App with third-party OpenAI-compatible APIs.",
   "author": {
     "name": "gaoguobin",
     "url": "https://github.com/gaoguobin"
@@ -25,9 +25,9 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Codex Fast Proxy",
-    "shortDescription": "Use Codex App sign-in with third-party API providers.",
-    "longDescription": "Manage a local, safety-bounded proxy and Agent Skill so Codex App users can sign in with ChatGPT for UI features while model requests continue through a third-party OpenAI-compatible provider. It supports upstream auth split, App-controlled Fast/Priority behavior, benchmark verification, update, and uninstall workflows.",
+    "displayName": "Codex Model Gateway",
+    "shortDescription": "Keep Codex App UI features while model requests use your provider.",
+    "longDescription": "Manage a local, safety-bounded gateway and Agent Skill so Codex App users can sign in with ChatGPT for UI features while model requests continue through a third-party OpenAI-compatible provider. It supports upstream auth split, App-controlled Fast/Priority behavior, benchmark verification, update, and uninstall workflows.",
     "developerName": "gaoguobin",
     "category": "Developer Tools",
     "capabilities": [
@@ -39,10 +39,10 @@
     "privacyPolicyURL": "https://github.com/gaoguobin/codex-fast-proxy#safety",
     "termsOfServiceURL": "https://github.com/gaoguobin/codex-fast-proxy/blob/main/LICENSE",
     "defaultPrompt": [
-      "Enable Codex Fast proxy.",
-      "Prepare Codex Fast proxy for ChatGPT account login.",
-      "Show Codex Fast proxy status.",
-      "Run Codex Fast proxy benchmark."
+      "Enable Codex Model Gateway.",
+      "Prepare Codex Model Gateway for ChatGPT account login.",
+      "Show Codex Model Gateway status.",
+      "Run Codex Model Gateway benchmark."
     ],
     "brandColor": "#10A37F",
     "screenshots": [

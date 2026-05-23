@@ -9,7 +9,7 @@ from .config import active_provider_name, configured_providers, load_toml_config
 from .hooks import fast_proxy_hook_trust_status
 from .models import paths_for, settings_from_dict
 from .proxy import RUNTIME_ID
-from .runtime_process import is_port_available, proxy_runtime_state
+from .runtime_process import is_port_available, proxy_activity, proxy_runtime_state, start_background
 from .runtime_status import runtime_status
 from .status_rules import effective_service_tier_policy, fast_behavior, status_diagnosis
 from .storage import read_json
@@ -27,11 +27,28 @@ def collect_status(
     *,
     runtime_probe: RuntimeProbe = proxy_runtime_state,
     port_probe: PortProbe = is_port_available,
+    apply_idle_pending: bool = False,
 ) -> dict[str, Any]:
     paths = paths_for(codex_home)
     settings_data = read_json(paths.settings_path)
     settings = settings_from_dict(settings_data) if settings_data else None
     pid, running, health, healthy, pending_restart, runtime_matches = runtime_probe(paths, settings)
+    activity = proxy_activity(health)
+    auto_apply_result: dict[str, Any] | None = None
+    if (
+        apply_idle_pending
+        and settings
+        and running
+        and pending_restart
+        and not activity.get("active_requests")
+        and not activity.get("active_streams")
+    ):
+        try:
+            auto_apply_result = start_background(paths, settings, False)
+            pid, running, health, healthy, pending_restart, runtime_matches = runtime_probe(paths, settings)
+            activity = proxy_activity(health)
+        except Exception as exc:
+            auto_apply_result = {"status": "error", "error": str(exc)}
     config = load_toml_config(paths.config_path)
     providers = configured_providers(config)
     active_provider = active_provider_name(config)
@@ -41,6 +58,7 @@ def collect_status(
         selected_provider = next(iter(providers))
     route_provider = config_provider or active_provider or selected_provider
     config_base_url = provider_base_url(config, route_provider) if route_provider else None
+    proxy_upstream_provider = settings.provider if settings else None
     hook_status = fast_proxy_hook_trust_status(paths)
     login = detect_login_mode(paths.codex_home)
     auth = upstream_auth_status(paths, settings)
@@ -80,8 +98,21 @@ def collect_status(
         "diagnosis": diagnosis,
         "provider": selected_provider,
         "config_provider": config_provider or active_provider,
+        "codex_model_provider": active_provider,
+        "codex_config_provider": active_provider,
+        "codex_proxy_provider": config_provider,
+        "proxy_route_provider": config_provider,
+        "proxy_upstream_provider": proxy_upstream_provider,
+        "managed_upstream_provider": proxy_upstream_provider,
         "base_url": settings.base_url if settings else None,
         "upstream_base": settings.upstream_base if settings else None,
+        "provider_route": {
+            "codex_model_provider": active_provider,
+            "codex_proxy_provider": config_provider,
+            "local_proxy": settings.base_url if settings else None,
+            "proxy_upstream_provider": proxy_upstream_provider,
+            "upstream_base": settings.upstream_base if settings else None,
+        },
         "service_tier_policy": settings.service_tier_policy if settings else None,
         "service_tier_effective_policy": effective_policy,
         "fast_behavior": behavior,
@@ -103,6 +134,8 @@ def collect_status(
         "startup_hook_trust": hook_status,
         "port_available": port_probe(settings.host, settings.port) if settings else None,
         "health": health,
+        "proxy_activity": activity,
+        "auto_apply_result": auto_apply_result,
         "log": str(paths.log_path),
         "stdout": str(paths.stdout_path),
         "stderr": str(paths.stderr_path),
@@ -120,9 +153,19 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     diagnosis = snapshot.get("diagnosis") if isinstance(snapshot.get("diagnosis"), dict) else {}
     code = diagnosis.get("code")
     provider_ready = bool(snapshot.get("provider") and snapshot.get("config_base_url"))
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    active_traffic = bool((activity.get("active_requests") or 0) or (activity.get("active_streams") or 0))
 
     if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
         view = ("working", "运行正常", "Codex 已准备好继续使用当前模型服务。", "uninstall", "停用并恢复")
+    elif snapshot.get("config_matches") and snapshot.get("needs_restart") and active_traffic:
+        view = (
+            "restart_deferred_active",
+            "已保存，等待当前请求结束",
+            "当前有模型请求正在返回。新设置已保存，请求结束后控制面板会自动应用。",
+            "refresh",
+            "刷新状态",
+        )
     elif snapshot.get("config_matches") and snapshot.get("needs_restart"):
         view = (
             "restart_required",

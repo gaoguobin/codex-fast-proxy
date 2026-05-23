@@ -347,33 +347,42 @@ class FastProxyHandler(BaseHTTPRequestHandler):
     def proxy(self) -> None:
         started_at = time.perf_counter()
         request_id = uuid.uuid4().hex
-        request_body = self.read_request_body()
-        request_body, patch_event = service_tier_patch(
-            self.command,
-            self.path,
-            request_body,
-            self.headers.get("Content-Type", ""),
-            self.server.service_tier,
-            getattr(self.server, "service_tier_effective_policy", "inject_missing"),
-        )
-
-        upstream_path = upstream_request_path(
-            self.path,
-            self.server.proxy_base,
-            self.server.upstream_base_path,
-        )
-        request_headers = copy_request_headers(
-            self.headers,
-            self.server.upstream_netloc,
-            len(request_body) if request_body or self.command.upper() in BODY_METHODS else None,
-            getattr(self.server, "upstream_api_key", None),
-        )
-
         status = 502
         response_content_type = None
         error_type = None
         timing: dict[str, float] = {}
+        patch_event = {
+            "eligible": False,
+            "injected": False,
+            "service_tier_before": None,
+            "service_tier_after": None,
+            "stream": None,
+            "json_error": None,
+        }
+        self.server.request_started()
         try:
+            request_body = self.read_request_body()
+            request_body, patch_event = service_tier_patch(
+                self.command,
+                self.path,
+                request_body,
+                self.headers.get("Content-Type", ""),
+                self.server.service_tier,
+                getattr(self.server, "service_tier_effective_policy", "inject_missing"),
+            )
+
+            upstream_path = upstream_request_path(
+                self.path,
+                self.server.proxy_base,
+                self.server.upstream_base_path,
+            )
+            request_headers = copy_request_headers(
+                self.headers,
+                self.server.upstream_netloc,
+                len(request_body) if request_body or self.command.upper() in BODY_METHODS else None,
+                getattr(self.server, "upstream_api_key", None),
+            )
+
             connection = self.server.open_connection()
             try:
                 connection.request(self.command, upstream_path, body=request_body, headers=request_headers)
@@ -389,6 +398,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             error_type = type(exc).__name__
             self.respond_bad_gateway()
         finally:
+            self.server.request_finished()
             self.write_event(request_id, started_at, status, patch_event, response_content_type, error_type, timing)
 
     def respond_health(self) -> None:
@@ -407,6 +417,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "version": __version__,
             "runtime_id": RUNTIME_ID,
             "runtime": runtime_details(),
+            "activity": self.server.activity_snapshot(),
         }
         encoded = compact_json(payload).encode("utf-8")
         self.send_response(200)
@@ -443,14 +454,21 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             return
 
         content_type = response.getheader("Content-Type", "") or ""
-        stream_response_body(
-            response,
-            self.wfile,
-            chunked,
-            line_buffered="text/event-stream" in content_type.lower(),
-            started_at=started_at,
-            timing=timing,
-        )
+        line_buffered = "text/event-stream" in content_type.lower()
+        if line_buffered:
+            self.server.stream_started()
+        try:
+            stream_response_body(
+                response,
+                self.wfile,
+                chunked,
+                line_buffered=line_buffered,
+                started_at=started_at,
+                timing=timing,
+            )
+        finally:
+            if line_buffered:
+                self.server.stream_finished()
 
     def respond_bad_gateway(self) -> None:
         payload = {
@@ -545,6 +563,11 @@ class FastProxyServer(ThreadingHTTPServer):
         super().__init__(address, FastProxyHandler)
         self.log_path = log_path
         self.log_lock = threading.Lock()
+        self.activity_lock = threading.Lock()
+        self.active_requests = 0
+        self.active_streams = 0
+        self.last_request_started_at: str | None = None
+        self.last_request_finished_at: str | None = None
         self.upstream_base = upstream_base
         self.upstream_scheme = parsed.scheme
         self.upstream_netloc = parsed.netloc
@@ -560,6 +583,34 @@ class FastProxyServer(ThreadingHTTPServer):
         self.upstream_api_key_source = upstream_api_key_source
         self.upstream_api_key = upstream_api_key
         self.verbose = verbose
+
+    def request_started(self) -> None:
+        with self.activity_lock:
+            self.active_requests += 1
+            self.last_request_started_at = utc_now()
+
+    def request_finished(self) -> None:
+        with self.activity_lock:
+            self.active_requests = max(0, self.active_requests - 1)
+            self.last_request_finished_at = utc_now()
+
+    def stream_started(self) -> None:
+        with self.activity_lock:
+            self.active_streams += 1
+
+    def stream_finished(self) -> None:
+        with self.activity_lock:
+            self.active_streams = max(0, self.active_streams - 1)
+
+    def activity_snapshot(self) -> dict[str, Any]:
+        with self.activity_lock:
+            return {
+                "active_requests": self.active_requests,
+                "active_streams": self.active_streams,
+                "idle": self.active_requests == 0 and self.active_streams == 0,
+                "last_request_started_at": self.last_request_started_at,
+                "last_request_finished_at": self.last_request_finished_at,
+            }
 
     def open_connection(self) -> http.client.HTTPConnection:
         if self.upstream_scheme == "https":
