@@ -12,6 +12,7 @@ from .auth_store import (
 )
 from .config import active_provider_name, configured_providers, load_toml_config, provider_base_url, provider_name_for_base_url
 from .hooks import fast_proxy_hook_trust_status
+from .lifecycle import codex_activity
 from .models import paths_for, settings_from_dict
 from .proxy import RUNTIME_ID
 from .runtime_process import is_port_available, proxy_activity, proxy_runtime_state, start_background
@@ -70,6 +71,7 @@ def collect_status(
     settings = settings_from_dict(settings_data) if settings_data else None
     pid, running, health, healthy, pending_restart, runtime_matches = runtime_probe(paths, settings)
     activity = proxy_activity(health)
+    codex_turn_activity = codex_activity(paths)
     auto_apply_result: dict[str, Any] | None = None
     if (
         apply_idle_pending
@@ -78,11 +80,13 @@ def collect_status(
         and pending_restart
         and not activity.get("active_requests")
         and not activity.get("active_streams")
+        and not codex_turn_activity.get("active_turns")
     ):
         try:
             auto_apply_result = start_background(paths, settings, False)
             pid, running, health, healthy, pending_restart, runtime_matches = runtime_probe(paths, settings)
             activity = proxy_activity(health)
+            codex_turn_activity = codex_activity(paths)
         except Exception as exc:
             auto_apply_result = {"status": "error", "error": str(exc)}
     config = load_toml_config(paths.config_path)
@@ -181,6 +185,7 @@ def collect_status(
         "port_available": port_probe(settings.host, settings.port) if settings else None,
         "health": health,
         "proxy_activity": activity,
+        "codex_activity": codex_turn_activity,
         "auto_apply_result": auto_apply_result,
         "log": str(paths.log_path),
         "stdout": str(paths.stdout_path),
@@ -205,7 +210,12 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     code = diagnosis.get("code")
     provider_ready = bool(snapshot.get("provider") and snapshot.get("config_base_url"))
     activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
-    active_traffic = bool((activity.get("active_requests") or 0) or (activity.get("active_streams") or 0))
+    codex = snapshot.get("codex_activity") if isinstance(snapshot.get("codex_activity"), dict) else {}
+    active_traffic = bool(
+        (activity.get("active_requests") or 0)
+        or (activity.get("active_streams") or 0)
+        or (codex.get("active_turns") or 0)
+    )
 
     if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
         view = ("working", "运行正常", "Codex 已准备好继续使用当前模型服务。", "uninstall", "停用并恢复")

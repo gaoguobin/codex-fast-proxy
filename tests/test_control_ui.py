@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
+from codex_fast_proxy.lifecycle import record_codex_hook_event  # noqa: E402
 from codex_fast_proxy.actions import (  # noqa: E402
     run_benchmark,
     run_check_update,
@@ -1815,6 +1816,126 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(providers["other"]["pending"])
         html = render_page(snapshot, "token")
         self.assertIn("待应用", html)
+
+    def test_switch_provider_waits_for_active_codex_turn_even_when_proxy_is_idle(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(self.paths, "acme", api_key="old-secret", base_url=settings.upstream_base)
+        manager.write_provider_auth_entry(self.paths, "other", api_key="new-secret", base_url="https://api.other.test/v1")
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n\n'
+            "[model_providers.other]\n"
+            'base_url = "https://api.other.test/v1"\n',
+            encoding="utf-8",
+        )
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "cwd": str(self.temp_dir),
+            "model": "gpt-5.5",
+        })
+
+        health = {
+            "ok": True,
+            "pid": 9999,
+            "provider": "acme",
+            "proxy_base": settings.proxy_base,
+            "upstream_base": settings.upstream_base,
+            "service_tier": settings.service_tier,
+            "service_tier_policy": settings.service_tier_policy,
+            "service_tier_effective_policy": "priority",
+            "upstream_api_key_file": True,
+            "runtime_id": manager.RUNTIME_ID,
+            "activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+        }
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", return_value=health),
+            mock.patch("codex_fast_proxy.manager.stop_process") as stop,
+            mock.patch("codex_fast_proxy.manager.launch_background") as launch,
+        ):
+            result = run_switch_provider(str(self.codex_home), "other")
+
+        self.assertEqual(result["start_result"]["status"], "deferred")
+        self.assertEqual(result["start_result"]["defer_reason"], "active_codex_turns")
+        self.assertEqual(result["start_result"]["codex_activity"]["active_turns"], 1)
+        stop.assert_not_called()
+        launch.assert_not_called()
+
+        with mock.patch("codex_fast_proxy.state.start_background") as start:
+            snapshot = collect_status(str(self.codex_home), apply_idle_pending=True, runtime_probe=lambda _paths, _settings: (
+                9999,
+                True,
+                health,
+                True,
+                True,
+                True,
+            ))
+        start.assert_not_called()
+        self.assertTrue(snapshot["settings_pending"])
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 1)
+        html = render_page(snapshot, "token")
+        self.assertIn("还有 1 个 Codex 请求未完成", html)
+
+    def test_stop_hook_allows_idle_pending_settings_to_apply(self) -> None:
+        settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.other.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "Stop",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        health = {
+            "ok": True,
+            "pid": 9999,
+            "provider": "acme",
+            "proxy_base": settings.proxy_base,
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": settings.service_tier,
+            "service_tier_policy": settings.service_tier_policy,
+            "service_tier_effective_policy": "priority",
+            "upstream_api_key_file": True,
+            "runtime_id": manager.RUNTIME_ID,
+            "activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+        }
+
+        with mock.patch("codex_fast_proxy.state.start_background", return_value={"status": "started"}) as start:
+            snapshot = collect_status(str(self.codex_home), apply_idle_pending=True, runtime_probe=lambda _paths, _settings: (
+                9999,
+                True,
+                health,
+                True,
+                True,
+                True,
+            ))
+
+        start.assert_called_once()
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 0)
 
     def test_save_current_provider_key_defers_as_pending_settings(self) -> None:
         settings = manager.ProxySettings(

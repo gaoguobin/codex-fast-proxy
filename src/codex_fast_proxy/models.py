@@ -21,6 +21,7 @@ class ProxyPaths:
     provider_auth_path: Path
     manifest_path: Path
     pid_path: Path
+    turns_path: Path
     log_path: Path
     stdout_path: Path
     stderr_path: Path
@@ -60,6 +61,7 @@ def paths_for(codex_home: str | Path | None) -> ProxyPaths:
         provider_auth_path=app_home / "provider-auth.json",
         manifest_path=app_home / "install-manifest.json",
         pid_path=state_dir / "fast_proxy.pid",
+        turns_path=state_dir / "codex_turns.json",
         log_path=state_dir / "fast_proxy.jsonl",
         stdout_path=state_dir / "fast_proxy.stdout.log",
         stderr_path=state_dir / "fast_proxy.stderr.log",

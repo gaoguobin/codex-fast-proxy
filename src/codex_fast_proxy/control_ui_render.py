@@ -97,6 +97,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "config.note": "启用前这里不管理 Codex 配置里的供应商；如需增删改，请继续使用你熟悉的配置工具。",
         "provider.header": "供应商",
         "provider.note": "已启用后，这里只管理本地代理配置；不会改写 Codex config.toml。",
+        "provider.pendingNotice": "还有 {count} 个 Codex 请求未完成，新供应商已保存，会在结束后自动应用。",
+        "provider.pendingProxyNotice": "当前代理仍在处理请求，新供应商已保存，会在请求结束后自动应用。",
+        "provider.pendingSavedNotice": "新供应商已保存，等待控制面板完成应用。",
         "provider.saved": "已保存",
         "provider.name": "名称",
         "provider.modelServiceUrl": "模型服务地址",
@@ -364,6 +367,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "config.note": "Before enabling, this page does not manage providers in Codex config. Use your usual config tool for edits.",
         "provider.header": "Provider",
         "provider.note": "After enabling, this page manages only the local proxy config; it does not rewrite Codex config.toml.",
+        "provider.pendingNotice": "{count} Codex requests are still active. The new provider is saved and will apply after they finish.",
+        "provider.pendingProxyNotice": "The proxy is still processing a request. The new provider is saved and will apply after it finishes.",
+        "provider.pendingSavedNotice": "The new provider is saved and waiting to be applied.",
         "provider.saved": "Saved",
         "provider.name": "Name",
         "provider.modelServiceUrl": "Model service address",
@@ -631,6 +637,9 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "config.note": "有効化前、この画面は Codex 設定内のプロバイダーを管理しません。変更は普段の設定ツールで行ってください。",
         "provider.header": "プロバイダー",
         "provider.note": "有効化後、この画面はローカルプロキシ設定だけを管理します。Codex config.toml は書き換えません。",
+        "provider.pendingNotice": "{count} 件の Codex リクエストがまだ処理中です。新しいプロバイダーは保存済みで、完了後に自動適用されます。",
+        "provider.pendingProxyNotice": "プロキシがまだリクエストを処理中です。新しいプロバイダーは保存済みで、完了後に自動適用されます。",
+        "provider.pendingSavedNotice": "新しいプロバイダーは保存済みで、適用待ちです。",
         "provider.saved": "保存済み",
         "provider.name": "名前",
         "provider.modelServiceUrl": "モデルサービスアドレス",
@@ -1041,6 +1050,33 @@ def proxy_summary_tone(snapshot: dict[str, Any]) -> str:
     if snapshot.get("config_matches"):
         return "warn"
     return "idle"
+
+
+def codex_active_turn_count(snapshot: dict[str, Any]) -> int:
+    activity = snapshot.get("codex_activity") if isinstance(snapshot.get("codex_activity"), dict) else {}
+    try:
+        return int(activity.get("active_turns") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def proxy_active_request_count(snapshot: dict[str, Any]) -> int:
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    try:
+        return int(activity.get("active_requests") or 0) + int(activity.get("active_streams") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def provider_pending_note(snapshot: dict[str, Any]) -> tuple[str, str]:
+    if not snapshot.get("settings_pending"):
+        return "", ""
+    active_turns = codex_active_turn_count(snapshot)
+    if active_turns:
+        return ui_text("provider.pendingNotice").replace("{count}", str(active_turns)), "provider.pendingNotice"
+    if proxy_active_request_count(snapshot):
+        return ui_text("provider.pendingProxyNotice"), "provider.pendingProxyNotice"
+    return ui_text("provider.pendingSavedNotice"), "provider.pendingSavedNotice"
 
 
 def login_summary_tone(snapshot: dict[str, Any]) -> str:
@@ -1755,6 +1791,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             "confirmDelete": "确认删除",
         })
         selected_provider_name = str(selected_record.get("name") or selected_provider or "")
+        pending_note, pending_note_key = provider_pending_note(snapshot)
+        pending_note_hidden = "" if pending_note else " hidden"
+        pending_note_i18n = f' data-i18n="{pending_note_key}"' if pending_note_key else ""
         provider_management = f"""
       <section id="providerPanel" class="detail-panel provider-workspace">
         <div class="detail-panel-head">
@@ -1766,6 +1805,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           <button id="newProvider" class="secondary" type="button" data-i18n="button.add">添加</button>
         </div>
         <p class="detail-note provider-note" data-i18n="provider.note">已启用后，这里只管理本地代理配置；不会改写 Codex config.toml。</p>
+        <p id="providerPendingNotice" class="detail-note provider-pending-note"{pending_note_i18n}{pending_note_hidden}>{html.escape(pending_note)}</p>
         <div class="provider-split">
           <div class="provider-list-pane">
           <div class="provider-panel-header">
@@ -2386,6 +2426,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .provider-note {{
       margin: 0;
       padding: 11px 18px 13px;
+    }}
+    .provider-pending-note {{
+      background: color-mix(in srgb, var(--amber-soft) 48%, transparent);
+      color: var(--muted-strong);
+      margin: 0 18px 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
     }}
     .provider-workspace {{
       padding: 0;
@@ -3794,6 +3841,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       updateStateText(snapshot);
       resetControls(snapshot.user_state || {{}}, snapshot);
       renderProviderList(snapshot);
+      updateProviderPendingNotice(snapshot);
       resetSummary(snapshot);
       updateDiagnosticsWorkspace(snapshot);
       updateSettingsWorkspace(snapshot);
@@ -4135,6 +4183,34 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         return pending !== current ? `${{current}} · ${{t('value.pending', '待应用')}}${{pending}}` : `${{current}} · ${{t('value.pending', '待应用')}}`;
       }}
       return current;
+    }}
+    function activeCodexTurnCount(snapshot) {{
+      const activity = snapshot && snapshot.codex_activity && typeof snapshot.codex_activity === 'object' ? snapshot.codex_activity : {{}};
+      const count = Number(activity.active_turns || 0);
+      return Number.isFinite(count) ? count : 0;
+    }}
+    function activeProxyRequestCount(snapshot) {{
+      const activity = snapshot && snapshot.proxy_activity && typeof snapshot.proxy_activity === 'object' ? snapshot.proxy_activity : {{}};
+      const requests = Number(activity.active_requests || 0);
+      const streams = Number(activity.active_streams || 0);
+      return (Number.isFinite(requests) ? requests : 0) + (Number.isFinite(streams) ? streams : 0);
+    }}
+    function providerPendingText(snapshot) {{
+      if (!snapshot || !snapshot.settings_pending) return '';
+      const turns = activeCodexTurnCount(snapshot);
+      if (turns > 0) return withCount('provider.pendingNotice', '还有 {{count}} 个 Codex 请求未完成，新供应商已保存，会在结束后自动应用。', turns);
+      if (activeProxyRequestCount(snapshot) > 0) return t('provider.pendingProxyNotice', '当前代理仍在处理请求，新供应商已保存，会在请求结束后自动应用。');
+      return t('provider.pendingSavedNotice', '新供应商已保存，等待控制面板完成应用。');
+    }}
+    function updateProviderPendingNotice(snapshot) {{
+      const node = $('providerPendingNotice');
+      if (!node) return;
+      const text = providerPendingText(snapshot);
+      node.hidden = !text;
+      if (text) {{
+        node.removeAttribute('data-i18n');
+        node.textContent = text;
+      }}
     }}
     function proxySummaryTone(snapshot) {{
       if (snapshot.config_matches && snapshot.healthy && !snapshot.needs_restart) return 'ok';
@@ -4517,6 +4593,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (summaryName) summaryName.textContent = currentProviderName(snapshot) || t('value.notSelected', '未选择');
       const summaryUrl = $('providerSummaryUrl');
       if (summaryUrl) summaryUrl.textContent = displayValue((providerByName(currentProviderName(snapshot)) || {{}}).base_url, t('provider.noService', '未设置模型服务'));
+      updateProviderPendingNotice(snapshot);
       const summaryMetrics = document.querySelectorAll('.hero-summary .status-metric');
       if (summaryMetrics.length >= 4) {{
         summaryMetrics[0].querySelector('strong').textContent = shortProxyLabel(snapshot);
@@ -4553,8 +4630,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         hasSpeedForm !== shouldShowSpeedForm;
     }}
     function hasActiveTraffic(snapshot) {{
-      const activity = snapshot && snapshot.proxy_activity && typeof snapshot.proxy_activity === 'object' ? snapshot.proxy_activity : {{}};
-      return Number(activity.active_requests || 0) > 0 || Number(activity.active_streams || 0) > 0;
+      return activeProxyRequestCount(snapshot) > 0 || activeCodexTurnCount(snapshot) > 0;
     }}
     function schedulePendingRefresh(snapshot) {{
       if (pendingRefreshTimer) {{

@@ -19,6 +19,7 @@ from .auth_store import provider_auth_secret
 from .config import load_toml_config, provider_name_for_base_url
 from .core import ConfigError
 from .defaults import INTERNAL_UPSTREAM_API_KEY_ENV, PORT_SEARCH_ATTEMPTS
+from .lifecycle import codex_activity, codex_has_active_turns
 from .models import ProxyPaths, ProxySettings, settings_from_dict
 from .ports import find_available_port
 from .proxy import RUNTIME_ID, compact_json
@@ -203,6 +204,10 @@ def proxy_has_active_traffic(health: dict[str, Any] | None) -> bool:
         return False
 
 
+def runtime_has_active_work(paths: ProxyPaths, health: dict[str, Any] | None) -> bool:
+    return proxy_has_active_traffic(health) or codex_has_active_turns(paths)
+
+
 def proxy_health_pid(health: dict[str, Any] | None) -> int | None:
     pid = health.get("pid") if isinstance(health, dict) else None
     return pid if isinstance(pid, int) else None
@@ -277,18 +282,26 @@ def deferred_restart_result(
     *,
     reason: str,
 ) -> dict[str, Any]:
+    activity = proxy_activity(health)
+    turn_activity = codex_activity(paths)
+    defer_reason = (
+        "active_codex_turns"
+        if turn_activity.get("active_turns") and not proxy_has_active_traffic(health)
+        else "active_requests"
+    )
     return {
         "status": "deferred",
         "reason": reason,
-        "defer_reason": "active_requests",
+        "defer_reason": defer_reason,
         "pid": pid,
         "needs_restart": True,
         "provider": settings.provider,
         "base_url": settings.base_url,
         "upstream_base": settings.upstream_base,
-        "activity": proxy_activity(health),
+        "activity": activity,
+        "codex_activity": turn_activity,
         "log": str(paths.log_path),
-        "next_action": "The new settings are saved and will apply after the active model request finishes.",
+        "next_action": "The new settings are saved and will apply after active Codex work finishes.",
     }
 
 
@@ -551,7 +564,7 @@ def start_background_locked(
                 return already_running_result(paths, settings, pid, health)
             if not start_policy.restart_stale_runtime:
                 return already_running_result(paths, settings, pid, health, runtime_matches=False)
-            if proxy_has_active_traffic(health):
+            if runtime_has_active_work(paths, health):
                 return deferred_restart_result(paths, settings, pid, health, reason="runtime_changed")
             return restart_background(
                 paths,
@@ -562,7 +575,7 @@ def start_background_locked(
                 start_policy=start_policy,
             )
         if health_matches_proxy_identity(health, settings, pid):
-            if proxy_has_active_traffic(health):
+            if runtime_has_active_work(paths, health):
                 return deferred_restart_result(paths, settings, pid, health, reason="settings_changed")
             return restart_background(
                 paths,

@@ -31,6 +31,11 @@ HOOK_EVENT = "SessionStart"
 HOOK_EVENT_LABEL = "session_start"
 HOOK_MATCHER = "startup|resume"
 HOOK_TIMEOUT_SECONDS = 20
+LIFECYCLE_HOOK_EVENTS = {
+    "UserPromptSubmit": "user_prompt_submit",
+    "Stop": "stop",
+}
+MANAGED_HOOK_EVENTS = {HOOK_EVENT: HOOK_EVENT_LABEL, **LIFECYCLE_HOOK_EVENTS}
 HOOK_FEATURE_KEY = "hooks"
 LEGACY_HOOK_FEATURE_KEY = "codex_hooks"
 HOOK_FEATURE_KEYS = (HOOK_FEATURE_KEY, LEGACY_HOOK_FEATURE_KEY)
@@ -79,7 +84,27 @@ def command_for_hook(paths: Any) -> str:
     return shlex.join(args)
 
 
-def hook_handler(paths: Any) -> dict[str, Any]:
+def command_for_lifecycle_hook(paths: Any) -> str:
+    args = [
+        sys.executable,
+        "-m",
+        "codex_fast_proxy",
+        "lifecycle-hook",
+        "--codex-home",
+        str(paths.codex_home),
+    ]
+    if os.name == "nt":
+        return subprocess.list2cmdline(args)
+    return shlex.join(args)
+
+
+def hook_handler(paths: Any, event: str = HOOK_EVENT) -> dict[str, Any]:
+    if event in LIFECYCLE_HOOK_EVENTS:
+        return {
+            "type": "command",
+            "command": command_for_lifecycle_hook(paths),
+            "timeout": 5,
+        }
     return {
         "type": "command",
         "command": command_for_hook(paths),
@@ -89,11 +114,12 @@ def hook_handler(paths: Any) -> dict[str, Any]:
 
 
 def is_fast_proxy_hook(value: Any) -> bool:
+    command = str(value.get("command", "")) if isinstance(value, dict) else ""
     return (
         isinstance(value, dict)
         and value.get("type") == "command"
-        and "codex_fast_proxy" in str(value.get("command", ""))
-        and "autostart" in str(value.get("command", ""))
+        and "codex_fast_proxy" in command
+        and ("autostart" in command or "lifecycle-hook" in command)
     )
 
 
@@ -125,24 +151,29 @@ def command_hook_hash(event_label: str, matcher: str | None, hook: dict[str, Any
 
 def fast_proxy_hook_states(paths: Any, hooks_data: dict[str, Any]) -> list[dict[str, str]]:
     states = []
-    event_hooks = hooks_data.get("hooks", {}).get(HOOK_EVENT, [])
-    if not isinstance(event_hooks, list):
+    hooks_root = hooks_data.get("hooks", {})
+    if not isinstance(hooks_root, dict):
         return states
-    for group_index, group in enumerate(event_hooks):
-        if not isinstance(group, dict):
+    for event, event_label in MANAGED_HOOK_EVENTS.items():
+        event_hooks = hooks_root.get(event, [])
+        if not isinstance(event_hooks, list):
             continue
-        hooks = group.get("hooks")
-        if not isinstance(hooks, list):
-            continue
-        matcher = group.get("matcher")
-        matcher = matcher if isinstance(matcher, str) else None
-        for handler_index, hook in enumerate(hooks):
-            if not is_fast_proxy_hook(hook):
+        for group_index, group in enumerate(event_hooks):
+            if not isinstance(group, dict):
                 continue
-            states.append({
-                "key": hook_key(paths.hooks_path, HOOK_EVENT_LABEL, group_index, handler_index),
-                "trusted_hash": command_hook_hash(HOOK_EVENT_LABEL, matcher, hook),
-            })
+            hooks = group.get("hooks")
+            if not isinstance(hooks, list):
+                continue
+            matcher = group.get("matcher")
+            matcher = matcher if isinstance(matcher, str) else None
+            for handler_index, hook in enumerate(hooks):
+                if not is_fast_proxy_hook(hook):
+                    continue
+                states.append({
+                    "key": hook_key(paths.hooks_path, event_label, group_index, handler_index),
+                    "event": event,
+                    "trusted_hash": command_hook_hash(event_label, matcher, hook),
+                })
     return states
 
 
@@ -238,12 +269,13 @@ def fast_proxy_hook_trust_status(paths: Any) -> dict[str, Any]:
             "trusted": enabled and trust_status == "trusted",
         })
 
-    trusted = any(hook["trusted"] for hook in hooks)
+    trusted_events = {hook["event"] for hook in hooks if hook["trusted"]}
+    all_expected_trusted = all(event in trusted_events for event in MANAGED_HOOK_EVENTS)
     return {
         "installed": bool(hooks),
         "feature_enabled": feature_enabled,
-        "trusted": trusted,
-        "ready": feature_enabled and trusted,
+        "trusted": all_expected_trusted,
+        "ready": feature_enabled and all_expected_trusted,
         "hooks": hooks,
     }
 
@@ -267,61 +299,55 @@ def write_hooks(path: Path, value: dict[str, Any]) -> None:
 def install_startup_hook(paths: Any) -> dict[str, Any]:
     set_hooks_feature_flag(paths.config_path)
     data = read_hooks(paths.hooks_path)
-    event_hooks = data["hooks"].setdefault(HOOK_EVENT, [])
-    if not isinstance(event_hooks, list):
-        raise ConfigError(f"Invalid {HOOK_EVENT} hooks in {paths.hooks_path}")
-
-    handler = hook_handler(paths)
-    found = False
     changed = False
-    for group in event_hooks:
-        if not isinstance(group, dict):
-            continue
-        hooks = group.get("hooks")
-        if not isinstance(hooks, list):
-            continue
-        kept_hooks = []
-        for hook in hooks:
-            if not is_fast_proxy_hook(hook):
-                kept_hooks.append(hook)
+    installed = True
+    existing_managed = False
+
+    for event in MANAGED_HOOK_EVENTS:
+        event_hooks = data["hooks"].setdefault(event, [])
+        if not isinstance(event_hooks, list):
+            raise ConfigError(f"Invalid {event} hooks in {paths.hooks_path}")
+
+        handler = hook_handler(paths, event)
+        found = False
+        for group in event_hooks:
+            if not isinstance(group, dict):
                 continue
-            if not found:
-                kept_hooks.append(handler)
-                found = True
-                changed = changed or hook != handler
-            else:
+            hooks = group.get("hooks")
+            if not isinstance(hooks, list):
+                continue
+            kept_hooks = []
+            for hook in hooks:
+                if not is_fast_proxy_hook(hook):
+                    kept_hooks.append(hook)
+                    continue
+                existing_managed = True
+                if not found:
+                    kept_hooks.append(handler)
+                    found = True
+                    changed = changed or hook != handler
+                else:
+                    changed = True
+            if len(kept_hooks) != len(hooks):
                 changed = True
-        if len(kept_hooks) != len(hooks):
+            group["hooks"] = kept_hooks
+
+        if not found:
+            installed = False
+            group: dict[str, Any] = {"hooks": [handler]}
+            if event == HOOK_EVENT:
+                group["matcher"] = HOOK_MATCHER
+            event_hooks.append(group)
             changed = True
-        group["hooks"] = kept_hooks
 
-    if found:
-        if changed:
-            write_hooks(paths.hooks_path, data)
-            trust_states = trust_fast_proxy_hooks(paths, data)
-            return {
-                "status": "updated",
-                "path": str(paths.hooks_path),
-                "command": handler["command"],
-                "trusted": bool(trust_states),
-                "trust_states": trust_states,
-            }
-        trust_states = trust_fast_proxy_hooks(paths, data)
-        return {
-            "status": "already_installed",
-            "path": str(paths.hooks_path),
-            "command": handler["command"],
-            "trusted": bool(trust_states),
-            "trust_states": trust_states,
-        }
-
-    event_hooks.append({"matcher": HOOK_MATCHER, "hooks": [handler]})
-    write_hooks(paths.hooks_path, data)
+    if changed:
+        write_hooks(paths.hooks_path, data)
     trust_states = trust_fast_proxy_hooks(paths, data)
+    status = "already_installed" if installed and not changed else ("updated" if existing_managed else "installed")
     return {
-        "status": "installed",
+        "status": status,
         "path": str(paths.hooks_path),
-        "command": handler["command"],
+        "command": command_for_hook(paths),
         "trusted": bool(trust_states),
         "trust_states": trust_states,
     }
@@ -333,32 +359,31 @@ def remove_startup_hook(paths: Any) -> dict[str, Any]:
 
     data = read_hooks(paths.hooks_path)
     removed_state_keys = [state["key"] for state in fast_proxy_hook_states(paths, data)]
-    event_hooks = data.get("hooks", {}).get(HOOK_EVENT, [])
-    if not isinstance(event_hooks, list):
-        raise ConfigError(f"Invalid {HOOK_EVENT} hooks in {paths.hooks_path}")
-
     removed = 0
-    kept_groups = []
-    for group in event_hooks:
-        if not isinstance(group, dict):
-            kept_groups.append(group)
-            continue
-        hooks = group.get("hooks")
-        if not isinstance(hooks, list):
-            kept_groups.append(group)
-            continue
-        kept_hooks = [hook for hook in hooks if not is_fast_proxy_hook(hook)]
-        removed += len(hooks) - len(kept_hooks)
-        if kept_hooks:
-            kept_group = dict(group)
-            kept_group["hooks"] = kept_hooks
-            kept_groups.append(kept_group)
-
     hooks_root = data.setdefault("hooks", {})
-    if kept_groups:
-        hooks_root[HOOK_EVENT] = kept_groups
-    else:
-        hooks_root.pop(HOOK_EVENT, None)
+    for event in list(MANAGED_HOOK_EVENTS):
+        event_hooks = hooks_root.get(event, [])
+        if not isinstance(event_hooks, list):
+            raise ConfigError(f"Invalid {event} hooks in {paths.hooks_path}")
+        kept_groups = []
+        for group in event_hooks:
+            if not isinstance(group, dict):
+                kept_groups.append(group)
+                continue
+            hooks = group.get("hooks")
+            if not isinstance(hooks, list):
+                kept_groups.append(group)
+                continue
+            kept_hooks = [hook for hook in hooks if not is_fast_proxy_hook(hook)]
+            removed += len(hooks) - len(kept_hooks)
+            if kept_hooks:
+                kept_group = dict(group)
+                kept_group["hooks"] = kept_hooks
+                kept_groups.append(kept_group)
+        if kept_groups:
+            hooks_root[event] = kept_groups
+        else:
+            hooks_root.pop(event, None)
 
     if not hooks_root:
         paths.hooks_path.unlink(missing_ok=True)

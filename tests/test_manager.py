@@ -1008,6 +1008,8 @@ class ManagerConfigTests(unittest.TestCase):
         hooks = read_hooks(paths.hooks_path)
         session_start = hooks["hooks"]["SessionStart"]
         command = session_start[0]["hooks"][0]["command"]
+        user_prompt_submit = hooks["hooks"]["UserPromptSubmit"]
+        stop = hooks["hooks"]["Stop"]
 
         self.assertTrue(config["features"]["hooks"])
         self.assertNotIn("codex_hooks", config["features"])
@@ -1016,10 +1018,11 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertTrue(hook_status["feature_enabled"])
         self.assertTrue(hook_status["trusted"])
         self.assertTrue(hook_status["ready"])
-        self.assertEqual(len(hook_status["hooks"]), 1)
-        hook_state = config["hooks"]["state"][hook_status["hooks"][0]["key"]]
-        self.assertTrue(hook_state["enabled"])
-        self.assertEqual(hook_state["trusted_hash"], hook_status["hooks"][0]["trusted_hash"])
+        self.assertEqual(len(hook_status["hooks"]), 3)
+        for hook in hook_status["hooks"]:
+            hook_state = config["hooks"]["state"][hook["key"]]
+            self.assertTrue(hook_state["enabled"])
+            self.assertEqual(hook_state["trusted_hash"], hook["trusted_hash"])
         self.assertEqual(session_start[0]["matcher"], "startup|resume")
         self.assertIn(sys.executable, command)
         self.assertIn("codex_fast_proxy", command)
@@ -1028,6 +1031,10 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn("--hook-summary", command)
         self.assertEqual(session_start[0]["hooks"][0]["timeout"], 20)
         self.assertEqual(session_start[0]["hooks"][0]["statusMessage"], "Checking Codex Model Gateway")
+        self.assertIn("lifecycle-hook", user_prompt_submit[0]["hooks"][0]["command"])
+        self.assertIn("lifecycle-hook", stop[0]["hooks"][0]["command"])
+        self.assertEqual(user_prompt_submit[0]["hooks"][0]["timeout"], 5)
+        self.assertEqual(stop[0]["hooks"][0]["timeout"], 5)
         backup_path = Path(json.loads(paths.manifest_path.read_text(encoding="utf-8"))["backup_path"])
         for path in (
             paths.config_path,
@@ -1089,12 +1096,15 @@ class ManagerConfigTests(unittest.TestCase):
         )
 
         result = install_startup_hook(paths)
-        hooks = read_hooks(paths.hooks_path)["hooks"]["SessionStart"][0]["hooks"]
+        hooks_root = read_hooks(paths.hooks_path)["hooks"]
+        hooks = hooks_root["SessionStart"][0]["hooks"]
 
         self.assertEqual(result["status"], "updated")
         self.assertEqual(len(hooks), 1)
         self.assertIn("--codex-home", hooks[0]["command"])
         self.assertIn("--hook-summary", hooks[0]["command"])
+        self.assertIn("lifecycle-hook", hooks_root["UserPromptSubmit"][0]["hooks"][0]["command"])
+        self.assertIn("lifecycle-hook", hooks_root["Stop"][0]["hooks"][0]["command"])
         self.assertTrue(has_startup_hook(paths))
 
     def test_modified_startup_hook_is_not_reported_as_usable(self) -> None:
@@ -3144,6 +3154,8 @@ class ManagerConfigTests(unittest.TestCase):
         hooks = read_hooks(paths.hooks_path)
         kept = hooks["hooks"]["SessionStart"][0]["hooks"][0]
         self.assertEqual(kept["command"], "python -c \"print('keep')\"")
+        self.assertNotIn("UserPromptSubmit", hooks["hooks"])
+        self.assertNotIn("Stop", hooks["hooks"])
         self.assertFalse(has_startup_hook(paths))
 
     def test_install_start_failure_leaves_config_unchanged(self) -> None:

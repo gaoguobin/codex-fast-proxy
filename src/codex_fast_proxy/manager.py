@@ -305,7 +305,7 @@ def replace_running_proxy(
 ) -> dict[str, Any]:
     pid, running, health, _healthy, _pending_restart, _runtime_matches = proxy_runtime_state(paths, old_settings)
     if running and health_matches_proxy_identity(health, old_settings, pid):
-        if _runtime_process.proxy_has_active_traffic(health):
+        if _runtime_process.runtime_has_active_work(paths, health):
             return _runtime_process.deferred_restart_result(paths, new_settings, pid, health, reason=reason)
         stop_result = stop_process(paths, force=True)
         wait_for_proxy_port_release(new_settings)
@@ -1234,6 +1234,18 @@ def command_autostart(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_lifecycle_hook(args: argparse.Namespace) -> int:
+    from .lifecycle import record_codex_hook_event
+
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+        if isinstance(payload, dict):
+            record_codex_hook_event(paths_for(args.codex_home), payload)
+    except Exception:
+        return 0
+    return 0
+
+
 def autostart_hook_context(result: dict[str, Any]) -> str | None:
     proxy = result.get("proxy") if isinstance(result.get("proxy"), dict) else result
     control_ui = result.get("control_ui") if isinstance(result.get("control_ui"), dict) else {}
@@ -1747,6 +1759,9 @@ def build_parser() -> argparse.ArgumentParser:
     autostart.add_argument("--hook-summary", action="store_true")
     autostart.add_argument("--verbose-proxy", action="store_true")
 
+    lifecycle_hook = subparsers.add_parser("lifecycle-hook", help="Record Codex turn lifecycle from hooks.")
+    add_shared_options(lifecycle_hook)
+
     stop = subparsers.add_parser("stop", help="Stop the background proxy.")
     add_shared_options(stop)
     stop.add_argument("--force", action="store_true")
@@ -1859,6 +1874,7 @@ def main(argv: list[str] | None = None) -> int:
         "set-upstream": command_set_upstream,
         "start": command_start,
         "autostart": command_autostart,
+        "lifecycle-hook": command_lifecycle_hook,
         "stop": command_stop,
         "status": command_status,
         "ui": command_ui,
