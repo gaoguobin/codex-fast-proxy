@@ -8,6 +8,8 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,7 @@ class ProxyStartPolicy:
     health_timeout: float
     defer_health_timeout: bool = False
     restart_stale_runtime: bool = True
+    lock_timeout: float = 5.0
 
 
 INTERACTIVE_PROXY_START_POLICY = ProxyStartPolicy(health_timeout=5.0)
@@ -43,6 +46,18 @@ AUTOSTART_PROXY_START_POLICY = ProxyStartPolicy(
     defer_health_timeout=True,
     restart_stale_runtime=False,
 )
+START_LOCK_STALE_SECONDS = 60.0
+START_LOCK_POLL_INTERVAL = 0.05
+
+
+class StartLockBusy(ConfigError):
+    pass
+
+
+class ConcurrentProxyAlreadyRunning(ConfigError):
+    def __init__(self, health: dict[str, Any]) -> None:
+        super().__init__("A matching codex-fast-proxy instance became healthy first.")
+        self.health = health
 
 
 def current_process(paths: ProxyPaths) -> tuple[int | None, bool]:
@@ -187,6 +202,72 @@ def proxy_has_active_traffic(health: dict[str, Any] | None) -> bool:
         return False
 
 
+def proxy_health_pid(health: dict[str, Any] | None) -> int | None:
+    pid = health.get("pid") if isinstance(health, dict) else None
+    return pid if isinstance(pid, int) else None
+
+
+def proxy_start_lock_path(paths: ProxyPaths, settings: ProxySettings) -> Path:
+    host_key = "".join(character if character.isalnum() else "_" for character in settings.host)
+    return paths.state_dir / f"fast_proxy.start.{host_key}.{settings.port}.lock.json"
+
+
+def start_lock_is_stale(lock_path: Path) -> bool:
+    metadata: dict[str, Any] | None = None
+    try:
+        metadata = read_json(lock_path)
+    except (OSError, json.JSONDecodeError):
+        metadata = None
+
+    pid = metadata.get("pid") if isinstance(metadata, dict) else None
+    if isinstance(pid, int):
+        return not is_process_running(pid)
+
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except OSError:
+        return True
+    return age >= START_LOCK_STALE_SECONDS
+
+
+def remove_start_lock(lock_path: Path) -> None:
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+@contextmanager
+def proxy_start_lock(paths: ProxyPaths, settings: ProxySettings, timeout: float) -> Iterator[None]:
+    ensure_private_dir(paths.state_dir)
+    lock_path = proxy_start_lock_path(paths, settings)
+    deadline = time.monotonic() + max(timeout, 0.0)
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            if start_lock_is_stale(lock_path):
+                remove_start_lock(lock_path)
+                continue
+            if time.monotonic() >= deadline:
+                raise StartLockBusy(f"Another codex-fast-proxy start is already in progress: {lock_path}")
+            time.sleep(START_LOCK_POLL_INTERVAL)
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump({
+                "pid": os.getpid(),
+                "host": settings.host,
+                "port": settings.port,
+                "created_at": time.time(),
+            }, file)
+            file.write("\n")
+        yield
+    finally:
+        remove_start_lock(lock_path)
+
+
 def deferred_restart_result(
     paths: ProxyPaths,
     settings: ProxySettings,
@@ -210,6 +291,82 @@ def deferred_restart_result(
     }
 
 
+def starting_result(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    pid: int | None,
+    *,
+    reason: str,
+    health_timeout: float | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "starting",
+        "pid": pid,
+        "healthy": False,
+        "reason": reason,
+        "provider": settings.provider,
+        "base_url": settings.base_url,
+        "upstream_base": settings.upstream_base,
+        "health_check": "deferred",
+        "log": str(paths.log_path),
+        "stdout": str(paths.stdout_path),
+        "stderr": str(paths.stderr_path),
+    }
+    if health_timeout is not None:
+        result["health_timeout_ms"] = round(health_timeout * 1000, 1)
+    return result
+
+
+def matching_proxy_result(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    health: dict[str, Any] | None,
+    service_tier_effective_policy: str | None,
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    if not health_matches_settings(health, settings, service_tier_effective_policy):
+        return None
+    pid = proxy_health_pid(health)
+    if pid is None:
+        return None
+    result = already_running_result(
+        paths,
+        settings,
+        pid,
+        health,
+        runtime_matches=health_matches_runtime(health),
+    )
+    result["reason"] = reason
+    return result
+
+
+def port_owner_start_result(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    service_tier_effective_policy: str | None,
+    start_policy: ProxyStartPolicy,
+    *,
+    reason: str,
+) -> dict[str, Any] | None:
+    result = matching_proxy_result(
+        paths,
+        settings,
+        proxy_health(settings),
+        service_tier_effective_policy,
+        reason=reason,
+    )
+    if result:
+        return result
+
+    if not start_policy.defer_health_timeout:
+        return None
+    pid, running = current_process(paths)
+    if running:
+        return starting_result(paths, settings, pid, reason=reason, health_timeout=start_policy.health_timeout)
+    return None
+
+
 def wait_for_proxy_health(
     settings: ProxySettings,
     process: subprocess.Popen[Any],
@@ -219,11 +376,17 @@ def wait_for_proxy_health(
     deadline = time.monotonic() + timeout
     last_health = None
     while time.monotonic() < deadline:
-        if process.poll() is not None:
-            break
         last_health = proxy_health(settings)
         if health_matches_settings(last_health, settings, service_tier_effective_policy):
+            health_pid = proxy_health_pid(last_health)
+            if health_pid is not None and health_pid != process.pid:
+                raise ConcurrentProxyAlreadyRunning(last_health)
+            if health_pid is None:
+                time.sleep(0.1)
+                continue
             return last_health
+        if process.poll() is not None:
+            break
         time.sleep(0.1)
 
     if process.poll() is not None:
@@ -363,7 +526,23 @@ def start_background(
 ) -> dict[str, Any]:
     ensure_private_dir(paths.app_home)
     ensure_private_dir(paths.state_dir)
+    try:
+        with proxy_start_lock(paths, settings, start_policy.lock_timeout):
+            return start_background_locked(paths, settings, verbose_proxy, start_policy=start_policy)
+    except StartLockBusy:
+        pid, running, health, healthy, _pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
+        if running and healthy:
+            return already_running_result(paths, settings, pid, health, runtime_matches=runtime_matches is not False)
+        return starting_result(paths, settings, pid if running else None, reason="start_lock_busy")
 
+
+def start_background_locked(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    verbose_proxy: bool,
+    *,
+    start_policy: ProxyStartPolicy,
+) -> dict[str, Any]:
     pid, running, health, healthy, _pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
     if running:
         if healthy:
@@ -415,11 +594,20 @@ def launch_background(
     ensure_private_dir(paths.app_home)
     ensure_private_dir(paths.state_dir)
 
-    if not is_port_available(settings.host, settings.port):
-        raise ConfigError(f"Port {settings.port} is already in use on {settings.host}.")
-
     login = detect_login_mode(paths.codex_home)
     effective_policy = effective_service_tier_policy(settings, login)
+    if not is_port_available(settings.host, settings.port):
+        result = port_owner_start_result(
+            paths,
+            settings,
+            effective_policy,
+            start_policy,
+            reason="port_in_use",
+        )
+        if result:
+            return result
+        raise ConfigError(f"Port {settings.port} is already in use on {settings.host}.")
+
     command = [
         sys.executable,
         "-m",
@@ -474,21 +662,41 @@ def launch_background(
             timeout=start_policy.health_timeout,
             service_tier_effective_policy=effective_policy,
         )
+    except ConcurrentProxyAlreadyRunning as exc:
+        if process.poll() is None:
+            terminate_process(process.pid)
+        pid = proxy_health_pid(exc.health)
+        if pid is not None:
+            result = already_running_result(
+                paths,
+                settings,
+                pid,
+                exc.health,
+                runtime_matches=health_matches_runtime(exc.health),
+            )
+            result["reason"] = "concurrent_start"
+            return result
+        raise ConfigError("A matching codex-fast-proxy instance became healthy first, but did not report its pid.") from exc
     except ConfigError:
+        result = port_owner_start_result(
+            paths,
+            settings,
+            effective_policy,
+            start_policy,
+            reason="concurrent_start",
+        )
+        if result:
+            if process.poll() is None:
+                terminate_process(process.pid)
+            return result
         if start_policy.defer_health_timeout and process.poll() is None:
-            return {
-                "status": "starting",
-                "pid": process.pid,
-                "healthy": False,
-                "provider": settings.provider,
-                "base_url": settings.base_url,
-                "upstream_base": settings.upstream_base,
-                "health_timeout_ms": round(start_policy.health_timeout * 1000, 1),
-                "health_check": "deferred",
-                "log": str(paths.log_path),
-                "stdout": str(paths.stdout_path),
-                "stderr": str(paths.stderr_path),
-            }
+            return starting_result(
+                paths,
+                settings,
+                process.pid,
+                reason="health_check_deferred",
+                health_timeout=start_policy.health_timeout,
+            )
         error_text = paths.stderr_path.read_text(encoding="utf-8", errors="replace") if paths.stderr_path.exists() else ""
         detail = f" {error_text.strip()}" if error_text.strip() else ""
         terminate_process(process.pid)

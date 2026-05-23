@@ -3815,6 +3815,99 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn("preserve", captured["command"])
         self.assertEqual(captured["kwargs"]["start_new_session"], manager.os.name != "nt")
 
+    def test_launch_background_reuses_matching_proxy_when_port_is_bound(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            service_tier_policy="preserve",
+        )
+        health = {
+            "ok": True,
+            "pid": 5678,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": "priority",
+            "service_tier_policy": "preserve",
+            "service_tier_effective_policy": "preserve",
+            "runtime_id": manager.RUNTIME_ID,
+        }
+
+        original_is_port_available = manager.is_port_available
+        original_proxy_health = manager.proxy_health
+        original_popen = manager.subprocess.Popen
+
+        manager.is_port_available = lambda _host, _port: False
+        manager.proxy_health = lambda _settings: health
+        manager.subprocess.Popen = lambda *_args, **_kwargs: self.fail("Popen should not run")
+        try:
+            result = manager.launch_background(paths, settings, verbose_proxy=False)
+        finally:
+            manager.is_port_available = original_is_port_available
+            manager.proxy_health = original_proxy_health
+            manager.subprocess.Popen = original_popen
+
+        self.assertEqual(result["status"], "already_running")
+        self.assertEqual(result["pid"], 5678)
+        self.assertEqual(result["reason"], "port_in_use")
+
+    def test_launch_background_treats_concurrent_winner_as_already_running(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            service_tier_policy="preserve",
+        )
+        health = {
+            "ok": True,
+            "pid": 5678,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": "priority",
+            "service_tier_policy": "preserve",
+            "service_tier_effective_policy": "preserve",
+            "runtime_id": manager.RUNTIME_ID,
+        }
+        terminated: list[int] = []
+
+        class FakeProcess:
+            pid = 1234
+
+            def poll(self) -> None:
+                return None
+
+        original_is_port_available = manager.is_port_available
+        original_proxy_health = manager.proxy_health
+        original_popen = manager.subprocess.Popen
+        original_terminate_process = manager.terminate_process
+
+        manager.is_port_available = lambda _host, _port: True
+        manager.proxy_health = lambda _settings: health
+        manager.subprocess.Popen = lambda *_args, **_kwargs: FakeProcess()
+        manager.terminate_process = lambda pid: terminated.append(pid)
+        try:
+            result = manager.launch_background(paths, settings, verbose_proxy=False)
+        finally:
+            manager.is_port_available = original_is_port_available
+            manager.proxy_health = original_proxy_health
+            manager.subprocess.Popen = original_popen
+            manager.terminate_process = original_terminate_process
+
+        self.assertEqual(result["status"], "already_running")
+        self.assertEqual(result["pid"], 5678)
+        self.assertEqual(result["reason"], "concurrent_start")
+        self.assertEqual(terminated, [1234])
+
     def test_hook_launch_background_keeps_slow_starting_proxy_alive(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
@@ -3860,6 +3953,33 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["pid"], 1234)
         self.assertEqual(result["health_check"], "deferred")
         self.assertEqual(terminated, [])
+
+    def test_start_background_reports_starting_when_start_lock_is_busy(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+
+        with mock.patch.object(
+            manager._runtime_process,
+            "proxy_start_lock",
+            side_effect=manager._runtime_process.StartLockBusy("busy"),
+        ):
+            result = manager.start_background(
+                paths,
+                settings,
+                verbose_proxy=False,
+                start_policy=manager.ProxyStartPolicy(health_timeout=0.01, lock_timeout=0.01),
+            )
+
+        self.assertEqual(result["status"], "starting")
+        self.assertEqual(result["reason"], "start_lock_busy")
 
     def test_launch_background_passes_upstream_key_env_name_not_secret(self) -> None:
         codex_home = self.temp_dir / ".codex"

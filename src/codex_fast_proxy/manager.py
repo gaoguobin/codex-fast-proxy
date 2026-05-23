@@ -281,7 +281,17 @@ def launch_background(
         settings,
         verbose_proxy,
         start_policy=start_policy,
-        sync=("os", "subprocess", "is_port_available", "child_environment", "wait_for_proxy_health", "terminate_process"),
+        sync=(
+            "os",
+            "subprocess",
+            "is_port_available",
+            "current_process",
+            "proxy_health",
+            "already_running_result",
+            "child_environment",
+            "wait_for_proxy_health",
+            "terminate_process",
+        ),
     )
 
 
