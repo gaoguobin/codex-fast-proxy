@@ -1037,6 +1037,26 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(result["control_ui_reload_required"])
         self.assertIn("正在打开新版控制面板", result["user_state"]["message"])
 
+    def test_update_action_reports_deferred_proxy_refresh_when_request_is_active(self) -> None:
+        with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
+            "status": "updated",
+            "code_update": {"status": "updated"},
+            "refresh": {
+                "status": "installed",
+                "start_result": {
+                    "status": "deferred",
+                    "defer_reason": "active_requests",
+                    "activity": {"active_requests": 1, "active_streams": 1},
+                },
+            },
+            "final_status": {"needs_restart": True},
+        }):
+            result = run_update(str(self.codex_home))
+
+        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
+        self.assertEqual(result["user_state"]["title"], "更新完成，等待当前请求结束")
+        self.assertIn("请求结束后自动应用", result["user_state"]["message"])
+
     def test_check_update_action_is_read_only_and_reports_local_changes(self) -> None:
         with mock.patch("codex_fast_proxy.manager.check_update", return_value={
             "status": "checked",

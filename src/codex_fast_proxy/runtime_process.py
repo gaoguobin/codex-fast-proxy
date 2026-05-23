@@ -29,7 +29,7 @@ from .runtime_status import (
     settings_restart_pending,
 )
 from .status_rules import LEGACY_SERVICE_TIER_POLICY, effective_service_tier_policy
-from .storage import append_private_text, ensure_private_dir, open_private_append, read_json
+from .storage import append_private_text, ensure_private_dir, open_private_append, read_json, write_private_text
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,7 @@ AUTOSTART_PROXY_START_POLICY = ProxyStartPolicy(
 )
 START_LOCK_STALE_SECONDS = 60.0
 START_LOCK_POLL_INTERVAL = 0.05
+AUTOSTART_EVENT_LIMIT = 200
 
 
 class StartLockBusy(ConfigError):
@@ -719,24 +720,21 @@ def launch_background(
 def append_autostart_event(paths: ProxyPaths, event: dict[str, Any]) -> None:
     event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
     append_private_text(event_path, compact_json({"ts": time.time(), **event}) + "\n")
+    trim_autostart_events(event_path)
 
 
-def should_log_autostart_event(event: dict[str, Any], quiet: bool) -> bool:
-    if not quiet:
-        return True
-    control_ui = event.get("control_ui")
-    if isinstance(control_ui, dict) and control_ui.get("status") not in {None, "ready", "skipped"}:
-        return True
-    if isinstance(control_ui, dict) and control_ui.get("started_background_process"):
-        return True
-    timing = event.get("timing_ms")
-    if isinstance(timing, dict):
-        try:
-            if float(timing.get("total") or 0) >= 1000:
-                return True
-        except (TypeError, ValueError):
-            pass
-    return event.get("status") not in {"already_running", "skipped"}
+def trim_autostart_events(event_path: Path, limit: int = AUTOSTART_EVENT_LIMIT) -> None:
+    try:
+        lines = event_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    if len(lines) <= limit:
+        return
+    write_private_text(event_path, "\n".join(lines[-limit:]) + "\n")
+
+
+def should_log_autostart_event(_event: dict[str, Any], _quiet: bool) -> bool:
+    return True
 
 
 def autostart_proxy(paths: ProxyPaths, verbose_proxy: bool) -> dict[str, Any]:

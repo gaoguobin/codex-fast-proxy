@@ -19,6 +19,13 @@ def active_restart_deferred(result: dict[str, Any]) -> bool:
     )
 
 
+def update_restart_deferred(result: dict[str, Any]) -> bool:
+    refresh = result.get("refresh")
+    if not isinstance(refresh, dict):
+        return False
+    return active_restart_deferred(refresh)
+
+
 def state(code: str, title: str, message: str, primary_action: str = "refresh", primary_label: str = "刷新状态") -> dict[str, str]:
     return {
         "code": code,
@@ -108,6 +115,12 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
             "already_current",
             "已是最新",
             "当前已经是最新版本，可以继续使用。",
+        )
+    elif update_restart_deferred(result):
+        result["user_state"] = state(
+            "restart_deferred_active",
+            "更新完成，等待当前请求结束",
+            "当前有模型请求正在返回。新版代理会在请求结束后自动应用。",
         )
     elif final_status.get("needs_restart"):
         result["user_state"] = state(

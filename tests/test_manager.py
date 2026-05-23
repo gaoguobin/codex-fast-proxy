@@ -2474,6 +2474,73 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn(("-m", "pip", "install", "--user", "-e", str(repo.resolve())), python_calls)
         self.assertTrue(any(call[2] == "install" and "--start" in call for call in json_calls))
 
+    def test_update_installation_defers_proxy_refresh_when_stream_is_active(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(paths, settings)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+        repo = self.temp_dir / "repo"
+        repo.mkdir()
+        commits = iter(["a" * 40, "b" * 40])
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            if args == ("rev-parse", "HEAD"):
+                return next(commits)
+            if args == ("pull", "--ff-only", "origin", "main"):
+                return "Updating a..b"
+            raise AssertionError(args)
+
+        def fake_run_python(args, timeout=300.0):
+            if args[:3] == ["-m", "pip", "install"]:
+                return ""
+            raise AssertionError(args)
+
+        def fake_run_python_json(args, timeout=300.0):
+            if "install" in args:
+                return {
+                    "status": "installed",
+                    "start_result": {
+                        "status": "deferred",
+                        "defer_reason": "active_requests",
+                        "activity": {"active_requests": 1, "active_streams": 1},
+                    },
+                }
+            if "status" in args:
+                return {"status": "running", "needs_restart": True}
+            raise AssertionError(args)
+
+        with (
+            mock.patch("codex_fast_proxy.updater.check_update", return_value={
+                "status": "checked",
+                "local_changes": False,
+                "relation": "remote_ahead",
+            }),
+            mock.patch("codex_fast_proxy.updater.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.updater.run_python", side_effect=fake_run_python),
+            mock.patch("codex_fast_proxy.updater.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.updater.link_skill_namespace", return_value={"status": "already_linked"}),
+        ):
+            result = manager.update_installation(codex_home, repo=repo, branch="main")
+
+        self.assertEqual(result["status"], "updated")
+        self.assertTrue(result["restart_required"])
+        self.assertEqual(result["refresh"]["start_result"]["status"], "deferred")
+        self.assertEqual(result["refresh"]["start_result"]["defer_reason"], "active_requests")
+
     def test_update_installation_restores_tool_managed_deletions_before_pull(self) -> None:
         repo = self.temp_dir / "repo"
         repo.mkdir()
@@ -4021,23 +4088,41 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn("ACME_API_KEY", command)
         self.assertNotIn("secret", " ".join(command))
 
-    def test_quiet_autostart_does_not_log_noop_events(self) -> None:
+    def test_quiet_autostart_logs_noop_events_without_hook_summary(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
         event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
-        args = argparse.Namespace(codex_home=str(codex_home), quiet=True, verbose_proxy=False)
+        args = argparse.Namespace(codex_home=str(codex_home), quiet=True, hook_summary=True, verbose_proxy=False)
         original_autostart_proxy = manager.autostart_proxy
+        stdout = io.StringIO()
 
         manager.autostart_proxy = lambda _paths, _verbose_proxy, **_kwargs: {"status": "already_running", "pid": 1234}
         try:
-            self.assertEqual(manager.command_autostart(args), 0)
-            self.assertFalse(event_path.exists())
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(manager.command_autostart(args), 0)
 
             manager.autostart_proxy = lambda _paths, _verbose_proxy, **_kwargs: {"status": "skipped", "reason": "config_not_proxy"}
-            self.assertEqual(manager.command_autostart(args), 0)
-            self.assertFalse(event_path.exists())
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(manager.command_autostart(args), 0)
         finally:
             manager.autostart_proxy = original_autostart_proxy
+
+        self.assertEqual(stdout.getvalue(), "")
+        events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([event["status"] for event in events], ["already_running", "skipped"])
+
+    def test_autostart_event_log_keeps_recent_tail(self) -> None:
+        paths = paths_for(self.temp_dir / ".codex")
+        limit = manager._runtime_process.AUTOSTART_EVENT_LIMIT
+
+        for index in range(limit + 3):
+            manager.append_autostart_event(paths, {"status": "already_running", "index": index})
+
+        event_path = paths.state_dir / "fast_proxy.autostart.jsonl"
+        events = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(events), limit)
+        self.assertEqual(events[0]["index"], 3)
+        self.assertEqual(events[-1]["index"], limit + 2)
 
     def test_quiet_autostart_logs_runtime_changes(self) -> None:
         codex_home = self.temp_dir / ".codex"
