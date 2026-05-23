@@ -597,6 +597,8 @@ def launch_background(
 
     login = detect_login_mode(paths.codex_home)
     effective_policy = effective_service_tier_policy(settings, login)
+    settings_data = read_json(paths.settings_path)
+    settings_revision = settings_data.get("settings_revision") if isinstance(settings_data, dict) else None
     if not is_port_available(settings.host, settings.port):
         result = port_owner_start_result(
             paths,
@@ -618,6 +620,10 @@ def launch_background(
         settings.host,
         "--port",
         str(settings.port),
+        "--provider",
+        settings.provider,
+        "--settings-revision",
+        str(settings_revision or ""),
         "--proxy-base",
         settings.proxy_base,
         "--upstream-base",

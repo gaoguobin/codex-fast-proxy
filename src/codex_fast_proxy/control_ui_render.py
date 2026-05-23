@@ -52,9 +52,6 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "summary.login": "登录",
         "summary.speed": "速度",
         "summary.recentRequests": "最近请求",
-        "status.loginMethod": "登录方式",
-        "status.localProxy": "本地代理",
-        "status.modelService": "模型服务",
         "auth.chatgpt": "ChatGPT 账户登录",
         "auth.key": "接口密钥 / 第三方登录",
         "value.unknown": "未知",
@@ -80,6 +77,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "value.saved": "已保存",
         "value.missing": "未保存",
         "value.inUse": "使用中",
+        "value.pending": "待应用",
         "value.effective": "有效",
         "value.accepted": "已接受",
         "value.confirmed": "已确认",
@@ -189,6 +187,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.logsReady": "日志路径已准备",
         "advanced.requestsCount": "请求 {count} 条",
         "advanced.metadataCount": "检查 {count} 条",
+        "advanced.hooksTrusted": "已信任 {count} 条",
         "advanced.benchmarkReady": "已有性能基准",
         "advanced.benchmarkMissing": "未运行性能基准",
         "advanced.pathLog": "请求日志",
@@ -320,9 +319,6 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "summary.login": "Login",
         "summary.speed": "Speed",
         "summary.recentRequests": "Recent requests",
-        "status.loginMethod": "Login method",
-        "status.localProxy": "Local proxy",
-        "status.modelService": "Model service",
         "auth.chatgpt": "ChatGPT account login",
         "auth.key": "Key / third-party login",
         "value.unknown": "Unknown",
@@ -348,6 +344,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "value.saved": "Saved",
         "value.missing": "Missing",
         "value.inUse": "In use",
+        "value.pending": "Pending",
         "value.effective": "Effective",
         "value.accepted": "Accepted",
         "value.confirmed": "Confirmed",
@@ -457,6 +454,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.logsReady": "Log paths ready",
         "advanced.requestsCount": "{count} requests",
         "advanced.metadataCount": "{count} checks",
+        "advanced.hooksTrusted": "{count} trusted hooks",
         "advanced.benchmarkReady": "Benchmark available",
         "advanced.benchmarkMissing": "Benchmark not run",
         "advanced.pathLog": "Request log",
@@ -588,9 +586,6 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "summary.login": "ログイン",
         "summary.speed": "速度",
         "summary.recentRequests": "最近のリクエスト",
-        "status.loginMethod": "ログイン方式",
-        "status.localProxy": "ローカルプロキシ",
-        "status.modelService": "モデルサービス",
         "auth.chatgpt": "ChatGPT アカウントログイン",
         "auth.key": "キー / サードパーティログイン",
         "value.unknown": "不明",
@@ -616,6 +611,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "value.saved": "保存済み",
         "value.missing": "未保存",
         "value.inUse": "使用中",
+        "value.pending": "適用待ち",
         "value.effective": "有効",
         "value.accepted": "受理済み",
         "value.confirmed": "確認済み",
@@ -725,6 +721,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.logsReady": "ログパスは準備済み",
         "advanced.requestsCount": "リクエスト {count} 件",
         "advanced.metadataCount": "確認 {count} 件",
+        "advanced.hooksTrusted": "{count} 件信頼済み",
         "advanced.benchmarkReady": "ベンチマークあり",
         "advanced.benchmarkMissing": "ベンチマーク未実行",
         "advanced.pathLog": "リクエストログ",
@@ -982,14 +979,22 @@ def provider_route_chain(snapshot: dict[str, Any]) -> str:
     local_proxy = compact_url(snapshot.get("base_url"), "")
     config_base = compact_url(snapshot.get("config_base_url"), "")
     upstream_provider = display_text(
-        snapshot.get("proxy_upstream_provider") or snapshot.get("managed_upstream_provider") or snapshot.get("provider"),
+        snapshot.get("runtime_upstream_provider")
+        or snapshot.get("proxy_upstream_provider")
+        or snapshot.get("managed_upstream_provider")
+        or snapshot.get("provider"),
         "",
     )
-    upstream = compact_url(snapshot.get("upstream_base"), "")
+    upstream = compact_url(snapshot.get("runtime_upstream_base") or snapshot.get("upstream_base"), "")
     if not (local_proxy and snapshot.get("config_matches")):
         return " -> ".join(part for part in (codex_provider, config_base or upstream) if part)
-    parts = [part for part in (codex_provider, local_proxy, upstream_provider, upstream) if part]
-    return " -> ".join(parts)
+    route = " -> ".join(part for part in (codex_provider, local_proxy, upstream_provider, upstream) if part)
+    pending_provider = display_text(snapshot.get("pending_upstream_provider"), "")
+    pending_upstream = compact_url(snapshot.get("upstream_base"), "")
+    if pending_provider:
+        pending_route = " -> ".join(part for part in (pending_provider, pending_upstream) if part)
+        return f"{route} · 待应用 {pending_route}" if pending_route else route
+    return route
 
 
 def short_login_label(snapshot: dict[str, Any]) -> str:
@@ -1010,8 +1015,7 @@ def short_proxy_label(snapshot: dict[str, Any]) -> str:
     return "未启用"
 
 
-def short_speed_label(snapshot: dict[str, Any]) -> str:
-    behavior = snapshot.get("fast_behavior")
+def speed_label_for_behavior(behavior: Any) -> str:
     if behavior == "app_controlled":
         return "App 控制"
     if behavior in {"inject_missing", "global_priority", "auto_global_priority"}:
@@ -1019,6 +1023,16 @@ def short_speed_label(snapshot: dict[str, Any]) -> str:
     if behavior in {"preserve", "preserve_only", "unknown_conservative"}:
         return "标准"
     return "未启用"
+
+
+def short_speed_label(snapshot: dict[str, Any]) -> str:
+    current = speed_label_for_behavior(
+        snapshot.get("runtime_fast_behavior") if snapshot.get("settings_pending") else snapshot.get("fast_behavior")
+    )
+    if snapshot.get("settings_pending"):
+        pending = speed_label_for_behavior(snapshot.get("fast_behavior"))
+        return f"{current} · 待应用{pending}" if pending != current else f"{current} · 待应用"
+    return current
 
 
 def proxy_summary_tone(snapshot: dict[str, Any]) -> str:
@@ -1407,7 +1421,7 @@ def diagnostic_hook(snapshot: dict[str, Any]) -> tuple[str, str, str, str]:
     trust = snapshot.get("startup_hook_trust") if isinstance(snapshot.get("startup_hook_trust"), dict) else {}
     hooks = trust.get("hooks") if isinstance(trust.get("hooks"), list) else []
     if snapshot.get("startup_hook"):
-        return "已就绪", "ok", "value.normal", f"{len(hooks)} hook(s) trusted"
+        return "已就绪", "ok", "value.normal", f"已信任 {len(hooks)} 条"
     if snapshot.get("base_url"):
         return "需处理", "warn", "value.needsAttention", "存在本地代理设置，但启动钩子尚未就绪"
     return "未启用", "idle", "value.notEnabled", "启用代理后会安装并信任启动钩子"
@@ -1575,53 +1589,25 @@ def render_recent_events(snapshot: dict[str, Any]) -> str:
 """
 
 
-def render_status_panel(snapshot: dict[str, Any]) -> str:
-    chatgpt_login = bool(snapshot.get("chatgpt_auth"))
-    auth_text = "ChatGPT 账户登录" if chatgpt_login else "接口密钥 / 第三方登录"
-    provider = display_text(snapshot.get("proxy_upstream_provider") or snapshot.get("provider"), "未选择")
-    base_url = compact_url(snapshot.get("base_url"), "未启用")
-    upstream = compact_url(snapshot.get("upstream_base") or snapshot.get("config_base_url"), "未配置")
-    route = provider_route_chain(snapshot)
-    route_markup = (
-        f'<div class="route-chain" id="statusRouteChain">{html.escape(route)}</div>'
-        if route else ""
-    )
-    return f"""
-      <section id="statusPanel" class="status-strip" aria-label="运行状态">
-        <div class="status-list">
-          <div class="status-row">
-            <span data-i18n="status.loginMethod">登录方式</span>
-            <strong id="statusLoginValue">{html.escape(short_login_label(snapshot))}</strong>
-            <small id="statusLoginDetail" data-i18n="{'auth.chatgpt' if chatgpt_login else 'auth.key'}">{html.escape(auth_text)}</small>
-          </div>
-          <div class="status-row emphasized">
-            <span data-i18n="status.localProxy">本地代理</span>
-            <strong id="statusProxyValue">{html.escape(short_proxy_label(snapshot))}</strong>
-            <small id="statusProxyDetail">{html.escape(base_url)}</small>
-          </div>
-          <div class="status-row">
-            <span data-i18n="status.modelService">模型服务</span>
-            <strong id="statusProviderValue">{html.escape(provider)}</strong>
-            <small id="statusProviderDetail">{html.escape(upstream)}</small>
-          </div>
-        </div>
-        {route_markup}
-      </section>
-"""
-
-
 def render_provider_cards(providers: list[dict[str, Any]], selected_provider: str) -> str:
     cards: list[str] = []
     for item in providers:
         name = str(item.get("name") or "未命名")
         name_attr = html.escape(name, quote=True)
         is_current = bool(item.get("current")) or name == selected_provider
-        card_class = "provider-card current" if is_current else "provider-card"
-        status_pill = (
-            f'<span class="status-pill ok" data-i18n="value.inUse">{ui_text("value.inUse")}</span>'
-            if is_current else ""
-        )
-        enable_button = "" if is_current else (
+        is_pending = bool(item.get("pending"))
+        card_classes = ["provider-card"]
+        if is_current:
+            card_classes.append("current")
+        if is_pending:
+            card_classes.append("pending")
+        status_pills: list[str] = []
+        if is_current:
+            status_pills.append(f'<span class="status-pill ok" data-i18n="value.inUse">{ui_text("value.inUse")}</span>')
+        if is_pending:
+            status_pills.append(f'<span class="status-pill warn" data-i18n="value.pending">{ui_text("value.pending")}</span>')
+        status_pill = "".join(status_pills)
+        enable_button = "" if is_current or is_pending else (
             f'<button class="provider-enable" type="button" data-provider-action="switch" '
             f'data-provider="{name_attr}" data-i18n="button.switch">{ui_text("button.switch")}</button>'
         )
@@ -1635,7 +1621,7 @@ def render_provider_cards(providers: list[dict[str, Any]], selected_provider: st
             f'data-provider="{name_attr}" data-i18n="button.checkProvider">{ui_text("button.checkProvider")}</button>'
         )
         cards.append(f"""
-            <article class="{card_class}" data-provider-name="{name_attr}">
+            <article class="{' '.join(card_classes)}" data-provider-name="{name_attr}">
               <div class="provider-main">
                 <span class="provider-avatar">{html.escape(name[:1] or "?")}</span>
                 <div class="provider-info">
@@ -2306,9 +2292,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     .overview-section {{
       padding-top: 0;
     }}
-    .status-center {{
-      margin-top: 16px;
-    }}
     .detail-panel {{
       background: transparent;
       border: 0;
@@ -2471,6 +2454,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       background: var(--surface);
       border-color: color-mix(in srgb, var(--blue) 24%, var(--border));
       color: var(--blue);
+    }}
+    .provider-card.pending {{
+      background: color-mix(in srgb, var(--amber-soft) 34%, transparent);
+      border-radius: 10px;
+      border-top-color: transparent;
+      margin: 6px -10px;
+      padding: 12px 10px;
     }}
     .provider-main {{
       display: flex;
@@ -2683,52 +2673,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       background: var(--surface-soft);
       border-color: var(--border);
       color: var(--muted-strong);
-    }}
-    .status-strip {{
-      min-width: 0;
-    }}
-    .status-list {{
-      display: grid;
-      gap: 1px;
-      overflow: hidden;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      background: var(--border);
-    }}
-    .status-row {{
-      align-items: center;
-      background: var(--surface);
-      display: grid;
-      gap: 12px;
-      grid-template-columns: 118px minmax(120px, .7fr) minmax(0, 1fr);
-      min-width: 0;
-      padding: 12px 14px;
-    }}
-    .status-row.emphasized {{
-      background: var(--blue-soft);
-    }}
-    .status-row span {{
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 460;
-    }}
-    .status-row strong {{
-      font-family: var(--font-display);
-      font-size: 15px;
-      font-weight: 500;
-      overflow-wrap: anywhere;
-    }}
-    .status-row small {{
-      color: var(--muted);
-      font-size: 14px;
-      overflow-wrap: anywhere;
-    }}
-    .route-chain {{
-      color: var(--muted-strong);
-      font-size: 14px;
-      line-height: 1.45;
-      margin-top: 10px;
-      overflow-wrap: anywhere;
     }}
     .status-metric {{
       background: transparent;
@@ -3366,11 +3310,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       .provider-card-actions {{ justify-content: flex-start; }}
       .actions button {{ width: 100%; }}
       .provider-card-actions button, #newProvider, #cancelProvider, #updatePrimary {{ width: auto; }}
-      .status-row {{
-        align-items: flex-start;
-        gap: 4px;
-        grid-template-columns: 1fr;
-      }}
       .signal-grid {{ grid-template-columns: 1fr; }}
       .advanced-workbench .detail-panel-head,
       .diagnostic-section-head {{
@@ -3491,9 +3430,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
           </div>
           {render_overview_speed_panel(snapshot)}
           {danger_zone}
-        <section class="overview-section status-center">
-          {render_status_panel(snapshot)}
-        </section>
       </section>
       <section class="view-page" data-page="providers" hidden>
         <div class="page-head">
@@ -3853,32 +3789,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const button = $('primary');
       if (button) button.textContent = primaryButtonLabel(userState);
     }}
-    function updateStatusPanel(snapshot) {{
-      const loginValue = $('statusLoginValue');
-      if (loginValue) loginValue.textContent = shortLoginLabel(snapshot);
-      const loginDetail = $('statusLoginDetail');
-      if (loginDetail) {{
-        loginDetail.dataset.i18n = snapshot.chatgpt_auth ? 'auth.chatgpt' : 'auth.key';
-        loginDetail.textContent = t(loginDetail.dataset.i18n, loginDetail.textContent);
-      }}
-      const proxyValue = $('statusProxyValue');
-      if (proxyValue) proxyValue.textContent = shortProxyLabel(snapshot);
-      const proxyDetail = $('statusProxyDetail');
-      if (proxyDetail) proxyDetail.textContent = compactUrl(snapshot.base_url, t('value.notEnabled', '未启用'));
-      const providerValue = $('statusProviderValue');
-      if (providerValue) providerValue.textContent = displayValue(snapshot.proxy_upstream_provider || snapshot.provider, t('value.notSelected', '未选择'));
-      const providerDetail = $('statusProviderDetail');
-      if (providerDetail) providerDetail.textContent = compactUrl(snapshot.upstream_base || snapshot.config_base_url, t('value.notConfigured', '未配置'));
-      const routeChain = $('statusRouteChain');
-      if (routeChain) routeChain.textContent = providerRouteChain(snapshot);
-    }}
     function applyLocale(snapshot = currentSnapshot) {{
       updateStaticTranslations();
       updateStateText(snapshot);
       resetControls(snapshot.user_state || {{}}, snapshot);
       renderProviderList(snapshot);
       resetSummary(snapshot);
-      updateStatusPanel(snapshot);
       updateDiagnosticsWorkspace(snapshot);
       updateSettingsWorkspace(snapshot);
       const editorTitle = $('providerEditorTitle');
@@ -3894,8 +3810,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }}
     function currentProviderName(snapshot) {{
       const records = Array.isArray(providerRecords) ? providerRecords : [];
-      if (snapshot && typeof snapshot.proxy_upstream_provider === 'string' && snapshot.proxy_upstream_provider) return snapshot.proxy_upstream_provider;
+      if (snapshot && typeof snapshot.runtime_upstream_provider === 'string' && snapshot.runtime_upstream_provider) return snapshot.runtime_upstream_provider;
       if (snapshot && typeof snapshot.current_provider === 'string' && snapshot.current_provider) return snapshot.current_provider;
+      if (snapshot && typeof snapshot.proxy_upstream_provider === 'string' && snapshot.proxy_upstream_provider) return snapshot.proxy_upstream_provider;
       if (snapshot && typeof snapshot.provider === 'string' && snapshot.provider) return snapshot.provider;
       const current = records.find((item) => item && item.current && item.name);
       if (current && current.name) return current.name;
@@ -3905,13 +3822,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const name = record && record.name ? String(record.name) : t('provider.unnamed', '未命名');
       const baseUrl = record && record.base_url ? String(record.base_url) : t('provider.noService', '未设置模型服务');
       const isCurrent = Boolean(record && record.current) || name === currentName;
-      const statusPill = isCurrent ? `<span class="status-pill ok">${{escapeHtml(t('value.inUse', '使用中'))}}</span>` : '';
+      const isPending = Boolean(record && record.pending);
+      const statusPill = [
+        isCurrent ? `<span class="status-pill ok">${{escapeHtml(t('value.inUse', '使用中'))}}</span>` : '',
+        isPending ? `<span class="status-pill warn">${{escapeHtml(t('value.pending', '待应用'))}}</span>` : ''
+      ].join('');
       const checkButton = `<button class="provider-check" type="button" data-provider-action="verify" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.checkProvider', '检查'))}}</button>`;
-      const enableButton = isCurrent ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.switch', '启用'))}}</button>`;
+      const enableButton = isCurrent || isPending ? '' : `<button class="provider-enable" type="button" data-provider-action="switch" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.switch', '启用'))}}</button>`;
       const deleteButton = record && record.deletable ? `<button class="provider-delete" type="button" data-provider-action="delete" data-provider="${{escapeHtml(name)}}">${{escapeHtml(t('button.delete', '删除'))}}</button>` : '';
       const avatar = name.trim().charAt(0) || '?';
       return `
-            <article class="provider-card${{isCurrent ? ' current' : ''}}" data-provider-name="${{escapeHtml(name)}}">
+            <article class="provider-card${{isCurrent ? ' current' : ''}}${{isPending ? ' pending' : ''}}" data-provider-name="${{escapeHtml(name)}}">
               <div class="provider-main">
                 <span class="provider-avatar">${{escapeHtml(avatar)}}</span>
                 <div class="provider-info">
@@ -4200,11 +4121,20 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (snapshot.base_url) return t('value.notManaged', '未接管');
       return t('value.notEnabled', '未启用');
     }}
-    function shortSpeedLabel(snapshot) {{
-      if (snapshot.fast_behavior === 'app_controlled') return t('value.appControlled', 'App 控制');
-      if (['inject_missing', 'global_priority', 'auto_global_priority'].includes(snapshot.fast_behavior)) return t('value.fast', '快速');
-      if (['preserve', 'preserve_only', 'unknown_conservative'].includes(snapshot.fast_behavior)) return t('value.standard', '标准');
+    function speedLabelForBehavior(behavior) {{
+      if (behavior === 'app_controlled') return t('value.appControlled', 'App 控制');
+      if (['inject_missing', 'global_priority', 'auto_global_priority'].includes(behavior)) return t('value.fast', '快速');
+      if (['preserve', 'preserve_only', 'unknown_conservative'].includes(behavior)) return t('value.standard', '标准');
       return t('value.notEnabled', '未启用');
+    }}
+    function shortSpeedLabel(snapshot) {{
+      const currentBehavior = snapshot.settings_pending ? snapshot.runtime_fast_behavior : snapshot.fast_behavior;
+      const current = speedLabelForBehavior(currentBehavior);
+      if (snapshot.settings_pending) {{
+        const pending = speedLabelForBehavior(snapshot.fast_behavior);
+        return pending !== current ? `${{current}} · ${{t('value.pending', '待应用')}}${{pending}}` : `${{current}} · ${{t('value.pending', '待应用')}}`;
+      }}
+      return current;
     }}
     function proxySummaryTone(snapshot) {{
       if (snapshot.config_matches && snapshot.healthy && !snapshot.needs_restart) return 'ok';
@@ -4233,13 +4163,18 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const codexProvider = displayValue(snapshot.codex_model_provider || snapshot.active_provider || snapshot.config_provider, '');
       const localProxy = compactUrl(snapshot.base_url, '');
       const configBase = compactUrl(snapshot.config_base_url, '');
-      const upstreamProvider = displayValue(snapshot.proxy_upstream_provider || snapshot.managed_upstream_provider || snapshot.provider, '');
-      const upstream = compactUrl(snapshot.upstream_base, '');
+      const upstreamProvider = displayValue(snapshot.runtime_upstream_provider || snapshot.proxy_upstream_provider || snapshot.managed_upstream_provider || snapshot.provider, '');
+      const upstream = compactUrl(snapshot.runtime_upstream_base || snapshot.upstream_base, '');
       if (!(localProxy && snapshot.config_matches)) return [codexProvider, configBase || upstream].filter(Boolean).join(' -> ');
-      return [codexProvider, localProxy, upstreamProvider, upstream].filter(Boolean).join(' -> ');
+      const route = [codexProvider, localProxy, upstreamProvider, upstream].filter(Boolean).join(' -> ');
+      const pendingProvider = displayValue(snapshot.pending_upstream_provider, '');
+      const pendingUpstream = compactUrl(snapshot.upstream_base, '');
+      const pendingRoute = [pendingProvider, pendingUpstream].filter(Boolean).join(' -> ');
+      return pendingRoute ? `${{route}} · ${{t('value.pending', '待应用')}} ${{pendingRoute}}` : route;
     }}
     function withCount(key, fallback, count) {{
-      return t(key, fallback).replace('{{count}}', String(count));
+      const value = t(key, fallback);
+      return value.split('{{{{count}}}}').join(String(count)).split('{{count}}').join(String(count));
     }}
     function runtimeSource(snapshot) {{
       const runtime = snapshot && snapshot.runtime && typeof snapshot.runtime === 'object' ? snapshot.runtime : {{}};
@@ -4278,7 +4213,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function diagnosticHookInfo(snapshot) {{
       const trust = snapshot.startup_hook_trust && typeof snapshot.startup_hook_trust === 'object' ? snapshot.startup_hook_trust : {{}};
       const hooks = Array.isArray(trust.hooks) ? trust.hooks : [];
-      if (snapshot.startup_hook) return [t('value.normal', '正常'), 'ok', `${{hooks.length}} hook(s) trusted`];
+      if (snapshot.startup_hook) return [t('value.normal', '正常'), 'ok', withCount('advanced.hooksTrusted', '已信任 {{count}} 条', hooks.length)];
       if (snapshot.base_url) return [t('value.needsAttention', '需处理'), 'warn', t('value.notConfigured', '未配置')];
       return [t('value.notEnabled', '未启用'), 'idle', t('advanced.noProxySettings', '代理尚未启用，因此没有本地代理设置。')];
     }}
@@ -4654,7 +4589,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       resetProviderForm(snapshot);
       resetSummary(snapshot);
       resetSpeedForm(snapshot);
-      updateStatusPanel(snapshot);
       updateStateText(snapshot);
       applyLocale(snapshot);
       schedulePendingRefresh(snapshot);

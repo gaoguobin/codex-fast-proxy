@@ -4,7 +4,12 @@ from collections.abc import Callable
 from typing import Any
 
 from .auth import detect_login_mode
-from .auth_store import chatgpt_login_report, upstream_auth_status
+from .auth_store import (
+    chatgpt_login_report,
+    provider_auth_base_url,
+    provider_auth_provider_names,
+    upstream_auth_status,
+)
 from .config import active_provider_name, configured_providers, load_toml_config, provider_base_url, provider_name_for_base_url
 from .hooks import fast_proxy_hook_trust_status
 from .models import paths_for, settings_from_dict
@@ -19,6 +24,37 @@ from .telemetry import read_benchmark_result, recent_provider_metadata_events, r
 SCHEMA_VERSION = 1
 RuntimeProbe = Callable[[Any, Any], tuple[int | None, bool, dict[str, Any] | None, bool, bool, bool | None]]
 PortProbe = Callable[[str, int], bool]
+
+
+def provider_for_runtime_upstream(paths: Any, config: dict[str, Any], health: dict[str, Any] | None) -> str | None:
+    if not isinstance(health, dict):
+        return None
+    provider = health.get("provider")
+    if isinstance(provider, str) and provider:
+        return provider
+    upstream_base = health.get("upstream_base")
+    if not isinstance(upstream_base, str) or not upstream_base:
+        return None
+    candidates: list[str] = []
+    for name in configured_providers(config):
+        if provider_base_url(config, name) == upstream_base:
+            candidates.append(name)
+    for name in provider_auth_provider_names(paths):
+        if provider_auth_base_url(paths, name) == upstream_base:
+            candidates.append(name)
+    unique = sorted(set(candidates))
+    return unique[0] if len(unique) == 1 else None
+
+
+def runtime_fast_behavior(health: dict[str, Any] | None) -> str | None:
+    if not isinstance(health, dict):
+        return None
+    effective_policy = health.get("service_tier_effective_policy") or health.get("service_tier_policy")
+    if effective_policy == "inject_missing":
+        return "global_priority"
+    if effective_policy == "preserve":
+        return "preserve_only"
+    return None
 
 
 def collect_status(
@@ -53,6 +89,9 @@ def collect_status(
     providers = configured_providers(config)
     active_provider = active_provider_name(config)
     config_provider = provider_name_for_base_url(config, settings.base_url) if settings else None
+    runtime_upstream_provider = provider_for_runtime_upstream(paths, config, health)
+    runtime_upstream_base = health.get("upstream_base") if isinstance(health, dict) else None
+    runtime_speed_behavior = runtime_fast_behavior(health)
     selected_provider = provider or (settings.provider if settings else active_provider)
     if not selected_provider and len(providers) == 1:
         selected_provider = next(iter(providers))
@@ -64,6 +103,8 @@ def collect_status(
     auth = upstream_auth_status(paths, settings)
     config_matches = bool(settings and config_provider)
     needs_restart = bool(pending_restart or (healthy and not runtime_matches))
+    settings_pending = bool(settings and pending_restart)
+    pending_upstream_provider = settings.provider if settings_pending else None
     behavior = fast_behavior(settings, login)
     effective_policy = effective_service_tier_policy(settings, login) if settings else None
     login_report = (
@@ -104,6 +145,10 @@ def collect_status(
         "proxy_route_provider": config_provider,
         "proxy_upstream_provider": proxy_upstream_provider,
         "managed_upstream_provider": proxy_upstream_provider,
+        "runtime_upstream_provider": runtime_upstream_provider,
+        "runtime_upstream_base": runtime_upstream_base,
+        "pending_upstream_provider": pending_upstream_provider,
+        "settings_pending": settings_pending,
         "base_url": settings.base_url if settings else None,
         "upstream_base": settings.upstream_base if settings else None,
         "provider_route": {
@@ -116,6 +161,7 @@ def collect_status(
         "service_tier_policy": settings.service_tier_policy if settings else None,
         "service_tier_effective_policy": effective_policy,
         "fast_behavior": behavior,
+        "runtime_fast_behavior": runtime_speed_behavior,
         "login_mode": login.login_mode,
         "chatgpt_auth": login.chatgpt_auth,
         "api_key_auth": login.api_key_auth,
@@ -145,7 +191,12 @@ def collect_status(
     }
     from .manager import provider_inventory
 
-    snapshot.update(provider_inventory(paths.codex_home, selected_provider))
+    snapshot.update(provider_inventory(
+        paths.codex_home,
+        selected_provider,
+        current_provider=runtime_upstream_provider if settings else None,
+        pending_provider=pending_upstream_provider,
+    ))
     return {**snapshot, "user_state": user_state(snapshot)}
 
 

@@ -405,6 +405,8 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         payload = {
             "ok": True,
             "pid": os.getpid(),
+            "provider": getattr(self.server, "provider", None),
+            "settings_revision": getattr(self.server, "settings_revision", None),
             "proxy_base": self.server.proxy_base,
             "upstream_base": self.server.upstream_base,
             "service_tier": self.server.service_tier,
@@ -544,6 +546,8 @@ class FastProxyServer(ThreadingHTTPServer):
         upstream_api_key_env: str | None,
         upstream_api_key_source: str | None,
         verbose: bool,
+        provider: str | None = None,
+        settings_revision: str | None = None,
     ) -> None:
         parsed = urlsplit(upstream_base)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -568,6 +572,8 @@ class FastProxyServer(ThreadingHTTPServer):
         self.active_streams = 0
         self.last_request_started_at: str | None = None
         self.last_request_finished_at: str | None = None
+        self.provider = provider
+        self.settings_revision = settings_revision
         self.upstream_base = upstream_base
         self.upstream_scheme = parsed.scheme
         self.upstream_netloc = parsed.netloc
@@ -629,6 +635,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--provider")
+    parser.add_argument("--settings-revision")
     parser.add_argument("--proxy-base", default="/v1")
     parser.add_argument("--upstream-base", required=True)
     parser.add_argument("--service-tier", default="priority")
@@ -659,6 +667,8 @@ def main(argv: list[str] | None = None) -> int:
         args.upstream_api_key_env,
         args.upstream_api_key_source,
         args.verbose,
+        args.provider,
+        args.settings_revision,
     )
     write_private_text(pid_path, f"{os.getpid()}\n")
 

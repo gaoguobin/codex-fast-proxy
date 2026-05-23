@@ -368,7 +368,7 @@ def run_switch_provider(codex_home: str | None, provider: str | None) -> dict[st
     if active_restart_deferred(result):
         result["user_state"] = state(
             "restart_deferred_active",
-            "供应商已切换，等待当前请求结束",
+            "切换已保存，等待当前请求结束",
             "当前有模型请求正在返回。新的供应商已保存，会在请求结束后自动应用。",
         )
     elif result.get("restart_required"):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ class ProxySettings:
     service_tier_policy: str = "auto"
     upstream_api_key_env: str | None = None
     upstream_api_key_file: bool = False
+    settings_revision: str | None = None
 
     @property
     def base_url(self) -> str:
@@ -87,6 +89,7 @@ def settings_from_dict(value: dict[str, Any]) -> ProxySettings:
         service_tier_policy=policy,
         upstream_api_key_env=validate_env_name(str(upstream_api_key_env)) if upstream_api_key_env else None,
         upstream_api_key_file=upstream_api_key_file,
+        settings_revision=str(value.get("settings_revision") or "") or None,
     )
 
 
@@ -97,5 +100,16 @@ def read_settings(paths: ProxyPaths) -> ProxySettings:
     return settings_from_dict(settings)
 
 
-def write_settings(paths: ProxyPaths, settings: ProxySettings) -> None:
-    write_json(paths.settings_path, {**asdict(settings), "base_url": settings.base_url})
+def write_settings(paths: ProxyPaths, settings: ProxySettings, *, bump_revision: bool | None = None) -> None:
+    previous = read_json(paths.settings_path)
+    previous_revision = previous.get("settings_revision") if isinstance(previous, dict) else None
+    payload = {**asdict(settings), "base_url": settings.base_url}
+    comparable = {key: value for key, value in payload.items() if key not in {"base_url", "settings_revision"}}
+    previous_comparable = (
+        {key: value for key, value in previous.items() if key not in {"base_url", "settings_revision"}}
+        if isinstance(previous, dict)
+        else None
+    )
+    should_bump = comparable != previous_comparable if bump_revision is None else bump_revision
+    payload["settings_revision"] = uuid.uuid4().hex if should_bump or not previous_revision else str(previous_revision)
+    write_json(paths.settings_path, payload)

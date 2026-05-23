@@ -45,6 +45,7 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     user_error_message,
 )
 from codex_fast_proxy.ports import find_available_port  # noqa: E402
+from codex_fast_proxy.runtime_status import health_matches_settings  # noqa: E402
 from codex_fast_proxy.state import collect_status, user_state  # noqa: E402
 
 
@@ -159,7 +160,11 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn("acme", providers)
 
         html = render_page(snapshot, "token")
-        self.assertIn("acme -&gt; 127.0.0.1:18787/v1 -&gt; other -&gt; api.other.test/v1", html)
+        route = "acme -&gt; 127.0.0.1:18787/v1 -&gt; other -&gt; api.other.test/v1"
+        overview_html = html[html.index('data-page="overview"'):html.index('data-page="providers"')]
+        advanced_html = html[html.index('data-page="advanced"'):html.index('data-page="settings"')]
+        self.assertNotIn(route, overview_html)
+        self.assertIn(route, advanced_html)
 
     def test_status_snapshot_maps_restored_proxy_to_cleanup_state(self) -> None:
         manager.write_settings(
@@ -326,13 +331,11 @@ class ControlUiTests(unittest.TestCase):
         self.assertNotIn("编辑供应商", html)
         self.assertNotIn('id="speedPanel"', html)
         self.assertNotIn('id="speedForm"', html)
-        self.assertIn('id="statusPanel"', html)
-        self.assertIn("运行状态", html)
+        self.assertNotIn('id="statusPanel"', html)
         self.assertIn("请求记录", html)
         self.assertIn('data-page="providers"', html)
-        self.assertIn("运行状态", html)
-        self.assertIn("status-list", html)
-        self.assertIn("status-row emphasized", html)
+        self.assertNotIn("status-list", html)
+        self.assertNotIn("status-row emphasized", html)
         self.assertIn("hero-summary", html)
         self.assertIn("api.acme.test/v1", html)
         self.assertIn('<span data-i18n="summary.speed">速度</span>', html)
@@ -1740,6 +1743,246 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["start_result"]["status"], "restarted")
         self.assertEqual(result["start_result"]["reason"], "provider_switched")
         self.assertEqual(calls, [("stop", True), ("launch", "other")])
+
+    def test_switch_provider_defers_restart_while_request_is_active(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(self.paths, "acme", api_key="old-secret", base_url=settings.upstream_base)
+        manager.write_provider_auth_entry(self.paths, "other", api_key="new-secret", base_url="https://api.other.test/v1")
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n\n'
+            "[model_providers.other]\n"
+            'base_url = "https://api.other.test/v1"\n',
+            encoding="utf-8",
+        )
+
+        health = {
+            "ok": True,
+            "pid": 9999,
+            "provider": "acme",
+            "proxy_base": settings.proxy_base,
+            "upstream_base": settings.upstream_base,
+            "service_tier": settings.service_tier,
+            "service_tier_policy": settings.service_tier_policy,
+            "service_tier_effective_policy": "priority",
+            "upstream_api_key_file": True,
+            "runtime_id": manager.RUNTIME_ID,
+            "activity": {"active_requests": 1, "active_streams": 1, "idle": False},
+        }
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", return_value=health),
+            mock.patch("codex_fast_proxy.manager.stop_process") as stop,
+            mock.patch("codex_fast_proxy.manager.launch_background") as launch,
+        ):
+            result = run_switch_provider(str(self.codex_home), "other")
+
+        saved_settings = manager.read_settings(self.paths)
+        self.assertEqual(result["status"], "provider_switched")
+        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
+        self.assertEqual(result["user_state"]["title"], "切换已保存，等待当前请求结束")
+        self.assertEqual(result["start_result"]["status"], "deferred")
+        self.assertEqual(result["start_result"]["defer_reason"], "active_requests")
+        self.assertEqual(saved_settings.provider, "other")
+        stop.assert_not_called()
+        launch.assert_not_called()
+
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            9999,
+            True,
+            health,
+            True,
+            True,
+            True,
+        ))
+        providers = {item["name"]: item for item in snapshot["providers"]}
+        self.assertEqual(snapshot["runtime_upstream_provider"], "acme")
+        self.assertEqual(snapshot["pending_upstream_provider"], "other")
+        self.assertEqual(snapshot["current_provider"], "acme")
+        self.assertTrue(providers["acme"]["current"])
+        self.assertFalse(providers["other"]["current"])
+        self.assertTrue(providers["other"]["pending"])
+        html = render_page(snapshot, "token")
+        self.assertIn("待应用", html)
+
+    def test_save_current_provider_key_defers_as_pending_settings(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(self.paths, "acme", api_key="old-secret", base_url=settings.upstream_base)
+        self.paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+        old_revision = json.loads(self.paths.settings_path.read_text(encoding="utf-8"))["settings_revision"]
+        health = {
+            "ok": True,
+            "pid": 9999,
+            "provider": "acme",
+            "settings_revision": old_revision,
+            "proxy_base": settings.proxy_base,
+            "upstream_base": settings.upstream_base,
+            "service_tier": settings.service_tier,
+            "service_tier_policy": settings.service_tier_policy,
+            "service_tier_effective_policy": "preserve",
+            "upstream_api_key_file": True,
+            "runtime_id": manager.RUNTIME_ID,
+            "activity": {"active_requests": 1, "active_streams": 1, "idle": False},
+        }
+
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", return_value=health),
+            mock.patch("codex_fast_proxy.manager.stop_process") as stop,
+            mock.patch("codex_fast_proxy.manager.launch_background") as launch,
+        ):
+            result = run_save_provider(str(self.codex_home), "acme", settings.upstream_base, "new-secret")
+
+        self.assertEqual(result["status"], "provider_saved")
+        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
+        self.assertEqual(result["start_result"]["status"], "deferred")
+        stop.assert_not_called()
+        launch.assert_not_called()
+
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            9999,
+            True,
+            health,
+            True,
+            True,
+            True,
+        ))
+        providers = {item["name"]: item for item in snapshot["providers"]}
+        self.assertTrue(snapshot["settings_pending"])
+        self.assertEqual(snapshot["pending_upstream_provider"], "acme")
+        self.assertTrue(providers["acme"]["current"])
+        self.assertTrue(providers["acme"]["pending"])
+        html = render_page(snapshot, "token")
+        self.assertIn("使用中", html)
+        self.assertIn("待应用", html)
+
+    def test_speed_mode_defer_shows_runtime_speed_with_pending_setting(self) -> None:
+        (self.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            service_tier_policy="preserve",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_entry(self.paths, "acme", api_key="old-secret", base_url=settings.upstream_base)
+        manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+        old_revision = json.loads(self.paths.settings_path.read_text(encoding="utf-8"))["settings_revision"]
+        health = {
+            "ok": True,
+            "pid": 9999,
+            "provider": "acme",
+            "settings_revision": old_revision,
+            "proxy_base": settings.proxy_base,
+            "upstream_base": settings.upstream_base,
+            "service_tier": settings.service_tier,
+            "service_tier_policy": "preserve",
+            "service_tier_effective_policy": "preserve",
+            "upstream_api_key_file": True,
+            "runtime_id": manager.RUNTIME_ID,
+            "activity": {"active_requests": 1, "active_streams": 1, "idle": False},
+        }
+
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", return_value=health),
+            mock.patch("codex_fast_proxy.manager.stop_process") as stop,
+            mock.patch("codex_fast_proxy.manager.launch_background") as launch,
+        ):
+            result = run_set_speed_mode(str(self.codex_home), "fast")
+
+        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
+        stop.assert_not_called()
+        launch.assert_not_called()
+
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            9999,
+            True,
+            health,
+            True,
+            True,
+            True,
+        ))
+        self.assertTrue(snapshot["settings_pending"])
+        self.assertEqual(snapshot["runtime_fast_behavior"], "preserve_only")
+        self.assertEqual(snapshot["fast_behavior"], "auto_global_priority")
+        html = render_page(snapshot, "token")
+        self.assertIn("标准 · 待应用快速", html)
+
+    def test_runtime_mismatch_detects_provider_change_with_same_upstream_url(self) -> None:
+        settings = manager.ProxySettings(
+            provider="other",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.shared.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        health = {
+            "ok": True,
+            "pid": 9999,
+            "provider": "acme",
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.shared.test/v1",
+            "service_tier": "priority",
+            "service_tier_policy": settings.service_tier_policy,
+            "service_tier_effective_policy": "priority",
+            "upstream_api_key_file": True,
+        }
+
+        self.assertFalse(health_matches_settings(health, settings, "priority"))
+
+    def test_write_settings_preserves_revision_for_noop_and_bumps_when_forced(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        first_revision = json.loads(self.paths.settings_path.read_text(encoding="utf-8"))["settings_revision"]
+
+        manager.write_settings(self.paths, settings)
+        second_revision = json.loads(self.paths.settings_path.read_text(encoding="utf-8"))["settings_revision"]
+        manager.write_settings(self.paths, settings, bump_revision=True)
+        third_revision = json.loads(self.paths.settings_path.read_text(encoding="utf-8"))["settings_revision"]
+
+        self.assertEqual(second_revision, first_revision)
+        self.assertNotEqual(third_revision, first_revision)
 
     def test_delete_provider_removes_saved_entry_without_mutating_user_config(self) -> None:
         settings = manager.ProxySettings(

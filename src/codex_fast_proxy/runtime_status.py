@@ -28,8 +28,12 @@ def health_matches_settings(
         "service_tier_effective_policy",
         health.get("service_tier_policy", "inject_missing"),
     )
+    health_revision = health.get("settings_revision")
+    settings_revision = getattr(settings, "settings_revision", None)
     return (
         health.get("ok") is True
+        and (not health.get("provider") or health.get("provider") == settings.provider)
+        and (not health_revision or not settings_revision or health_revision == settings_revision)
         and health.get("proxy_base") == settings.proxy_base
         and health.get("upstream_base") == settings.upstream_base
         and health.get("service_tier") == settings.service_tier

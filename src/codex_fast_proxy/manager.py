@@ -480,7 +480,13 @@ def provider_auth_label(paths: ProxyPaths, provider: str, provider_config: dict[
     return label
 
 
-def provider_inventory(codex_home: str | Path | None, selected_provider: str | None = None) -> dict[str, Any]:
+def provider_inventory(
+    codex_home: str | Path | None,
+    selected_provider: str | None = None,
+    *,
+    current_provider: str | None = None,
+    pending_provider: str | None = None,
+) -> dict[str, Any]:
     paths = paths_for(codex_home)
     config = load_toml_config(paths.config_path)
     settings_data = read_json(paths.settings_path)
@@ -495,9 +501,13 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
         config_proxy_provider = provider_name_for_base_url(config, settings.base_url)
         if config_proxy_provider and config_proxy_provider != settings.provider and config_proxy_provider not in saved_names:
             names.discard(config_proxy_provider)
-    current_provider = selected_provider or (settings.provider if settings else active_provider)
-    if not current_provider and len(names) == 1:
-        current_provider = next(iter(names))
+    active_selection = current_provider or selected_provider or (settings.provider if settings else active_provider)
+    if active_selection:
+        names.add(active_selection)
+    if pending_provider:
+        names.add(pending_provider)
+    if not active_selection and len(names) == 1:
+        active_selection = next(iter(names))
 
     providers: list[dict[str, Any]] = []
     for name in sorted(names):
@@ -505,7 +515,8 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
         config_base = provider_base_url(config, name)
         api_key_label, api_key_length = provider_auth_state(paths, name, provider_config)
         proxy_enabled = bool(settings and name == settings.provider)
-        current = name == current_provider
+        current = name == active_selection
+        pending = name == pending_provider
         upstream_base = (
             settings.upstream_base
             if settings and name == settings.provider
@@ -515,17 +526,19 @@ def provider_inventory(codex_home: str | Path | None, selected_provider: str | N
             "name": name,
             "active": name == active_provider,
             "current": current,
+            "pending": pending,
             "proxy_enabled": proxy_enabled,
             "base_url": upstream_base,
             "api_key": api_key_label,
             "api_key_length": api_key_length,
-            "deletable": name in saved_names and not current,
+            "deletable": name in saved_names and not current and not pending,
         })
 
     return {
         "providers": providers,
         "active_provider": active_provider,
-        "current_provider": current_provider,
+        "current_provider": active_selection,
+        "pending_provider": pending_provider,
     }
 
 
@@ -757,7 +770,7 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
 
         if new_settings.upstream_api_key_file:
             write_provider_auth_entry(paths, new_settings.provider, base_url=new_settings.upstream_base)
-        write_settings(paths, new_settings)
+        write_settings(paths, new_settings, bump_revision=True if auth_source_requested else None)
         if running and not args.restart:
             restart_required = bool(pending_restart or not healthy or runtime_matches is False or auth_source_requested)
             if restart_required:
@@ -960,7 +973,7 @@ def save_provider(
                 if verify
                 else {"status": "skipped"}
             )
-            write_settings(paths, new_settings)
+            write_settings(paths, new_settings, bump_revision=bool(stripped_key))
             start_result = replace_running_proxy(
                 paths,
                 settings,
@@ -1669,6 +1682,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="Run the foreground proxy server.")
     serve.add_argument("--host", default=DEFAULT_HOST)
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    serve.add_argument("--provider")
+    serve.add_argument("--settings-revision")
     serve.add_argument("--proxy-base", default=DEFAULT_PROXY_BASE)
     serve.add_argument("--upstream-base", required=True)
     serve.add_argument("--service-tier", default=DEFAULT_SERVICE_TIER)
@@ -1825,6 +1840,10 @@ def main(argv: list[str] | None = None) -> int:
             args.service_tier_policy,
         ]
         effective_policy = args.service_tier_effective_policy or ("preserve" if args.service_tier_policy == "auto" else args.service_tier_policy)
+        if args.provider:
+            serve_args.extend(["--provider", args.provider])
+        if args.settings_revision:
+            serve_args.extend(["--settings-revision", args.settings_revision])
         serve_args.extend(["--service-tier-effective-policy", effective_policy])
         serve_args.extend(["--log-dir", args.log_dir])
         if args.upstream_api_key_env:
