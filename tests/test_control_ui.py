@@ -1061,6 +1061,25 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["user_state"]["title"], "更新完成，等待当前请求结束")
         self.assertIn("请求结束后自动应用", result["user_state"]["message"])
 
+    def test_update_action_reports_deferred_proxy_refresh_when_codex_turn_is_active(self) -> None:
+        with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
+            "status": "updated",
+            "code_update": {"status": "updated"},
+            "refresh": {
+                "status": "installed",
+                "start_result": {
+                    "status": "deferred",
+                    "defer_reason": "active_codex_turns",
+                    "codex_activity": {"active_turns": 2},
+                },
+            },
+            "final_status": {"needs_restart": True},
+        }):
+            result = run_update(str(self.codex_home))
+
+        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
+        self.assertEqual(result["user_state"]["title"], "更新完成，等待当前请求结束")
+
     def test_check_update_action_is_read_only_and_reports_local_changes(self) -> None:
         with mock.patch("codex_fast_proxy.manager.check_update", return_value={
             "status": "checked",
@@ -1745,7 +1764,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["start_result"]["reason"], "provider_switched")
         self.assertEqual(calls, [("stop", True), ("launch", "other")])
 
-    def test_switch_provider_defers_restart_while_request_is_active(self) -> None:
+    def test_switch_provider_defers_restart_while_proxy_request_is_active(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
             host="127.0.0.1",
@@ -1816,8 +1835,10 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(providers["other"]["pending"])
         html = render_page(snapshot, "token")
         self.assertIn("待应用", html)
+        self.assertIn('data-provider-action="switch"', html)
+        self.assertNotIn('disabled aria-disabled="true"', html)
 
-    def test_switch_provider_waits_for_active_codex_turn_even_when_proxy_is_idle(self) -> None:
+    def test_switch_provider_waits_for_all_active_codex_turns(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
             host="127.0.0.1",
@@ -1845,6 +1866,13 @@ class ControlUiTests(unittest.TestCase):
             "cwd": str(self.temp_dir),
             "model": "gpt-5.5",
         })
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-2",
+            "turn_id": "turn-2",
+            "cwd": str(self.temp_dir),
+            "model": "gpt-5.5",
+        })
 
         health = {
             "ok": True,
@@ -1868,9 +1896,11 @@ class ControlUiTests(unittest.TestCase):
         ):
             result = run_switch_provider(str(self.codex_home), "other")
 
+        saved_settings = manager.read_settings(self.paths)
         self.assertEqual(result["start_result"]["status"], "deferred")
         self.assertEqual(result["start_result"]["defer_reason"], "active_codex_turns")
-        self.assertEqual(result["start_result"]["codex_activity"]["active_turns"], 1)
+        self.assertEqual(result["start_result"]["codex_activity"]["active_turns"], 2)
+        self.assertEqual(saved_settings.provider, "other")
         stop.assert_not_called()
         launch.assert_not_called()
 
@@ -1885,9 +1915,42 @@ class ControlUiTests(unittest.TestCase):
             ))
         start.assert_not_called()
         self.assertTrue(snapshot["settings_pending"])
-        self.assertEqual(snapshot["codex_activity"]["active_turns"], 1)
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 2)
         html = render_page(snapshot, "token")
-        self.assertIn("还有 1 个 Codex 请求未完成", html)
+        self.assertIn("还有 2 个 Codex 请求未完成", html)
+
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "Stop",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        with mock.patch("codex_fast_proxy.state.start_background") as start:
+            snapshot = collect_status(str(self.codex_home), apply_idle_pending=True, runtime_probe=lambda _paths, _settings: (
+                9999,
+                True,
+                health,
+                True,
+                True,
+                True,
+            ))
+        start.assert_not_called()
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 1)
+
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "Stop",
+            "session_id": "session-2",
+            "turn_id": "turn-2",
+        })
+        with mock.patch("codex_fast_proxy.state.start_background", return_value={"status": "started"}) as start:
+            collect_status(str(self.codex_home), apply_idle_pending=True, runtime_probe=lambda _paths, _settings: (
+                9999,
+                True,
+                health,
+                True,
+                True,
+                True,
+            ))
+        start.assert_called_once()
 
     def test_stop_hook_allows_idle_pending_settings_to_apply(self) -> None:
         settings = manager.ProxySettings(

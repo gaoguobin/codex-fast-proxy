@@ -1192,10 +1192,17 @@ def command_start(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     settings = read_settings(paths)
     result = start_background(paths, settings, args.verbose_proxy)
+    config = load_toml_config(paths.config_path)
+    config_provider = provider_name_for_base_url(config, settings.base_url)
+    hook_result = install_startup_hook(paths) if config_provider else {
+        "status": "skipped",
+        "reason": "config_not_proxy",
+    }
     login = detect_login_mode(paths.codex_home)
     auth = upstream_auth_status(paths, settings)
     print(json_line({
         **result,
+        "startup_hook": hook_result,
         **chatgpt_login_report(paths, settings, login, auth),
     }))
     return 0
@@ -1370,8 +1377,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
     selected_provider = provider or config_proxy_provider or codex_model_provider
     upstream_base = provider_base_url(config, selected_provider) if selected_provider else None
     pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
-    hooks_enabled = hooks_feature_enabled(config)
     hook_status = fast_proxy_hook_trust_status(paths)
+    hooks_enabled = hooks_feature_enabled(config)
     login = detect_login_mode(paths.codex_home)
     auth = upstream_auth_status(paths, settings)
     effective_policy = effective_service_tier_policy(settings, login) if settings else None
@@ -1423,7 +1430,8 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
                 "ok": hooks_enabled,
                 "detail": {key: config_feature_value(config, key) for key in HOOK_FEATURE_KEYS},
             },
-            {"name": "startup_hook", "ok": hook_status["ready"], "detail": hook_status},
+            {"name": "startup_hook", "ok": hook_status.get("startup_ready"), "detail": hook_status},
+            {"name": "lifecycle_hooks", "ok": hook_status.get("lifecycle_ready"), "severity": "warning", "detail": hook_status},
         ])
     else:
         checks.append({"name": "proxy_settings", "ok": False, "detail": str(paths.settings_path)})

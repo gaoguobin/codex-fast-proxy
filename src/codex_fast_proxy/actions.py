@@ -15,7 +15,7 @@ def active_restart_deferred(result: dict[str, Any]) -> bool:
     return (
         isinstance(start_result, dict)
         and start_result.get("status") == "deferred"
-        and start_result.get("defer_reason") == "active_requests"
+        and start_result.get("defer_reason") in {"active_requests", "active_codex_turns"}
     )
 
 

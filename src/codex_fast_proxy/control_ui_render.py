@@ -220,6 +220,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.proxy_runtime": "代理运行时",
         "advanced.check.hooks_enabled": "Hooks 开关",
         "advanced.check.startup_hook": "启动钩子",
+        "advanced.check.lifecycle_hooks": "生命周期钩子",
+        "advanced.hooksPartial": "启动正常，生命周期钩子待更新",
         "settings.title": "设置",
         "settings.description": "控制面板偏好和版本更新。",
         "settings.preferences": "偏好",
@@ -490,6 +492,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.proxy_runtime": "Proxy runtime",
         "advanced.check.hooks_enabled": "Hooks enabled",
         "advanced.check.startup_hook": "Startup hook",
+        "advanced.check.lifecycle_hooks": "Lifecycle hooks",
+        "advanced.hooksPartial": "Startup is ready; lifecycle hooks need refresh",
         "settings.title": "Settings",
         "settings.description": "Control panel preferences and version updates.",
         "settings.preferences": "Preferences",
@@ -760,6 +764,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "advanced.check.proxy_runtime": "プロキシランタイム",
         "advanced.check.hooks_enabled": "Hooks 有効",
         "advanced.check.startup_hook": "起動フック",
+        "advanced.check.lifecycle_hooks": "ライフサイクルフック",
+        "advanced.hooksPartial": "起動は準備済み、ライフサイクルフックは更新待ち",
         "settings.title": "設定",
         "settings.description": "コントロールパネルの設定とバージョン更新。",
         "settings.preferences": "環境設定",
@@ -1456,8 +1462,10 @@ def diagnostic_auth(snapshot: dict[str, Any]) -> tuple[str, str, str, str]:
 def diagnostic_hook(snapshot: dict[str, Any]) -> tuple[str, str, str, str]:
     trust = snapshot.get("startup_hook_trust") if isinstance(snapshot.get("startup_hook_trust"), dict) else {}
     hooks = trust.get("hooks") if isinstance(trust.get("hooks"), list) else []
-    if snapshot.get("startup_hook"):
+    if snapshot.get("startup_hook") and snapshot.get("lifecycle_hook"):
         return "已就绪", "ok", "value.normal", f"已信任 {len(hooks)} 条"
+    if snapshot.get("startup_hook"):
+        return "待更新", "warn", "value.needsAttention", ui_text("advanced.hooksPartial")
     if snapshot.get("base_url"):
         return "需处理", "warn", "value.needsAttention", "存在本地代理设置，但启动钩子尚未就绪"
     return "未启用", "idle", "value.notEnabled", "启用代理后会安装并信任启动钩子"
@@ -4289,7 +4297,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     function diagnosticHookInfo(snapshot) {{
       const trust = snapshot.startup_hook_trust && typeof snapshot.startup_hook_trust === 'object' ? snapshot.startup_hook_trust : {{}};
       const hooks = Array.isArray(trust.hooks) ? trust.hooks : [];
-      if (snapshot.startup_hook) return [t('value.normal', '正常'), 'ok', withCount('advanced.hooksTrusted', '已信任 {{count}} 条', hooks.length)];
+      if (snapshot.startup_hook && snapshot.lifecycle_hook) return [t('value.normal', '正常'), 'ok', withCount('advanced.hooksTrusted', '已信任 {{count}} 条', hooks.length)];
+      if (snapshot.startup_hook) return [t('value.needsAttention', '需处理'), 'warn', t('advanced.hooksPartial', '启动正常，生命周期钩子待更新')];
       if (snapshot.base_url) return [t('value.needsAttention', '需处理'), 'warn', t('value.notConfigured', '未配置')];
       return [t('value.notEnabled', '未启用'), 'idle', t('advanced.noProxySettings', '代理尚未启用，因此没有本地代理设置。')];
     }}
@@ -4441,6 +4450,12 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         ].filter(Boolean).join(' · ') || t('value.unknown', '未知');
       }}
       if (detail.installed !== undefined || detail.trusted !== undefined || detail.ready !== undefined) {{
+        if (detail.startup_ready !== undefined || detail.lifecycle_ready !== undefined) {{
+          return [
+            detail.startup_ready ? 'startup ready' : 'startup pending',
+            detail.lifecycle_ready ? 'lifecycle ready' : 'lifecycle pending',
+          ].join(' · ');
+        }}
         return [
           detail.installed ? 'installed' : '',
           detail.trusted ? 'trusted' : '',

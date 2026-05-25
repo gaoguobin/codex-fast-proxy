@@ -26,6 +26,7 @@ from codex_fast_proxy.manager import (  # noqa: E402
     choose_provider,
     command_install,
     command_set_upstream,
+    command_start,
     command_stop,
     command_uninstall,
     ConfigError,
@@ -1107,6 +1108,63 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn("lifecycle-hook", hooks_root["Stop"][0]["hooks"][0]["command"])
         self.assertTrue(has_startup_hook(paths))
 
+    def test_start_refreshes_managed_hooks_when_config_points_to_proxy(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.config_path.parent.mkdir(parents=True)
+        settings = manager.ProxySettings(
+            provider="upstream",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.upstream.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(paths, settings)
+        paths.config_path.write_text(
+            'model_provider = "codexproxy"\n\n'
+            "[model_providers.codexproxy]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+        paths.hooks_path.write_text(
+            json.dumps({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup|resume",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python -m codex_fast_proxy autostart --quiet",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }),
+            encoding="utf-8",
+        )
+
+        original_start_background = manager.start_background
+        manager.start_background = lambda _paths, _settings, _verbose_proxy: {"status": "already_running"}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(command_start(argparse.Namespace(codex_home=str(codex_home), verbose_proxy=False)), 0)
+        finally:
+            manager.start_background = original_start_background
+
+        result = json.loads(output.getvalue())
+        hooks_root = read_hooks(paths.hooks_path)["hooks"]
+        saved_settings = settings_from_dict(json.loads(paths.settings_path.read_text(encoding="utf-8")))
+
+        self.assertEqual(result["startup_hook"]["status"], "updated")
+        self.assertEqual(saved_settings.provider, "upstream")
+        self.assertIn("lifecycle-hook", hooks_root["UserPromptSubmit"][0]["hooks"][0]["command"])
+        self.assertIn("lifecycle-hook", hooks_root["Stop"][0]["hooks"][0]["command"])
+        self.assertTrue(has_startup_hook(paths))
+
     def test_modified_startup_hook_is_not_reported_as_usable(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
@@ -1951,6 +2009,72 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertFalse(status["startup_hook_trust"]["ready"])
         self.assertEqual(status["diagnosis"]["code"], "startup_hook_not_ready")
 
+    def test_legacy_session_start_hook_keeps_startup_ready_with_lifecycle_warning(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+        (paths.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "secret"}), encoding="utf-8")
+        paths.settings_path.write_text(
+            json.dumps({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+                "service_tier_policy": "inject_missing",
+                "base_url": "http://127.0.0.1:18787/v1",
+            }),
+            encoding="utf-8",
+        )
+        install_startup_hook(paths)
+        hooks_data = read_hooks(paths.hooks_path)
+        hooks_data["hooks"].pop("UserPromptSubmit", None)
+        hooks_data["hooks"].pop("Stop", None)
+        paths.hooks_path.write_text(json.dumps(hooks_data), encoding="utf-8")
+
+        original_current_process = manager.current_process
+        original_proxy_health = manager.proxy_health
+        original_is_port_available = manager.is_port_available
+        manager.current_process = lambda _paths: (8096, True)
+        manager.proxy_health = lambda _settings: {
+            "ok": True,
+            "pid": 8096,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": "priority",
+            "service_tier_policy": "inject_missing",
+            "runtime_id": manager.RUNTIME_ID,
+        }
+        manager.is_port_available = lambda _host, _port: False
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as status_output:
+                self.assertEqual(manager.command_status(argparse.Namespace(codex_home=str(codex_home), provider=None)), 0)
+            status = json.loads(status_output.getvalue())
+            report = doctor_report(paths, None)
+        finally:
+            manager.current_process = original_current_process
+            manager.proxy_health = original_proxy_health
+            manager.is_port_available = original_is_port_available
+
+        self.assertTrue(status["startup_hook"])
+        self.assertFalse(status["lifecycle_hook"])
+        self.assertTrue(status["startup_hook_trust"]["startup_ready"])
+        self.assertFalse(status["startup_hook_trust"]["lifecycle_ready"])
+        self.assertIn("UserPromptSubmit", status["startup_hook_trust"]["missing_events"])
+        self.assertNotEqual(status["diagnosis"]["code"], "startup_hook_not_ready")
+        checks = {check["name"]: check for check in report["checks"]}
+        self.assertTrue(checks["startup_hook"]["ok"])
+        self.assertFalse(checks["lifecycle_hooks"]["ok"])
+        self.assertEqual(checks["lifecycle_hooks"]["severity"], "warning")
+
     def test_status_diagnosis_ready_when_core_state_is_consistent(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
@@ -2550,6 +2674,63 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertTrue(result["restart_required"])
         self.assertEqual(result["refresh"]["start_result"]["status"], "deferred")
         self.assertEqual(result["refresh"]["start_result"]["defer_reason"], "active_requests")
+
+    def test_update_installation_refreshes_hooks_for_managed_upstream_provider(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        settings = manager.ProxySettings(
+            provider="upstream",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.upstream.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(paths, settings)
+        paths.config_path.write_text(
+            'model_provider = "codexproxy"\n\n'
+            "[model_providers.codexproxy]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+        repo = self.temp_dir / "repo"
+        repo.mkdir()
+        commits = iter(["a" * 40, "b" * 40])
+        json_calls: list[tuple[str, ...]] = []
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            if args == ("rev-parse", "HEAD"):
+                return next(commits)
+            if args == ("pull", "--ff-only", "origin", "main"):
+                return "Updating a..b"
+            raise AssertionError(args)
+
+        def fake_run_python_json(args, timeout=300.0):
+            json_calls.append(tuple(args))
+            if "start" in args:
+                return {"status": "already_running", "startup_hook": {"status": "updated"}}
+            if "status" in args:
+                return {"status": "running", "needs_restart": False}
+            raise AssertionError(args)
+
+        with (
+            mock.patch("codex_fast_proxy.updater.check_update", return_value={
+                "status": "checked",
+                "local_changes": False,
+                "relation": "remote_ahead",
+            }),
+            mock.patch("codex_fast_proxy.updater.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.updater.run_python", return_value=""),
+            mock.patch("codex_fast_proxy.updater.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.updater.link_skill_namespace", return_value={"status": "already_linked"}),
+        ):
+            result = manager.update_installation(codex_home, repo=repo, branch="main")
+
+        self.assertEqual(result["status"], "updated")
+        self.assertTrue(any(call[2] == "start" for call in json_calls))
+        self.assertFalse(any(call[2] == "install" for call in json_calls))
+        self.assertEqual(result["refresh"]["startup_hook"]["status"], "updated")
 
     def test_update_installation_restores_tool_managed_deletions_before_pull(self) -> None:
         repo = self.temp_dir / "repo"

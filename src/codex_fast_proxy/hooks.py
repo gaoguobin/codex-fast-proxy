@@ -270,12 +270,18 @@ def fast_proxy_hook_trust_status(paths: Any) -> dict[str, Any]:
         })
 
     trusted_events = {hook["event"] for hook in hooks if hook["trusted"]}
-    all_expected_trusted = all(event in trusted_events for event in MANAGED_HOOK_EVENTS)
+    startup_ready = HOOK_EVENT in trusted_events
+    lifecycle_ready = all(event in trusted_events for event in LIFECYCLE_HOOK_EVENTS)
+    all_expected_trusted = startup_ready and lifecycle_ready
+    missing_events = [event for event in MANAGED_HOOK_EVENTS if event not in trusted_events]
     return {
         "installed": bool(hooks),
         "feature_enabled": feature_enabled,
         "trusted": all_expected_trusted,
         "ready": feature_enabled and all_expected_trusted,
+        "startup_ready": feature_enabled and startup_ready,
+        "lifecycle_ready": feature_enabled and lifecycle_ready,
+        "missing_events": missing_events,
         "hooks": hooks,
     }
 
