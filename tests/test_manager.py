@@ -21,6 +21,7 @@ import codex_fast_proxy.manager as manager  # noqa: E402
 import codex_fast_proxy.benchmark as benchmark  # noqa: E402
 import codex_fast_proxy.skill_link as skill_link  # noqa: E402
 import codex_fast_proxy.updater as updater  # noqa: E402
+from codex_fast_proxy.lifecycle import record_codex_hook_event  # noqa: E402
 from codex_fast_proxy.manager import (  # noqa: E402
     autostart_proxy,
     choose_provider,
@@ -1054,6 +1055,33 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertTrue(manager.hooks_feature_enabled({"features": {"codex_hooks": True}}))
         self.assertFalse(manager.hooks_feature_enabled({"features": {"hooks": False, "codex_hooks": False}}))
 
+    def test_lifecycle_hook_command_records_turn_input_from_stdin(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        args = argparse.Namespace(codex_home=str(codex_home))
+        payload = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+            "prompt": "do not persist this prompt",
+        }
+
+        with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))):
+            self.assertEqual(manager.command_lifecycle_hook(args), 0)
+
+        persisted = json.loads(paths.turns_path.read_text(encoding="utf-8"))
+        self.assertIn("session-1:turn-1", persisted["active_turns"])
+        self.assertEqual(persisted["last_event"]["status"], "recorded")
+        self.assertNotIn("do not persist this prompt", paths.turns_path.read_text(encoding="utf-8"))
+
+        with mock.patch("sys.stdin", io.StringIO("{not json")):
+            self.assertEqual(manager.command_lifecycle_hook(args), 0)
+
+        persisted = json.loads(paths.turns_path.read_text(encoding="utf-8"))
+        self.assertIn("session-1:turn-1", persisted["active_turns"])
+        self.assertEqual(persisted["last_event"]["status"], "error")
+        self.assertEqual(persisted["last_event"]["reason"], "invalid_json")
+
     def test_trusted_hook_is_not_ready_when_feature_flags_are_disabled(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
@@ -1325,6 +1353,11 @@ class ManagerConfigTests(unittest.TestCase):
                 "activity": {"active_requests": 1, "active_streams": 0},
             }
             manager.stop_process = fake_stop_process
+            record_codex_hook_event(paths, {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+            })
             set_args = argparse.Namespace(
                 codex_home=str(codex_home),
                 upstream_base="https://api.new.test/v1",
@@ -1502,7 +1535,7 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["provider"], "other")
         self.assertEqual(calls, ["stop:True", "launch:other"])
 
-    def test_replace_running_proxy_defers_when_stream_is_active(self) -> None:
+    def test_replace_running_proxy_defers_when_codex_turn_is_active(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
         paths.app_home.mkdir(parents=True)
@@ -1522,6 +1555,11 @@ class ManagerConfigTests(unittest.TestCase):
             upstream_base="https://api.new.test/v1",
             service_tier="priority",
         )
+        record_codex_hook_event(paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
 
         def fake_health(_settings):
             return {
@@ -1551,10 +1589,10 @@ class ManagerConfigTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "deferred")
-        self.assertEqual(result["defer_reason"], "active_requests")
+        self.assertEqual(result["defer_reason"], "active_codex_turns")
         self.assertTrue(result["needs_restart"])
         self.assertEqual(result["provider"], "other")
-        self.assertEqual(result["activity"]["active_streams"], 1)
+        self.assertEqual(result["codex_activity"]["active_turns"], 1)
 
     def test_replace_running_proxy_restores_previous_proxy_when_launch_fails(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -2608,7 +2646,7 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn(("-m", "pip", "install", "--user", "-e", str(repo.resolve())), python_calls)
         self.assertTrue(any(call[2] == "install" and "--start" in call for call in json_calls))
 
-    def test_update_installation_defers_proxy_refresh_when_stream_is_active(self) -> None:
+    def test_update_installation_reports_deferred_proxy_refresh_when_codex_turn_is_active(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
         paths.config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2649,8 +2687,8 @@ class ManagerConfigTests(unittest.TestCase):
                     "status": "installed",
                     "start_result": {
                         "status": "deferred",
-                        "defer_reason": "active_requests",
-                        "activity": {"active_requests": 1, "active_streams": 1},
+                        "defer_reason": "active_codex_turns",
+                        "codex_activity": {"active_turns": 1},
                     },
                 }
             if "status" in args:
@@ -2673,7 +2711,7 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["status"], "updated")
         self.assertTrue(result["restart_required"])
         self.assertEqual(result["refresh"]["start_result"]["status"], "deferred")
-        self.assertEqual(result["refresh"]["start_result"]["defer_reason"], "active_requests")
+        self.assertEqual(result["refresh"]["start_result"]["defer_reason"], "active_codex_turns")
 
     def test_update_installation_refreshes_hooks_for_managed_upstream_provider(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -3040,6 +3078,11 @@ class ManagerConfigTests(unittest.TestCase):
             "activity": {"active_requests": 1, "active_streams": 0},
         }
         try:
+            record_codex_hook_event(paths, {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+            })
             set_args = argparse.Namespace(
                 codex_home=str(codex_home),
                 upstream_base=None,
@@ -3105,6 +3148,11 @@ class ManagerConfigTests(unittest.TestCase):
             "activity": {"active_requests": 1, "active_streams": 0},
         }
         try:
+            record_codex_hook_event(paths, {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "session-1",
+                "turn_id": "turn-1",
+            })
             set_args = argparse.Namespace(
                 codex_home=str(codex_home),
                 upstream_base=None,

@@ -15,7 +15,7 @@ def active_restart_deferred(result: dict[str, Any]) -> bool:
     return (
         isinstance(start_result, dict)
         and start_result.get("status") == "deferred"
-        and start_result.get("defer_reason") in {"active_requests", "active_codex_turns"}
+        and start_result.get("defer_reason") == "active_codex_turns"
     )
 
 
@@ -120,7 +120,7 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
         result["user_state"] = state(
             "restart_deferred_active",
             "更新完成，等待当前请求结束",
-            "当前有模型请求正在返回。新版代理会在请求结束后自动应用。",
+            "当前 Codex 请求仍在进行。新版代理会在请求结束后自动应用。",
         )
     elif final_status.get("needs_restart"):
         result["user_state"] = state(
@@ -302,7 +302,7 @@ def run_configure_upstream(
         result["user_state"] = state(
             "restart_deferred_active",
             "已保存，等待当前请求结束",
-            "当前有模型请求正在返回。新的模型服务和速度模式已保存，会在请求结束后自动应用。",
+            "当前 Codex 请求仍在进行。新的模型服务和速度模式已保存，会在请求结束后自动应用。",
         )
     elif result.get("restart_required"):
         result["user_state"] = state(
@@ -334,7 +334,7 @@ def run_save_provider(
         result["user_state"] = state(
             "restart_deferred_active",
             "Provider 已保存，等待当前请求结束",
-            "当前有模型请求正在返回。新配置已保存，会在请求结束后自动应用。",
+            "当前 Codex 请求仍在进行。新配置已保存，会在请求结束后自动应用。",
         )
     else:
         result["user_state"] = state(
@@ -369,7 +369,7 @@ def run_switch_provider(codex_home: str | None, provider: str | None) -> dict[st
         result["user_state"] = state(
             "restart_deferred_active",
             "切换已保存，等待当前请求结束",
-            "当前有模型请求正在返回。新的供应商已保存，会在请求结束后自动应用。",
+            "当前 Codex 请求仍在进行。新的供应商已保存，会在请求结束后自动应用。",
         )
     elif result.get("restart_required"):
         result["user_state"] = state(
@@ -407,7 +407,7 @@ def run_set_speed_mode(codex_home: str | None, speed_mode: str | None) -> dict[s
         result["user_state"] = state(
             "restart_deferred_active",
             "速度模式已保存，等待当前请求结束",
-            "当前有模型请求正在返回。新的速度模式会在请求结束后自动应用。",
+            "当前 Codex 请求仍在进行。新的速度模式会在请求结束后自动应用。",
         )
     elif result.get("restart_required"):
         result["user_state"] = state(

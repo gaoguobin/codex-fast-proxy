@@ -78,8 +78,6 @@ def collect_status(
         and settings
         and running
         and pending_restart
-        and not activity.get("active_requests")
-        and not activity.get("active_streams")
         and not codex_turn_activity.get("active_turns")
     ):
         try:
@@ -210,21 +208,16 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     diagnosis = snapshot.get("diagnosis") if isinstance(snapshot.get("diagnosis"), dict) else {}
     code = diagnosis.get("code")
     provider_ready = bool(snapshot.get("provider") and snapshot.get("config_base_url"))
-    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
     codex = snapshot.get("codex_activity") if isinstance(snapshot.get("codex_activity"), dict) else {}
-    active_traffic = bool(
-        (activity.get("active_requests") or 0)
-        or (activity.get("active_streams") or 0)
-        or (codex.get("active_turns") or 0)
-    )
+    active_turn = bool(codex.get("active_turns") or 0)
 
     if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
         view = ("working", "运行正常", "Codex 已准备好继续使用当前模型服务。", "uninstall", "停用并恢复")
-    elif snapshot.get("config_matches") and snapshot.get("needs_restart") and active_traffic:
+    elif snapshot.get("config_matches") and snapshot.get("needs_restart") and active_turn:
         view = (
             "restart_deferred_active",
             "已保存，等待当前请求结束",
-            "当前有模型请求正在返回。新设置已保存，请求结束后控制面板会自动应用。",
+            "当前 Codex 请求仍在进行。新设置已保存，请求结束后控制面板会自动应用。",
             "refresh",
             "刷新状态",
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -1242,12 +1243,20 @@ def command_autostart(args: argparse.Namespace) -> int:
 
 
 def command_lifecycle_hook(args: argparse.Namespace) -> int:
-    from .lifecycle import record_codex_hook_event
+    from .lifecycle import record_codex_hook_error, record_codex_hook_event
 
+    paths = paths_for(args.codex_home)
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if isinstance(payload, dict):
-            record_codex_hook_event(paths_for(args.codex_home), payload)
+            record_codex_hook_event(paths, payload)
+        else:
+            record_codex_hook_error(paths, reason="non_object_payload")
+    except json.JSONDecodeError:
+        try:
+            record_codex_hook_error(paths, reason="invalid_json")
+        except Exception:
+            pass
     except Exception:
         return 0
     return 0

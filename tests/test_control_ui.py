@@ -223,7 +223,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(snapshot["auto_apply_result"]["status"], "restarted")
         self.assertFalse(snapshot["needs_restart"])
 
-    def test_status_snapshot_keeps_pending_restart_while_proxy_is_active(self) -> None:
+    def test_status_snapshot_keeps_pending_restart_while_codex_turn_is_active(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
             host="127.0.0.1",
@@ -234,6 +234,11 @@ class ControlUiTests(unittest.TestCase):
         )
         manager.write_settings(self.paths, settings)
         manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
 
         def runtime_probe(_paths, _settings):
             return 9999, True, {
@@ -1041,7 +1046,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(result["control_ui_reload_required"])
         self.assertIn("正在打开新版控制面板", result["user_state"]["message"])
 
-    def test_update_action_reports_deferred_proxy_refresh_when_request_is_active(self) -> None:
+    def test_update_action_ignores_proxy_activity_without_codex_turn(self) -> None:
         with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
             "status": "updated",
             "code_update": {"status": "updated"},
@@ -1057,9 +1062,7 @@ class ControlUiTests(unittest.TestCase):
         }):
             result = run_update(str(self.codex_home))
 
-        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
-        self.assertEqual(result["user_state"]["title"], "更新完成，等待当前请求结束")
-        self.assertIn("请求结束后自动应用", result["user_state"]["message"])
+        self.assertNotEqual(result["user_state"]["code"], "restart_deferred_active")
 
     def test_update_action_reports_deferred_proxy_refresh_when_codex_turn_is_active(self) -> None:
         with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
@@ -1764,7 +1767,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["start_result"]["reason"], "provider_switched")
         self.assertEqual(calls, [("stop", True), ("launch", "other")])
 
-    def test_switch_provider_defers_restart_while_proxy_request_is_active(self) -> None:
+    def test_switch_provider_ignores_proxy_activity_without_active_codex_turn(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
             host="127.0.0.1",
@@ -1803,40 +1806,17 @@ class ControlUiTests(unittest.TestCase):
             mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
             mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
             mock.patch("codex_fast_proxy.manager.proxy_health", return_value=health),
-            mock.patch("codex_fast_proxy.manager.stop_process") as stop,
-            mock.patch("codex_fast_proxy.manager.launch_background") as launch,
+            mock.patch("codex_fast_proxy.manager.stop_process", return_value={"status": "stopped"}) as stop,
+            mock.patch("codex_fast_proxy.manager.launch_background", return_value={"status": "restarted"}) as launch,
         ):
             result = run_switch_provider(str(self.codex_home), "other")
 
         saved_settings = manager.read_settings(self.paths)
         self.assertEqual(result["status"], "provider_switched")
-        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
-        self.assertEqual(result["user_state"]["title"], "切换已保存，等待当前请求结束")
-        self.assertEqual(result["start_result"]["status"], "deferred")
-        self.assertEqual(result["start_result"]["defer_reason"], "active_requests")
+        self.assertEqual(result["start_result"]["status"], "restarted")
         self.assertEqual(saved_settings.provider, "other")
-        stop.assert_not_called()
-        launch.assert_not_called()
-
-        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
-            9999,
-            True,
-            health,
-            True,
-            True,
-            True,
-        ))
-        providers = {item["name"]: item for item in snapshot["providers"]}
-        self.assertEqual(snapshot["runtime_upstream_provider"], "acme")
-        self.assertEqual(snapshot["pending_upstream_provider"], "other")
-        self.assertEqual(snapshot["current_provider"], "acme")
-        self.assertTrue(providers["acme"]["current"])
-        self.assertFalse(providers["other"]["current"])
-        self.assertTrue(providers["other"]["pending"])
-        html = render_page(snapshot, "token")
-        self.assertIn("待应用", html)
-        self.assertIn('data-provider-action="switch"', html)
-        self.assertNotIn('disabled aria-disabled="true"', html)
+        stop.assert_called_once()
+        launch.assert_called_once()
 
     def test_switch_provider_waits_for_all_active_codex_turns(self) -> None:
         settings = manager.ProxySettings(
@@ -1952,6 +1932,61 @@ class ControlUiTests(unittest.TestCase):
             ))
         start.assert_called_once()
 
+    def test_lifecycle_turn_tracking_is_session_scoped_and_diagnostic(self) -> None:
+        result = record_codex_hook_event(self.paths, {
+            "hookEventName": "UserPromptSubmit",
+            "sessionId": "session-1",
+            "turnId": "turn-1",
+            "prompt": "do not persist this prompt",
+        })
+        self.assertEqual(result["status"], "recorded")
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-2",
+            "turn_id": "turn-1",
+        })
+
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            None,
+            False,
+            None,
+            False,
+            False,
+            None,
+        ))
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 2)
+        last_event = snapshot["codex_activity"]["last_event"]
+        self.assertEqual(last_event["status"], "recorded")
+        self.assertEqual(last_event["event"], "UserPromptSubmit")
+        persisted = self.paths.turns_path.read_text(encoding="utf-8")
+        self.assertNotIn("do not persist this prompt", persisted)
+
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "Stop",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            None,
+            False,
+            None,
+            False,
+            False,
+            None,
+        ))
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 1)
+
+    def test_lifecycle_records_ignored_event_reason(self) -> None:
+        result = record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+        })
+
+        self.assertEqual(result["status"], "ignored")
+        self.assertEqual(result["reason"], "missing_turn_id")
+        self.assertEqual(result["last_event"]["status"], "ignored")
+        self.assertEqual(result["last_event"]["reason"], "missing_turn_id")
+
     def test_stop_hook_allows_idle_pending_settings_to_apply(self) -> None:
         settings = manager.ProxySettings(
             provider="other",
@@ -2019,6 +2054,11 @@ class ControlUiTests(unittest.TestCase):
             encoding="utf-8",
         )
         old_revision = json.loads(self.paths.settings_path.read_text(encoding="utf-8"))["settings_revision"]
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
         health = {
             "ok": True,
             "pid": 9999,
@@ -2082,6 +2122,11 @@ class ControlUiTests(unittest.TestCase):
         manager.write_provider_auth_entry(self.paths, "acme", api_key="old-secret", base_url=settings.upstream_base)
         manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
         old_revision = json.loads(self.paths.settings_path.read_text(encoding="utf-8"))["settings_revision"]
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
         health = {
             "ok": True,
             "pid": 9999,

@@ -98,7 +98,6 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.header": "供应商",
         "provider.note": "已启用后，这里只管理本地代理配置；不会改写 Codex config.toml。",
         "provider.pendingNotice": "还有 {count} 个 Codex 请求未完成，新供应商已保存，会在结束后自动应用。",
-        "provider.pendingProxyNotice": "当前代理仍在处理请求，新供应商已保存，会在请求结束后自动应用。",
         "provider.pendingSavedNotice": "新供应商已保存，等待控制面板完成应用。",
         "provider.saved": "已保存",
         "provider.name": "名称",
@@ -370,7 +369,6 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.header": "Provider",
         "provider.note": "After enabling, this page manages only the local proxy config; it does not rewrite Codex config.toml.",
         "provider.pendingNotice": "{count} Codex requests are still active. The new provider is saved and will apply after they finish.",
-        "provider.pendingProxyNotice": "The proxy is still processing a request. The new provider is saved and will apply after it finishes.",
         "provider.pendingSavedNotice": "The new provider is saved and waiting to be applied.",
         "provider.saved": "Saved",
         "provider.name": "Name",
@@ -642,7 +640,6 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "provider.header": "プロバイダー",
         "provider.note": "有効化後、この画面はローカルプロキシ設定だけを管理します。Codex config.toml は書き換えません。",
         "provider.pendingNotice": "{count} 件の Codex リクエストがまだ処理中です。新しいプロバイダーは保存済みで、完了後に自動適用されます。",
-        "provider.pendingProxyNotice": "プロキシがまだリクエストを処理中です。新しいプロバイダーは保存済みで、完了後に自動適用されます。",
         "provider.pendingSavedNotice": "新しいプロバイダーは保存済みで、適用待ちです。",
         "provider.saved": "保存済み",
         "provider.name": "名前",
@@ -830,7 +827,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "zh": {
         "working": {"title": "运行正常", "message": "Codex 已准备好继续使用当前模型服务。"},
         "restart_required": {"title": "已启用，重启后接管", "message": "当前对话可以继续。Codex 重启后，新会话会走本地代理，并按速度模式处理请求。"},
-        "restart_deferred_active": {"title": "已保存，等待当前请求结束", "message": "当前有模型请求正在返回。新设置已保存，请求结束后控制面板会自动应用。"},
+        "restart_deferred_active": {"title": "已保存，等待当前请求结束", "message": "当前 Codex 请求仍在进行。新设置已保存，请求结束后控制面板会自动应用。"},
         "cleanup_pending": {"title": "已停用", "message": "Codex 已恢复到原模型服务。你可以重新启用，或完成清理并移除本地代理状态。"},
         "ready_to_enable": {"title": "准备启用", "message": "点击启用后，会自动准备当前模型服务路径，并提前准备 ChatGPT 账户登录兼容性。"},
         "missing_provider": {"title": "需要先配置供应商", "message": "没有检测到可接管的第三方模型服务入口；当前还没有发起上游请求。请先在 Codex config.toml 配置 provider，再回到控制面板启用。"},
@@ -849,7 +846,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "en": {
         "working": {"title": "Running normally", "message": "Codex is ready to keep using the current model service."},
         "restart_required": {"title": "Enabled after restart", "message": "You can continue this conversation. After restarting Codex, new sessions will use the local proxy and the selected speed mode."},
-        "restart_deferred_active": {"title": "Saved, waiting for the current request", "message": "A model request is still streaming. The new settings are saved and will be applied automatically after it finishes."},
+        "restart_deferred_active": {"title": "Saved, waiting for the current request", "message": "A Codex request is still running. The new settings are saved and will be applied automatically after it finishes."},
         "cleanup_pending": {"title": "Disabled", "message": "Codex was restored to the original model service. You can enable again or finish cleanup to remove local proxy state."},
         "ready_to_enable": {"title": "Ready to enable", "message": "Enabling will prepare the current model service route and ChatGPT account compatibility."},
         "missing_provider": {"title": "Configure a provider first", "message": "No third-party model service entry was found, and no upstream requests have been made yet. Configure a provider in Codex config.toml, then return here to enable."},
@@ -868,7 +865,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "ja": {
         "working": {"title": "正常に動作中", "message": "Codex は現在のモデルサービスを引き続き使用できます。"},
         "restart_required": {"title": "再起動後に有効化", "message": "この会話は続行できます。Codex 再起動後、新しいセッションはローカルプロキシと選択した速度モードを使用します。"},
-        "restart_deferred_active": {"title": "保存済み、現在のリクエスト待ち", "message": "モデルリクエストがまだストリーミング中です。新しい設定は保存され、完了後に自動適用されます。"},
+        "restart_deferred_active": {"title": "保存済み、現在のリクエスト待ち", "message": "Codex リクエストがまだ進行中です。新しい設定は保存され、完了後に自動適用されます。"},
         "cleanup_pending": {"title": "無効化済み", "message": "Codex は元のモデルサービスに復元されました。再度有効化するか、クリーンアップを完了してローカルプロキシ状態を削除できます。"},
         "ready_to_enable": {"title": "有効化の準備完了", "message": "有効化すると、現在のモデルサービス経路と ChatGPT アカウント互換性を準備します。"},
         "missing_provider": {"title": "先にプロバイダーを設定", "message": "接管できるサードパーティのモデルサービスエントリが見つからず、上流リクエストもまだありません。Codex config.toml に provider を設定してから戻ってください。"},
@@ -1066,22 +1063,12 @@ def codex_active_turn_count(snapshot: dict[str, Any]) -> int:
         return 0
 
 
-def proxy_active_request_count(snapshot: dict[str, Any]) -> int:
-    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
-    try:
-        return int(activity.get("active_requests") or 0) + int(activity.get("active_streams") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
 def provider_pending_note(snapshot: dict[str, Any]) -> tuple[str, str]:
     if not snapshot.get("settings_pending"):
         return "", ""
     active_turns = codex_active_turn_count(snapshot)
     if active_turns:
         return ui_text("provider.pendingNotice").replace("{count}", str(active_turns)), "provider.pendingNotice"
-    if proxy_active_request_count(snapshot):
-        return ui_text("provider.pendingProxyNotice"), "provider.pendingProxyNotice"
     return ui_text("provider.pendingSavedNotice"), "provider.pendingSavedNotice"
 
 
@@ -4197,17 +4184,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const count = Number(activity.active_turns || 0);
       return Number.isFinite(count) ? count : 0;
     }}
-    function activeProxyRequestCount(snapshot) {{
-      const activity = snapshot && snapshot.proxy_activity && typeof snapshot.proxy_activity === 'object' ? snapshot.proxy_activity : {{}};
-      const requests = Number(activity.active_requests || 0);
-      const streams = Number(activity.active_streams || 0);
-      return (Number.isFinite(requests) ? requests : 0) + (Number.isFinite(streams) ? streams : 0);
-    }}
     function providerPendingText(snapshot) {{
       if (!snapshot || !snapshot.settings_pending) return '';
       const turns = activeCodexTurnCount(snapshot);
       if (turns > 0) return withCount('provider.pendingNotice', '还有 {{count}} 个 Codex 请求未完成，新供应商已保存，会在结束后自动应用。', turns);
-      if (activeProxyRequestCount(snapshot) > 0) return t('provider.pendingProxyNotice', '当前代理仍在处理请求，新供应商已保存，会在请求结束后自动应用。');
       return t('provider.pendingSavedNotice', '新供应商已保存，等待控制面板完成应用。');
     }}
     function updateProviderPendingNotice(snapshot) {{
@@ -4645,7 +4625,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         hasSpeedForm !== shouldShowSpeedForm;
     }}
     function hasActiveTraffic(snapshot) {{
-      return activeProxyRequestCount(snapshot) > 0 || activeCodexTurnCount(snapshot) > 0;
+      return activeCodexTurnCount(snapshot) > 0;
     }}
     function schedulePendingRefresh(snapshot) {{
       if (pendingRefreshTimer) {{

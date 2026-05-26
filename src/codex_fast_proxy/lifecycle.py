@@ -17,6 +17,8 @@ SCHEMA_VERSION = 1
 TURN_STALE_SECONDS = 12 * 60 * 60
 TURN_LOCK_STALE_SECONDS = 5.0
 TURN_LOCK_POLL_INTERVAL = 0.05
+RECENT_EVENT_LIMIT = 20
+TURN_EVENTS = {"UserPromptSubmit", "Stop"}
 
 
 def utc_now() -> str:
@@ -84,6 +86,79 @@ def read_turn_state(paths: ProxyPaths) -> dict[str, Any]:
     return data
 
 
+def text_field(payload: dict[str, Any], names: tuple[str, ...]) -> str | None:
+    for name in names:
+        value = payload.get(name)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def nested_hook_output(payload: dict[str, Any]) -> dict[str, Any]:
+    for name in ("hookSpecificOutput", "hook_specific_output"):
+        value = payload.get(name)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def hook_event_name(payload: dict[str, Any]) -> str | None:
+    return text_field(payload, ("hook_event_name", "hookEventName", "event")) or text_field(
+        nested_hook_output(payload),
+        ("hook_event_name", "hookEventName", "event"),
+    )
+
+
+def hook_turn_id(payload: dict[str, Any]) -> str | None:
+    return text_field(payload, ("turn_id", "turnId"))
+
+
+def hook_session_id(payload: dict[str, Any]) -> str | None:
+    return text_field(payload, ("session_id", "sessionId", "thread_id", "threadId"))
+
+
+def turn_key(session_id: str | None, turn_id: str) -> str:
+    return f"{session_id}:{turn_id}" if session_id else turn_id
+
+
+def payload_field_names(payload: dict[str, Any]) -> list[str]:
+    return sorted(key for key in payload if isinstance(key, str))
+
+
+def event_entry(
+    *,
+    event: str | None,
+    status: str,
+    reason: str | None,
+    payload: dict[str, Any] | None,
+    session_id: str | None = None,
+    turn_id: str | None = None,
+    key: str | None = None,
+    now_text: str | None = None,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "event": event,
+        "status": status,
+        "reason": reason,
+        "recorded_at": now_text or utc_now(),
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "turn_key": key,
+    }
+    if payload is not None:
+        entry["payload_fields"] = payload_field_names(payload)
+    return entry
+
+
+def append_recent_event(data: dict[str, Any], entry: dict[str, Any]) -> None:
+    recent = data.get("recent_events")
+    if not isinstance(recent, list):
+        recent = []
+    recent.append(entry)
+    data["last_event"] = entry
+    data["recent_events"] = recent[-RECENT_EVENT_LIMIT:]
+
+
 def active_turn_items(data: dict[str, Any], *, now: float | None = None) -> dict[str, dict[str, Any]]:
     turns = data.get("active_turns")
     if not isinstance(turns, dict):
@@ -100,12 +175,16 @@ def active_turn_items(data: dict[str, Any], *, now: float | None = None) -> dict
 
 
 def codex_activity(paths: ProxyPaths) -> dict[str, Any]:
-    active = active_turn_items(read_turn_state(paths))
+    data = read_turn_state(paths)
+    active = active_turn_items(data)
+    last_event = data.get("last_event")
     return {
         "active_turns": len(active),
         "idle": not active,
+        "last_event": last_event if isinstance(last_event, dict) else None,
         "turns": [
             {
+                "session_id": item.get("session_id"),
                 "turn_id": item.get("turn_id"),
                 "started_at": item.get("started_at"),
                 "updated_at": item.get("updated_at"),
@@ -120,32 +199,83 @@ def codex_has_active_turns(paths: ProxyPaths) -> bool:
 
 
 def record_codex_hook_event(paths: ProxyPaths, payload: dict[str, Any]) -> dict[str, Any]:
-    event = payload.get("hook_event_name")
-    turn_id = payload.get("turn_id")
-    if event not in {"UserPromptSubmit", "Stop"} or not isinstance(turn_id, str) or not turn_id:
-        return {"status": "ignored", "event": event}
-
+    event = hook_event_name(payload)
+    session_id = hook_session_id(payload)
+    turn_id = hook_turn_id(payload)
     now_epoch = time.time()
     now_text = utc_now()
+    key = turn_key(session_id, turn_id) if turn_id else None
+    status = "recorded"
+    reason = None
+    if event not in TURN_EVENTS:
+        status = "ignored"
+        reason = "unsupported_event"
+    elif not turn_id:
+        status = "ignored"
+        reason = "missing_turn_id"
+
     with turn_state_lock(paths) as locked:
         if not locked:
             return {"status": "busy", "event": event}
         data = read_turn_state(paths)
         active = active_turn_items(data, now=now_epoch)
-        if event == "UserPromptSubmit":
-            active[turn_id] = {
-                "turn_id": turn_id,
-                "started_at": active.get(turn_id, {}).get("started_at") or now_text,
-                "started_at_epoch": active.get(turn_id, {}).get("started_at_epoch") or now_epoch,
-                "updated_at": now_text,
-                "updated_at_epoch": now_epoch,
-            }
-        else:
-            active.pop(turn_id, None)
-        write_json(paths.turns_path, {
+        if status == "recorded" and turn_id and key:
+            if event == "UserPromptSubmit":
+                previous = active.pop(turn_id, None) if key != turn_id else None
+                previous = active.get(key) or previous or {}
+                active[key] = {
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "turn_key": key,
+                    "started_at": previous.get("started_at") or now_text,
+                    "started_at_epoch": previous.get("started_at_epoch") or now_epoch,
+                    "updated_at": now_text,
+                    "updated_at_epoch": now_epoch,
+                }
+            else:
+                active.pop(key, None)
+                if key != turn_id:
+                    active.pop(turn_id, None)
+        next_state = {
             "schema_version": SCHEMA_VERSION,
             "updated_at": now_text,
             "active_turns": active,
-        })
+            "recent_events": data.get("recent_events") if isinstance(data.get("recent_events"), list) else [],
+        }
+        append_recent_event(next_state, event_entry(
+            event=event,
+            status=status,
+            reason=reason,
+            payload=payload,
+            session_id=session_id,
+            turn_id=turn_id,
+            key=key,
+            now_text=now_text,
+        ))
+        write_json(paths.turns_path, next_state)
 
-    return {"status": "recorded", "event": event, **codex_activity(paths)}
+    return {"status": status, "event": event, "reason": reason, **codex_activity(paths)}
+
+
+def record_codex_hook_error(paths: ProxyPaths, *, reason: str) -> dict[str, Any]:
+    now_text = utc_now()
+    with turn_state_lock(paths) as locked:
+        if not locked:
+            return {"status": "busy", "event": None}
+        data = read_turn_state(paths)
+        active = active_turn_items(data)
+        next_state = {
+            "schema_version": SCHEMA_VERSION,
+            "updated_at": now_text,
+            "active_turns": active,
+            "recent_events": data.get("recent_events") if isinstance(data.get("recent_events"), list) else [],
+        }
+        append_recent_event(next_state, event_entry(
+            event=None,
+            status="error",
+            reason=reason,
+            payload=None,
+            now_text=now_text,
+        ))
+        write_json(paths.turns_path, next_state)
+    return {"status": "error", "reason": reason, **codex_activity(paths)}
