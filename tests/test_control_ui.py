@@ -4,8 +4,10 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import unittest
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -1975,6 +1977,109 @@ class ControlUiTests(unittest.TestCase):
             None,
         ))
         self.assertEqual(snapshot["codex_activity"]["active_turns"], 1)
+
+    def test_lifecycle_replaces_previous_turn_in_same_session(self) -> None:
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-2",
+        })
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-2",
+            "turn_id": "turn-3",
+        })
+
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            None,
+            False,
+            None,
+            False,
+            False,
+            None,
+        ))
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 2)
+        self.assertEqual(
+            {(item["session_id"], item["turn_id"]) for item in snapshot["codex_activity"]["turns"]},
+            {("session-1", "turn-2"), ("session-2", "turn-3")},
+        )
+
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "Stop",
+            "session_id": "session-1",
+            "turn_id": "turn-2",
+        })
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            None,
+            False,
+            None,
+            False,
+            False,
+            None,
+        ))
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 1)
+        self.assertEqual(snapshot["codex_activity"]["turns"][0]["session_id"], "session-2")
+
+    def test_lifecycle_ignores_turns_older_than_session_stop(self) -> None:
+        now_epoch = time.time()
+        old_epoch = now_epoch - 60
+        now_text = datetime.fromtimestamp(now_epoch, UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        old_text = datetime.fromtimestamp(old_epoch, UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        self.paths.turns_path.parent.mkdir(parents=True, exist_ok=True)
+        self.paths.turns_path.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "updated_at": now_text,
+                "active_turns": {
+                    "session-1:old-turn": {
+                        "session_id": "session-1",
+                        "turn_id": "old-turn",
+                        "turn_key": "session-1:old-turn",
+                        "started_at": old_text,
+                        "started_at_epoch": old_epoch,
+                        "updated_at": old_text,
+                        "updated_at_epoch": old_epoch,
+                    },
+                    "session-2:active-turn": {
+                        "session_id": "session-2",
+                        "turn_id": "active-turn",
+                        "turn_key": "session-2:active-turn",
+                        "started_at": now_text,
+                        "started_at_epoch": now_epoch,
+                        "updated_at": now_text,
+                        "updated_at_epoch": now_epoch,
+                    },
+                },
+                "recent_events": [
+                    {
+                        "event": "Stop",
+                        "status": "recorded",
+                        "reason": None,
+                        "recorded_at": now_text,
+                        "session_id": "session-1",
+                        "turn_id": "new-turn",
+                        "turn_key": "session-1:new-turn",
+                    }
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        snapshot = collect_status(str(self.codex_home), runtime_probe=lambda _paths, _settings: (
+            None,
+            False,
+            None,
+            False,
+            False,
+            None,
+        ))
+        self.assertEqual(snapshot["codex_activity"]["active_turns"], 1)
+        self.assertEqual(snapshot["codex_activity"]["turns"][0]["session_id"], "session-2")
 
     def test_lifecycle_records_ignored_event_reason(self) -> None:
         result = record_codex_hook_event(self.paths, {

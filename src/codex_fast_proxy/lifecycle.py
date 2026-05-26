@@ -25,6 +25,15 @@ def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def parse_utc_timestamp(value: Any) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def monotonic_deadline(seconds: float) -> float:
     return time.monotonic() + max(seconds, 0.0)
 
@@ -135,12 +144,14 @@ def event_entry(
     turn_id: str | None = None,
     key: str | None = None,
     now_text: str | None = None,
+    now_epoch: float | None = None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
         "event": event,
         "status": status,
         "reason": reason,
         "recorded_at": now_text or utc_now(),
+        "recorded_at_epoch": now_epoch if now_epoch is not None else time.time(),
         "session_id": session_id,
         "turn_id": turn_id,
         "turn_key": key,
@@ -159,10 +170,34 @@ def append_recent_event(data: dict[str, Any], entry: dict[str, Any]) -> None:
     data["recent_events"] = recent[-RECENT_EVENT_LIMIT:]
 
 
+def event_epoch(entry: dict[str, Any]) -> float | None:
+    value = entry.get("recorded_at_epoch")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return parse_utc_timestamp(entry.get("recorded_at"))
+
+
+def latest_session_stop_epochs(data: dict[str, Any]) -> dict[str, float]:
+    recent = data.get("recent_events")
+    if not isinstance(recent, list):
+        return {}
+    latest: dict[str, float] = {}
+    for entry in recent:
+        if not isinstance(entry, dict) or entry.get("event") != "Stop" or entry.get("status") != "recorded":
+            continue
+        session_id = entry.get("session_id")
+        epoch = event_epoch(entry)
+        if not isinstance(session_id, str) or epoch is None:
+            continue
+        latest[session_id] = max(latest.get(session_id, 0.0), epoch)
+    return latest
+
+
 def active_turn_items(data: dict[str, Any], *, now: float | None = None) -> dict[str, dict[str, Any]]:
     turns = data.get("active_turns")
     if not isinstance(turns, dict):
         return {}
+    stopped_sessions = latest_session_stop_epochs(data)
     active: dict[str, dict[str, Any]] = {}
     for turn_id, item in turns.items():
         if not isinstance(turn_id, str) or not isinstance(item, dict):
@@ -170,8 +205,19 @@ def active_turn_items(data: dict[str, Any], *, now: float | None = None) -> dict
         updated_at_epoch = item.get("updated_at_epoch") or item.get("started_at_epoch")
         if stale_timestamp(updated_at_epoch, now=now):
             continue
+        session_id = item.get("session_id")
+        if isinstance(session_id, str) and stopped_sessions.get(session_id, 0.0) >= float(updated_at_epoch):
+            continue
         active[turn_id] = item
     return active
+
+
+def remove_session_turns(active: dict[str, dict[str, Any]], session_id: str | None) -> None:
+    if not session_id:
+        return
+    for key, item in list(active.items()):
+        if item.get("session_id") == session_id:
+            active.pop(key, None)
 
 
 def codex_activity(paths: ProxyPaths) -> dict[str, Any]:
@@ -221,8 +267,11 @@ def record_codex_hook_event(paths: ProxyPaths, payload: dict[str, Any]) -> dict[
         active = active_turn_items(data, now=now_epoch)
         if status == "recorded" and turn_id and key:
             if event == "UserPromptSubmit":
-                previous = active.pop(turn_id, None) if key != turn_id else None
-                previous = active.get(key) or previous or {}
+                previous = active.pop(key, None)
+                if key != turn_id:
+                    previous = previous or active.pop(turn_id, None)
+                remove_session_turns(active, session_id)
+                previous = previous or {}
                 active[key] = {
                     "session_id": session_id,
                     "turn_id": turn_id,
@@ -236,6 +285,7 @@ def record_codex_hook_event(paths: ProxyPaths, payload: dict[str, Any]) -> dict[
                 active.pop(key, None)
                 if key != turn_id:
                     active.pop(turn_id, None)
+                remove_session_turns(active, session_id)
         next_state = {
             "schema_version": SCHEMA_VERSION,
             "updated_at": now_text,
@@ -251,6 +301,7 @@ def record_codex_hook_event(paths: ProxyPaths, payload: dict[str, Any]) -> dict[
             turn_id=turn_id,
             key=key,
             now_text=now_text,
+            now_epoch=now_epoch,
         ))
         write_json(paths.turns_path, next_state)
 
@@ -258,6 +309,7 @@ def record_codex_hook_event(paths: ProxyPaths, payload: dict[str, Any]) -> dict[
 
 
 def record_codex_hook_error(paths: ProxyPaths, *, reason: str) -> dict[str, Any]:
+    now_epoch = time.time()
     now_text = utc_now()
     with turn_state_lock(paths) as locked:
         if not locked:
@@ -276,6 +328,7 @@ def record_codex_hook_error(paths: ProxyPaths, *, reason: str) -> dict[str, Any]
             reason=reason,
             payload=None,
             now_text=now_text,
+            now_epoch=now_epoch,
         ))
         write_json(paths.turns_path, next_state)
     return {"status": "error", "reason": reason, **codex_activity(paths)}
