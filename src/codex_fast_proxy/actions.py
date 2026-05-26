@@ -26,6 +26,19 @@ def update_restart_deferred(result: dict[str, Any]) -> bool:
     return active_restart_deferred(refresh)
 
 
+def proxy_active_request_count(snapshot: dict[str, Any]) -> int:
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    try:
+        return int(activity.get("active_requests") or 0) + int(activity.get("active_streams") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def proxy_is_idle(snapshot: dict[str, Any]) -> bool:
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    return proxy_active_request_count(snapshot) == 0 and activity.get("idle") is not False
+
+
 def state(code: str, title: str, message: str, primary_action: str = "refresh", primary_label: str = "刷新状态") -> dict[str, str]:
     return {
         "code": code,
@@ -33,6 +46,59 @@ def state(code: str, title: str, message: str, primary_action: str = "refresh", 
         "message": message,
         "primary_action": primary_action,
         "primary_label": primary_label,
+    }
+
+
+def run_apply_pending_now(codex_home: str | None) -> dict[str, Any]:
+    from . import manager
+    from .lifecycle import clear_codex_active_turns
+    from .state import collect_status
+
+    snapshot = collect_status(codex_home, apply_idle_pending=False)
+    if not snapshot.get("settings_pending"):
+        snapshot["user_state"] = state(
+            "working",
+            "无需应用",
+            "当前没有等待应用的新设置。",
+            "refresh",
+            "刷新状态",
+        )
+        return {"status": "nothing_pending", "final_status": snapshot, "user_state": snapshot["user_state"]}
+    if not proxy_is_idle(snapshot):
+        user_state = state(
+            "restart_deferred_active",
+            "仍有请求进行中",
+            "当前代理仍在处理请求。请等请求结束后再手动应用。",
+        )
+        snapshot["user_state"] = user_state
+        return {"status": "blocked_active_proxy_requests", "final_status": snapshot, "user_state": user_state}
+
+    paths = manager.paths_for(codex_home)
+    settings = manager.read_settings(paths)
+    clear_result = clear_codex_active_turns(paths, reason="manual_apply_pending")
+    start_result = manager.start_background(paths, settings, False)
+    final_status = collect_status(codex_home, apply_idle_pending=False)
+    if final_status.get("needs_restart"):
+        user_state = state(
+            "restart_required",
+            "已清理等待状态",
+            "已确认当前请求结束，但代理仍需要刷新。请刷新状态或重启 Codex。",
+        )
+    else:
+        user_state = state(
+            "working",
+            "已应用",
+            "等待中的设置已应用，可以继续使用。",
+            "uninstall",
+            "停用并恢复",
+        )
+    final_status["user_state"] = user_state
+    return {
+        "status": "applied_pending_settings",
+        "clear_result": clear_result,
+        "start_result": start_result,
+        "final_status": final_status,
+        "user_state": user_state,
     }
 
 

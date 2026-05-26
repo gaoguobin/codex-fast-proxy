@@ -332,3 +332,29 @@ def record_codex_hook_error(paths: ProxyPaths, *, reason: str) -> dict[str, Any]
         ))
         write_json(paths.turns_path, next_state)
     return {"status": "error", "reason": reason, **codex_activity(paths)}
+
+
+def clear_codex_active_turns(paths: ProxyPaths, *, reason: str) -> dict[str, Any]:
+    now_epoch = time.time()
+    now_text = utc_now()
+    with turn_state_lock(paths) as locked:
+        if not locked:
+            return {"status": "busy", "cleared": 0}
+        data = read_turn_state(paths)
+        active = active_turn_items(data, now=now_epoch)
+        next_state = {
+            "schema_version": SCHEMA_VERSION,
+            "updated_at": now_text,
+            "active_turns": {},
+            "recent_events": data.get("recent_events") if isinstance(data.get("recent_events"), list) else [],
+        }
+        append_recent_event(next_state, event_entry(
+            event="ManualClear",
+            status="recorded",
+            reason=reason,
+            payload=None,
+            now_text=now_text,
+            now_epoch=now_epoch,
+        ))
+        write_json(paths.turns_path, next_state)
+    return {"status": "recorded", "reason": reason, "cleared": len(active), **codex_activity(paths)}

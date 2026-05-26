@@ -241,6 +241,7 @@ class ControlHandler(BaseHTTPRequestHandler):
 
     def run_action(self, action: str) -> dict[str, Any]:
         from .actions import (
+            run_apply_pending_now,
             run_benchmark,
             run_check_update,
             run_delete_provider,
@@ -265,6 +266,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 shutdown_control_ui = result["control_ui"].get("status") == "scheduled"
         elif action == "check-update":
             result = run_check_update(self.server.codex_home)
+        elif action == "apply-pending-now":
+            result = run_apply_pending_now(self.server.codex_home)
         elif action == "save-provider":
             result = run_save_provider(
                 self.server.codex_home,
@@ -465,6 +468,8 @@ def user_error_message(action: str, snapshot: dict[str, Any], detail: str | None
         return "更新没有完成。请打开高级诊断，或让 Codex 检查原因。"
     if action == "check-update":
         return f"检查更新没有完成。{suffix}"
+    if action == "apply-pending-now":
+        return f"当前还不能立即应用，等待状态保持不变。{suffix}"
     if action == "verify-provider":
         return f"Provider 检查没有完成，当前设置保持不变。{suffix}"
     if action == "run-benchmark":

@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.lifecycle import record_codex_hook_event  # noqa: E402
 from codex_fast_proxy.actions import (  # noqa: E402
+    run_apply_pending_now,
     run_benchmark,
     run_check_update,
     run_configure_upstream,
@@ -259,6 +260,104 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(snapshot["needs_restart"])
         self.assertEqual(snapshot["user_state"]["code"], "restart_deferred_active")
         self.assertEqual(snapshot["proxy_activity"]["active_streams"], 1)
+
+    def test_pending_restart_with_idle_proxy_offers_manual_apply(self) -> None:
+        snapshot = {
+            "base_url": "http://127.0.0.1:18787/v1",
+            "settings_pending": True,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            "codex_activity": {"active_turns": 1, "idle": False},
+            "providers": [],
+            "user_state": {
+                "code": "restart_deferred_active",
+                "title": "已保存，等待当前请求结束",
+                "message": "当前 Codex 请求仍在进行。",
+                "primary_action": "refresh",
+                "primary_label": "刷新状态",
+            },
+        }
+
+        html = render_page(snapshot, "token")
+
+        self.assertIn('id="applyPendingNow"', html)
+        self.assertIn('data-action="apply-pending-now"', html)
+
+        active_proxy_snapshot = {
+            **snapshot,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": False},
+        }
+        self.assertNotIn('id="applyPendingNow"', render_page(active_proxy_snapshot, "token"))
+
+    def test_apply_pending_now_clears_stale_turn_and_restarts(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        initial_snapshot = {
+            "settings_pending": True,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            "codex_activity": {"active_turns": 1, "idle": False},
+        }
+        final_snapshot = {
+            "needs_restart": False,
+            "settings_pending": False,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            "codex_activity": {"active_turns": 0, "idle": True},
+        }
+
+        with (
+            mock.patch("codex_fast_proxy.state.collect_status", side_effect=[initial_snapshot, final_snapshot]),
+            mock.patch("codex_fast_proxy.manager.start_background", return_value={"status": "restarted"}) as start,
+        ):
+            result = run_apply_pending_now(str(self.codex_home))
+
+        self.assertEqual(result["status"], "applied_pending_settings")
+        self.assertEqual(result["clear_result"]["cleared"], 1)
+        self.assertEqual(result["final_status"]["user_state"]["code"], "working")
+        start.assert_called_once()
+        self.assertEqual(json.loads(self.paths.turns_path.read_text(encoding="utf-8"))["active_turns"], {})
+
+    def test_apply_pending_now_refuses_when_proxy_is_active(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        initial_snapshot = {
+            "settings_pending": True,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": False},
+            "codex_activity": {"active_turns": 1, "idle": False},
+        }
+
+        with (
+            mock.patch("codex_fast_proxy.state.collect_status", return_value=initial_snapshot),
+            mock.patch("codex_fast_proxy.manager.start_background") as start,
+        ):
+            result = run_apply_pending_now(str(self.codex_home))
+
+        self.assertEqual(result["status"], "blocked_active_proxy_requests")
+        self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
+        start.assert_not_called()
+        self.assertEqual(result["final_status"]["codex_activity"]["active_turns"], 1)
 
     def test_status_snapshot_uses_clear_refresh_label_for_restart_state(self) -> None:
         snapshot = user_state({

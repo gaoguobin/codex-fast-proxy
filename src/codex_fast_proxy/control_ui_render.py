@@ -48,6 +48,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.enable": "启用",
         "button.reenable": "重新启用",
         "button.refresh": "刷新状态",
+        "button.applyPendingNow": "确认已结束，立即应用",
         "summary.proxy": "代理",
         "summary.login": "登录",
         "summary.speed": "速度",
@@ -255,6 +256,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "action.update.waitUi.message": "更新已完成后会自动切换到新版控制面板，请不要手动刷新。",
         "action.checkUpdate.start.label": "正在检查...",
         "action.checkUpdate.start.message": "正在读取远端分支和本地工作区状态。",
+        "action.applyPendingNow.start.label": "正在应用...",
+        "action.applyPendingNow.start.message": "正在清理残留等待状态，并应用已保存的新设置。",
         "action.saveProvider.start.label": "正在保存并验证...",
         "action.saveProvider.start.message": "正在保存，并验证模型服务是否可用。",
         "action.saveProvider.verify.message": "正在发起一次真实响应接口流式检查，完成后会自动更新页面。",
@@ -319,6 +322,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.enable": "Enable",
         "button.reenable": "Enable again",
         "button.refresh": "Refresh status",
+        "button.applyPendingNow": "Apply now",
         "summary.proxy": "Proxy",
         "summary.login": "Login",
         "summary.speed": "Speed",
@@ -526,6 +530,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "action.update.waitUi.message": "When the update finishes, the page will switch to the new control panel automatically.",
         "action.checkUpdate.start.label": "Checking...",
         "action.checkUpdate.start.message": "Reading the remote branch and local working tree state.",
+        "action.applyPendingNow.start.label": "Applying...",
+        "action.applyPendingNow.start.message": "Clearing the stale wait state and applying the saved settings.",
         "action.saveProvider.start.label": "Saving and verifying...",
         "action.saveProvider.start.message": "Saving and verifying that the model service is usable.",
         "action.saveProvider.verify.message": "Running a real streaming Responses check. The page will update when it completes.",
@@ -590,6 +596,7 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "button.enable": "有効化",
         "button.reenable": "再度有効化",
         "button.refresh": "状態を更新",
+        "button.applyPendingNow": "完了を確認して適用",
         "summary.proxy": "プロキシ",
         "summary.login": "ログイン",
         "summary.speed": "速度",
@@ -797,6 +804,8 @@ UI_TRANSLATIONS: dict[str, dict[str, str]] = {
         "action.update.waitUi.message": "更新完了後、新しいコントロールパネルへ自動で切り替わります。",
         "action.checkUpdate.start.label": "確認中...",
         "action.checkUpdate.start.message": "リモートブランチとローカル作業ツリーの状態を確認しています。",
+        "action.applyPendingNow.start.label": "適用中...",
+        "action.applyPendingNow.start.message": "残った待機状態をクリアし、保存済み設定を適用しています。",
         "action.saveProvider.start.label": "保存して確認中...",
         "action.saveProvider.start.message": "保存し、モデルサービスが使えるか確認しています。",
         "action.saveProvider.verify.message": "実際のストリーミング Responses 確認を実行しています。完了後にページを更新します。",
@@ -1061,6 +1070,27 @@ def codex_active_turn_count(snapshot: dict[str, Any]) -> int:
         return int(activity.get("active_turns") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def proxy_active_request_count(snapshot: dict[str, Any]) -> int:
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    try:
+        return int(activity.get("active_requests") or 0) + int(activity.get("active_streams") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def proxy_is_idle(snapshot: dict[str, Any]) -> bool:
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    return proxy_active_request_count(snapshot) == 0 and activity.get("idle") is not False
+
+
+def manual_apply_available(snapshot: dict[str, Any]) -> bool:
+    return bool(
+        snapshot.get("settings_pending")
+        and codex_active_turn_count(snapshot) > 0
+        and proxy_is_idle(snapshot)
+    )
 
 
 def provider_pending_note(snapshot: dict[str, Any]) -> tuple[str, str]:
@@ -1729,8 +1759,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
             "confirmUninstall": "仍要停用",
             "cancelUninstall": "先不停用",
         })
+        if manual_apply_available(snapshot):
+            action_buttons = (
+                '<button id="applyPendingNow" class="secondary" data-action="apply-pending-now" '
+                f'data-i18n="button.applyPendingNow">{ui_text("button.applyPendingNow")}</button>'
+            )
         if primary_action != "uninstall":
-            action_buttons = '<button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>'
+            action_buttons += '<button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>'
         danger_zone = f"""
       <div id="dangerZone" class="danger-zone" hidden>
         <div class="danger-copy">
@@ -3702,6 +3737,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       'check-update': [
         {{ delay: 0, label: '正在检查...', labelKey: 'action.checkUpdate.start.label', message: '正在读取远端分支和本地工作区状态。', messageKey: 'action.checkUpdate.start.message' }}
       ],
+      'apply-pending-now': [
+        {{ delay: 0, label: '正在应用...', labelKey: 'action.applyPendingNow.start.label', message: '正在清理残留等待状态，并应用已保存的新设置。', messageKey: 'action.applyPendingNow.start.message' }}
+      ],
       'save-provider': [
         {{ delay: 0, label: '正在保存并验证...', labelKey: 'action.saveProvider.start.label', message: '正在保存，并验证模型服务是否可用。', messageKey: 'action.saveProvider.start.message' }},
         {{ delay: 6000, label: '正在验证模型服务...', labelKey: 'action.enable.verify.label', message: '正在发起一次真实响应接口流式检查，完成后会自动更新页面。', messageKey: 'action.saveProvider.verify.message' }},
@@ -4184,6 +4222,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const count = Number(activity.active_turns || 0);
       return Number.isFinite(count) ? count : 0;
     }}
+    function activeProxyRequestCount(snapshot) {{
+      const activity = snapshot && snapshot.proxy_activity && typeof snapshot.proxy_activity === 'object' ? snapshot.proxy_activity : {{}};
+      const requests = Number(activity.active_requests || 0);
+      const streams = Number(activity.active_streams || 0);
+      return (Number.isFinite(requests) ? requests : 0) + (Number.isFinite(streams) ? streams : 0);
+    }}
+    function proxyLooksIdle(snapshot) {{
+      const activity = snapshot && snapshot.proxy_activity && typeof snapshot.proxy_activity === 'object' ? snapshot.proxy_activity : {{}};
+      return activeProxyRequestCount(snapshot) === 0 && activity.idle !== false;
+    }}
     function providerPendingText(snapshot) {{
       if (!snapshot || !snapshot.settings_pending) return '';
       const turns = activeCodexTurnCount(snapshot);
@@ -4619,10 +4667,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const shouldShowCodexConfigPanel = providerAvailable && !proxyEnabled && !terminalState;
       const hasSpeedForm = Boolean($('speedForm'));
       const shouldShowSpeedForm = speedControlsAvailable(snapshot);
+      const hasManualApply = Boolean($('applyPendingNow'));
+      const shouldShowManualApply = Boolean(snapshot.settings_pending && activeCodexTurnCount(snapshot) > 0 && proxyLooksIdle(snapshot));
       return hasRuntimeControls !== shouldShowRuntimeControls ||
         hasCodexConfigPanel !== shouldShowCodexConfigPanel ||
         hasProviderPanel !== shouldShowProviderPanel ||
-        hasSpeedForm !== shouldShowSpeedForm;
+        hasSpeedForm !== shouldShowSpeedForm ||
+        hasManualApply !== shouldShowManualApply;
     }}
     function hasActiveTraffic(snapshot) {{
       return activeCodexTurnCount(snapshot) > 0;
@@ -4824,6 +4875,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
     }});
     if ($('updatePrimary')) $('updatePrimary').addEventListener('click', (event) => runButton(event.currentTarget, event.currentTarget.dataset.updateAction || 'check-update'));
+    if ($('applyPendingNow')) $('applyPendingNow').addEventListener('click', (event) => runButton(event.currentTarget, 'apply-pending-now'));
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('finishCleanup')) $('finishCleanup').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
