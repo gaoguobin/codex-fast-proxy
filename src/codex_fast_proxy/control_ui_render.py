@@ -901,17 +901,24 @@ def speed_mode_label(snapshot: dict[str, Any]) -> str:
     return "标准" if speed_mode_from_snapshot(snapshot) == "standard" else "快速"
 
 
+def ui_flag(snapshot: dict[str, Any], name: str, fallback: bool) -> bool:
+    flags = snapshot.get("ui_flags") if isinstance(snapshot.get("ui_flags"), dict) else {}
+    value = flags.get(name)
+    return bool(value) if isinstance(value, bool) else fallback
+
+
 def speed_controls_available(snapshot: dict[str, Any]) -> bool:
     state = snapshot.get("user_state") if isinstance(snapshot.get("user_state"), dict) else {}
     terminal_state = state.get("code") in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
     api_key_login = snapshot.get("api_key_auth") or snapshot.get("login_mode") == "api_key"
-    return (
+    fallback = (
         bool(providers_from_snapshot(snapshot))
         and bool(snapshot.get("base_url"))
         and bool(api_key_login)
         and not bool(snapshot.get("chatgpt_auth"))
         and not terminal_state
     )
+    return ui_flag(snapshot, "speed_controls_available", fallback)
 
 
 def ui_text(key: str) -> str:
@@ -1086,11 +1093,12 @@ def proxy_is_idle(snapshot: dict[str, Any]) -> bool:
 
 
 def manual_apply_available(snapshot: dict[str, Any]) -> bool:
-    return bool(
+    fallback = bool(
         snapshot.get("settings_pending")
         and codex_active_turn_count(snapshot) > 0
         and proxy_is_idle(snapshot)
     )
+    return ui_flag(snapshot, "manual_apply_available", fallback)
 
 
 def provider_pending_note(snapshot: dict[str, Any]) -> tuple[str, str]:
@@ -1745,7 +1753,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     )
     labels: dict[str, str] = {}
     terminal_state = state_code in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
-    show_runtime_controls = bool(snapshot.get("base_url")) and not terminal_state
+    show_runtime_controls = ui_flag(snapshot, "show_runtime_controls", bool(snapshot.get("base_url")) and not terminal_state)
     proxy_enabled = show_runtime_controls
     action_buttons = ""
     danger_zone = ""
@@ -1811,9 +1819,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     selected_record = next((item for item in providers if item.get("name") == selected_provider), providers[0] if providers else {})
     provider_name_value = html.escape(str(selected_record.get("name") or selected_provider), quote=True)
     provider_url_value = html.escape(str(selected_record.get("base_url") or ""), quote=True)
-    codex_config_panel = render_codex_config_panel(selected_record, terminal_state) if providers and not proxy_enabled else ""
+    show_codex_config_panel = ui_flag(snapshot, "show_codex_config_panel", bool(providers and not proxy_enabled and not terminal_state))
+    show_provider_panel = ui_flag(snapshot, "show_provider_panel", bool(providers and proxy_enabled))
+    codex_config_panel = render_codex_config_panel(selected_record, terminal_state) if show_codex_config_panel else ""
     provider_management = ""
-    if providers and proxy_enabled:
+    if show_provider_panel:
         summary_name = html.escape(str(selected_record.get("name") or selected_provider or "未选择"))
         summary_url = html.escape(display_text(selected_record.get("base_url"), "未设置模型服务"))
         labels.update({
@@ -4176,10 +4186,15 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const state = snapshot.user_state || {{}};
       const terminalState = ['cleanup_pending', 'uninstalled_deferred', 'uninstalled'].includes(state.code);
       const apiKeyLogin = Boolean(snapshot.api_key_auth || snapshot.login_mode === 'api_key');
-      return hasProviderCandidate(snapshot) && Boolean(snapshot.base_url) && apiKeyLogin && !snapshot.chatgpt_auth && !terminalState;
+      const fallback = hasProviderCandidate(snapshot) && Boolean(snapshot.base_url) && apiKeyLogin && !snapshot.chatgpt_auth && !terminalState;
+      return uiFlag(snapshot, 'speed_controls_available', fallback);
     }}
     function displayValue(value, fallback) {{
       return typeof value === 'string' && value ? value : fallback;
+    }}
+    function uiFlag(snapshot, name, fallback) {{
+      const flags = snapshot && snapshot.ui_flags && typeof snapshot.ui_flags === 'object' ? snapshot.ui_flags : {{}};
+      return typeof flags[name] === 'boolean' ? flags[name] : fallback;
     }}
     function speedLabel(snapshot) {{
       return snapshot.service_tier_policy === 'preserve' ? t('value.standard', '标准') : t('value.fast', '快速');
@@ -4658,17 +4673,21 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const userState = snapshot.user_state || {{}};
       const terminalState = ['cleanup_pending', 'uninstalled_deferred', 'uninstalled'].includes(userState.code);
       const hasRuntimeControls = Boolean($('dangerZone') || $('uninstall'));
-      const shouldShowRuntimeControls = Boolean(snapshot.base_url) && !terminalState;
+      const shouldShowRuntimeControls = uiFlag(snapshot, 'show_runtime_controls', Boolean(snapshot.base_url) && !terminalState);
       const hasProviderPanel = Boolean($('providerPanel'));
       const hasCodexConfigPanel = Boolean($('codexConfigPanel'));
       const providerAvailable = Array.isArray(snapshot.providers) && snapshot.providers.length > 0;
       const proxyEnabled = Boolean(snapshot.base_url) && !terminalState;
-      const shouldShowProviderPanel = providerAvailable && proxyEnabled;
-      const shouldShowCodexConfigPanel = providerAvailable && !proxyEnabled && !terminalState;
+      const shouldShowProviderPanel = uiFlag(snapshot, 'show_provider_panel', providerAvailable && proxyEnabled);
+      const shouldShowCodexConfigPanel = uiFlag(snapshot, 'show_codex_config_panel', providerAvailable && !proxyEnabled && !terminalState);
       const hasSpeedForm = Boolean($('speedForm'));
       const shouldShowSpeedForm = speedControlsAvailable(snapshot);
       const hasManualApply = Boolean($('applyPendingNow'));
-      const shouldShowManualApply = Boolean(snapshot.settings_pending && activeCodexTurnCount(snapshot) > 0 && proxyLooksIdle(snapshot));
+      const shouldShowManualApply = uiFlag(
+        snapshot,
+        'manual_apply_available',
+        Boolean(snapshot.settings_pending && activeCodexTurnCount(snapshot) > 0 && proxyLooksIdle(snapshot))
+      );
       return hasRuntimeControls !== shouldShowRuntimeControls ||
         hasCodexConfigPanel !== shouldShowCodexConfigPanel ||
         hasProviderPanel !== shouldShowProviderPanel ||

@@ -609,7 +609,7 @@ def launch_background(
         )
         if result:
             return result
-        raise ConfigError(f"Port {settings.port} is already in use on {settings.host}.")
+        # Treat the preflight bind probe as advisory; Windows can reject it even when no listener owns the port.
 
     command = [
         sys.executable,

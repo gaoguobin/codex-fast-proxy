@@ -8,6 +8,28 @@ SPEED_MODE_POLICIES = {
     "fast": "auto",
     "standard": "preserve",
 }
+DEFERRED_STATE_MESSAGES = {
+    "update": (
+        "更新完成，等待当前请求结束",
+        "当前 Codex 请求仍在进行。新版代理会在请求结束后自动应用。",
+    ),
+    "configure": (
+        "已保存，等待当前请求结束",
+        "当前 Codex 请求仍在进行。新的模型服务和速度模式已保存，会在请求结束后自动应用。",
+    ),
+    "save_provider": (
+        "Provider 已保存，等待当前请求结束",
+        "当前 Codex 请求仍在进行。新配置已保存，会在请求结束后自动应用。",
+    ),
+    "switch_provider": (
+        "切换已保存，等待当前请求结束",
+        "当前 Codex 请求仍在进行。新的供应商已保存，会在请求结束后自动应用。",
+    ),
+    "speed": (
+        "速度模式已保存，等待当前请求结束",
+        "当前 Codex 请求仍在进行。新的速度模式会在请求结束后自动应用。",
+    ),
+}
 
 
 def active_restart_deferred(result: dict[str, Any]) -> bool:
@@ -26,19 +48,6 @@ def update_restart_deferred(result: dict[str, Any]) -> bool:
     return active_restart_deferred(refresh)
 
 
-def proxy_active_request_count(snapshot: dict[str, Any]) -> int:
-    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
-    try:
-        return int(activity.get("active_requests") or 0) + int(activity.get("active_streams") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def proxy_is_idle(snapshot: dict[str, Any]) -> bool:
-    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
-    return proxy_active_request_count(snapshot) == 0 and activity.get("idle") is not False
-
-
 def state(code: str, title: str, message: str, primary_action: str = "refresh", primary_label: str = "刷新状态") -> dict[str, str]:
     return {
         "code": code,
@@ -49,10 +58,15 @@ def state(code: str, title: str, message: str, primary_action: str = "refresh", 
     }
 
 
+def deferred_state(kind: str) -> dict[str, str]:
+    title, message = DEFERRED_STATE_MESSAGES[kind]
+    return state("restart_deferred_active", title, message)
+
+
 def run_apply_pending_now(codex_home: str | None) -> dict[str, Any]:
     from . import manager
     from .lifecycle import clear_codex_active_turns
-    from .state import collect_status
+    from .state import collect_status, proxy_is_idle
 
     snapshot = collect_status(codex_home, apply_idle_pending=False)
     if not snapshot.get("settings_pending"):
@@ -183,11 +197,7 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
             "当前已经是最新版本，可以继续使用。",
         )
     elif update_restart_deferred(result):
-        result["user_state"] = state(
-            "restart_deferred_active",
-            "更新完成，等待当前请求结束",
-            "当前 Codex 请求仍在进行。新版代理会在请求结束后自动应用。",
-        )
+        result["user_state"] = deferred_state("update")
     elif final_status.get("needs_restart"):
         result["user_state"] = state(
             "restart_required",
@@ -365,11 +375,7 @@ def run_configure_upstream(
         service_tier_policy=service_tier_policy_for_speed_mode(speed_mode),
     )
     if active_restart_deferred(result):
-        result["user_state"] = state(
-            "restart_deferred_active",
-            "已保存，等待当前请求结束",
-            "当前 Codex 请求仍在进行。新的模型服务和速度模式已保存，会在请求结束后自动应用。",
-        )
+        result["user_state"] = deferred_state("configure")
     elif result.get("restart_required"):
         result["user_state"] = state(
             "restart_required",
@@ -397,11 +403,7 @@ def run_save_provider(
         raise ValueError("Provider 和模型服务地址都不能为空。")
     result = manager.save_provider(codex_home, provider, upstream_base, api_key)
     if active_restart_deferred(result):
-        result["user_state"] = state(
-            "restart_deferred_active",
-            "Provider 已保存，等待当前请求结束",
-            "当前 Codex 请求仍在进行。新配置已保存，会在请求结束后自动应用。",
-        )
+        result["user_state"] = deferred_state("save_provider")
     else:
         result["user_state"] = state(
             "provider_saved",
@@ -432,11 +434,7 @@ def run_switch_provider(codex_home: str | None, provider: str | None) -> dict[st
         raise ValueError("请选择 Provider。")
     result = manager.switch_provider(codex_home, provider)
     if active_restart_deferred(result):
-        result["user_state"] = state(
-            "restart_deferred_active",
-            "切换已保存，等待当前请求结束",
-            "当前 Codex 请求仍在进行。新的供应商已保存，会在请求结束后自动应用。",
-        )
+        result["user_state"] = deferred_state("switch_provider")
     elif result.get("restart_required"):
         result["user_state"] = state(
             "restart_required",
@@ -470,11 +468,7 @@ def run_set_speed_mode(codex_home: str | None, speed_mode: str | None) -> dict[s
         service_tier_policy=service_tier_policy_for_speed_mode(speed_mode),
     )
     if active_restart_deferred(result):
-        result["user_state"] = state(
-            "restart_deferred_active",
-            "速度模式已保存，等待当前请求结束",
-            "当前 Codex 请求仍在进行。新的速度模式会在请求结束后自动应用。",
-        )
+        result["user_state"] = deferred_state("speed")
     elif result.get("restart_required"):
         result["user_state"] = state(
             "restart_required",

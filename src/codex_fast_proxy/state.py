@@ -27,6 +27,58 @@ RuntimeProbe = Callable[[Any, Any], tuple[int | None, bool, dict[str, Any] | Non
 PortProbe = Callable[[str, int], bool]
 
 
+def terminal_user_state(snapshot: dict[str, Any]) -> bool:
+    state = snapshot.get("user_state") if isinstance(snapshot.get("user_state"), dict) else {}
+    return state.get("code") in {"cleanup_pending", "uninstalled_deferred", "uninstalled"}
+
+
+def codex_active_turn_count(snapshot: dict[str, Any]) -> int:
+    activity = snapshot.get("codex_activity") if isinstance(snapshot.get("codex_activity"), dict) else {}
+    try:
+        return int(activity.get("active_turns") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def proxy_active_request_count(snapshot: dict[str, Any]) -> int:
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    try:
+        return int(activity.get("active_requests") or 0) + int(activity.get("active_streams") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def proxy_is_idle(snapshot: dict[str, Any]) -> bool:
+    activity = snapshot.get("proxy_activity") if isinstance(snapshot.get("proxy_activity"), dict) else {}
+    return proxy_active_request_count(snapshot) == 0 and activity.get("idle") is not False
+
+
+def control_ui_flags(snapshot: dict[str, Any]) -> dict[str, bool]:
+    providers = snapshot.get("providers") if isinstance(snapshot.get("providers"), list) else []
+    provider_available = bool(providers)
+    terminal = terminal_user_state(snapshot)
+    proxy_enabled = bool(snapshot.get("base_url")) and not terminal
+    api_key_login = bool(snapshot.get("api_key_auth") or snapshot.get("login_mode") == "api_key")
+    return {
+        "provider_available": provider_available,
+        "show_runtime_controls": bool(snapshot.get("base_url")) and not terminal,
+        "show_provider_panel": provider_available and proxy_enabled,
+        "show_codex_config_panel": provider_available and not proxy_enabled and not terminal,
+        "speed_controls_available": (
+            provider_available
+            and bool(snapshot.get("base_url"))
+            and api_key_login
+            and not bool(snapshot.get("chatgpt_auth"))
+            and not terminal
+        ),
+        "manual_apply_available": (
+            bool(snapshot.get("settings_pending"))
+            and codex_active_turn_count(snapshot) > 0
+            and proxy_is_idle(snapshot)
+        ),
+    }
+
+
 def provider_for_runtime_upstream(paths: Any, config: dict[str, Any], health: dict[str, Any] | None) -> str | None:
     if not isinstance(health, dict):
         return None
@@ -201,7 +253,9 @@ def collect_status(
         current_provider=runtime_upstream_provider if settings else None,
         pending_provider=pending_upstream_provider,
     ))
-    return {**snapshot, "user_state": user_state(snapshot)}
+    snapshot["user_state"] = user_state(snapshot)
+    snapshot["ui_flags"] = control_ui_flags(snapshot)
+    return snapshot
 
 
 def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:

@@ -80,6 +80,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(snapshot["user_state"]["primary_action"], "enable")
         self.assertEqual(snapshot["providers"][0]["name"], "acme")
         self.assertEqual(snapshot["providers"][0]["base_url"], "https://api.acme.test/v1")
+        self.assertTrue(snapshot["ui_flags"]["provider_available"])
+        self.assertTrue(snapshot["ui_flags"]["show_codex_config_panel"])
+        self.assertFalse(snapshot["ui_flags"]["show_provider_panel"])
 
     def test_status_snapshot_without_provider_uses_specific_missing_provider_state(self) -> None:
         self.paths.config_path.write_text("", encoding="utf-8")
@@ -92,6 +95,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("还没有发起上游请求", snapshot["user_state"]["message"])
         self.assertEqual(snapshot["user_state"]["primary_action"], "diagnostics")
         self.assertEqual(snapshot["providers"], [])
+        self.assertFalse(snapshot["ui_flags"]["provider_available"])
 
         html = render_page(snapshot, "token")
         self.assertIn("还没有检测到 Codex config.toml 里的供应商入口。", html)

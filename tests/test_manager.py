@@ -4164,6 +4164,47 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["pid"], 5678)
         self.assertEqual(result["reason"], "port_in_use")
 
+    def test_launch_background_treats_failed_port_preflight_as_advisory(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+        launched: list[int] = []
+
+        class FakeProcess:
+            pid = 1234
+
+        original_is_port_available = manager.is_port_available
+        original_proxy_health = manager.proxy_health
+        original_wait_for_proxy_health = manager.wait_for_proxy_health
+        original_popen = manager.subprocess.Popen
+
+        def fake_popen(*_args, **_kwargs):
+            launched.append(1)
+            return FakeProcess()
+
+        manager.is_port_available = lambda _host, _port: False
+        manager.proxy_health = lambda _settings: None
+        manager.wait_for_proxy_health = lambda _settings, _process, **_kwargs: {"ok": True, "pid": _process.pid}
+        manager.subprocess.Popen = fake_popen
+        try:
+            result = manager.launch_background(paths, settings, verbose_proxy=False)
+        finally:
+            manager.is_port_available = original_is_port_available
+            manager.proxy_health = original_proxy_health
+            manager.wait_for_proxy_health = original_wait_for_proxy_health
+            manager.subprocess.Popen = original_popen
+
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["pid"], 1234)
+        self.assertEqual(launched, [1])
+
     def test_launch_background_treats_concurrent_winner_as_already_running(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
