@@ -3732,6 +3732,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     let currentLocale = supportedLocales.includes(storedLocale) ? storedLocale : 'zh';
     let currentTheme = supportedThemes.includes(storedTheme) ? storedTheme : 'system';
     let currentSnapshot = initialSnapshot;
+    let lastNonConfirmationSnapshot = (initialSnapshot.user_state || {{}}).code === 'confirmation_required' ? null : initialSnapshot;
     let providerCheckResults = {{}};
     let pendingProviderDelete = {{ provider: '', timer: 0 }};
     const labels = {labels_json};
@@ -4724,6 +4725,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         return;
       }}
       const userState = snapshot.user_state || {{}};
+      if (userState.code !== 'confirmation_required') lastNonConfirmationSnapshot = snapshot;
       updateDiagnosticsWorkspace(snapshot);
       updateSettingsWorkspace(snapshot);
       renderLocalTimes();
@@ -4885,6 +4887,24 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }}
       return {{ ok, error: caughtError, renderedSnapshot, data: responseData }};
     }}
+    async function cancelUninstallConfirmation(button) {{
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      try {{
+        await refreshSnapshot();
+      }} catch (_error) {{
+        if (lastNonConfirmationSnapshot) render(lastNonConfirmationSnapshot);
+        else {{
+          const dangerZone = $('dangerZone');
+          if (dangerZone) dangerZone.hidden = true;
+          const uninstall = $('uninstall');
+          if (uninstall) uninstall.hidden = false;
+        }}
+      }} finally {{
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+      }}
+    }}
     $('primary').addEventListener('click', async (event) => {{
       const action = event.currentTarget.dataset.action;
       if (action === 'enable') await runButton(event.currentTarget, 'enable', {{ provider: currentProviderName() || null }});
@@ -4901,12 +4921,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     if ($('uninstall')) $('uninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('finishCleanup')) $('finishCleanup').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall'));
     if ($('confirmUninstall')) $('confirmUninstall').addEventListener('click', (event) => runButton(event.currentTarget, 'uninstall', {{ confirm: true }}));
-    if ($('cancelUninstall')) $('cancelUninstall').addEventListener('click', () => {{
-      const dangerZone = $('dangerZone');
-      if (dangerZone) dangerZone.hidden = true;
-      const uninstall = $('uninstall');
-      if (uninstall) uninstall.hidden = false;
-    }});
+    if ($('cancelUninstall')) $('cancelUninstall').addEventListener('click', (event) => cancelUninstallConfirmation(event.currentTarget));
     if ($('newProvider')) $('newProvider').addEventListener('click', () => {{
       openProviderEditor(null, 'provider.editor.add');
     }});

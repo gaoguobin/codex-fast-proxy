@@ -1071,6 +1071,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("let disconnected = !waitForDisconnect;", html)
         self.assertIn("controlUi.reload_after_ms", html)
         self.assertIn("async function refreshSnapshot", html)
+        self.assertIn("async function cancelUninstallConfirmation", html)
+        self.assertIn("await refreshSnapshot();", html)
+        self.assertIn("lastNonConfirmationSnapshot", html)
         self.assertIn("cache: 'no-store'", html)
         self.assertIn("data: responseData", html)
         self.assertIn("shouldReloadForSnapshot(snapshot)", html)
@@ -1793,6 +1796,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("先不停用", html)
         self.assertIn("dangerZone.hidden = userState.code !== 'confirmation_required'", html)
         self.assertIn("uninstall.hidden = userState.code === 'confirmation_required'", html)
+        self.assertIn("cancelUninstallConfirmation(event.currentTarget)", html)
 
     def test_first_run_enable_prepares_provider_auth_and_installs_without_printing_secret(self) -> None:
         (self.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")
