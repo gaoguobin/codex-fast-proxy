@@ -4034,6 +4034,17 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       button.textContent = t('button.confirmDelete', '确认删除');
       pendingProviderDelete.timer = window.setTimeout(resetPendingProviderDelete, 3500);
     }}
+    function markSpeedSaved(button) {{
+      const target = $('saveSpeed') || button;
+      if (!target) return;
+      target.textContent = t('value.saved', '已保存');
+      window.setTimeout(() => {{
+        const current = $('saveSpeed');
+        if (current && current.textContent === t('value.saved', '已保存')) {{
+          current.textContent = buttonLabel('saveSpeed', '保存');
+        }}
+      }}, 1600);
+    }}
     function renderProviderList(snapshot) {{
       providerRecords = Array.isArray(snapshot.providers) ? snapshot.providers : providerRecords;
       const list = $('providerList');
@@ -5071,7 +5082,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     }});
     if ($('speedForm')) $('speedForm').addEventListener('submit', async (event) => {{
       event.preventDefault();
-      await runButton($('saveSpeed'), 'set-speed-mode', {{ speed_mode: selectedSpeedMode() }});
+      const button = $('saveSpeed');
+      const result = await runButton(button, 'set-speed-mode', {{ speed_mode: selectedSpeedMode() }});
+      const userState = result.data && result.data.snapshot ? result.data.snapshot.user_state || {{}} : {{}};
+      if (result.ok && userState.code === 'working') markSpeedSaved(button);
     }});
   </script>
 </body>

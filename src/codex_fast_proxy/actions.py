@@ -476,12 +476,6 @@ def run_set_speed_mode(codex_home: str | None, speed_mode: str | None) -> dict[s
             "速度模式已保存，重启后接管",
             "当前对话可以继续。Codex 重启后，新速度模式会应用到新的会话。",
         )
-    else:
-        result["user_state"] = state(
-            "speed_saved",
-            "速度模式已保存",
-            "当前状态可以继续使用。",
-        )
     return result
 
 

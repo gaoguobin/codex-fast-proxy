@@ -580,6 +580,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("正在删除保存项", html)
         self.assertIn("'set-speed-mode'", html)
         self.assertIn("正在保存当前选择。", html)
+        self.assertIn("markSpeedSaved(button);", html)
         self.assertIn("如果验证失败，当前设置会保持不变。", html)
         self.assertIn("'check-update'", html)
         self.assertIn("正在读取远端分支和本地工作区状态", html)
@@ -2744,7 +2745,7 @@ class ControlUiTests(unittest.TestCase):
         saved_settings = manager.read_settings(self.paths)
 
         self.assertEqual(result["status"], "upstream_updated")
-        self.assertEqual(result["user_state"]["code"], "speed_saved")
+        self.assertNotIn("user_state", result)
         self.assertEqual(saved_settings.upstream_base, "https://api.acme.test/v1")
         self.assertEqual(saved_settings.service_tier_policy, "preserve")
 
