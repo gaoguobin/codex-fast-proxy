@@ -34,6 +34,7 @@ from codex_fast_proxy.actions import (  # noqa: E402
 from codex_fast_proxy.control_ui import (  # noqa: E402
     ControlHandler,
     control_ui_identity,
+    control_ui_identity_matches,
     control_ui_runtime_paths,
     doctor_payload,
     find_existing_control_ui,
@@ -42,9 +43,11 @@ from codex_fast_proxy.control_ui import (  # noqa: E402
     open_control_ui,
     provider_key_payload,
     render_page,
+    restart_saved_control_ui,
     schedule_install_cleanup,
     schedule_control_ui_restart,
     schedule_path_cleanup,
+    save_control_ui_port,
     start_background_server,
     user_error_message,
 )
@@ -1383,6 +1386,34 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(response["action"]["control_ui"]["pid"], 4321)
         self.assertTrue(response["action"]["control_ui"]["wait_for_disconnect"])
 
+    def test_post_action_exception_returns_visible_error_snapshot(self) -> None:
+        handler = object.__new__(ControlHandler)
+        handler.path = "/api/actions/uninstall"
+        handler.server = mock.Mock(codex_home=str(self.codex_home), provider=None)
+        handler.write_allowed = mock.Mock(return_value=True)
+        handler.run_action = mock.Mock(side_effect=RuntimeError("boom"))
+        handler.respond_json = mock.Mock()
+
+        with mock.patch("codex_fast_proxy.control_ui.collect_snapshot", return_value={
+            "user_state": {
+                "code": "working",
+                "title": "运行正常",
+                "message": "Codex 已准备好继续使用当前模型服务。",
+                "primary_action": "uninstall",
+                "primary_label": "停用并恢复",
+            },
+        }):
+            handler.do_POST()
+
+        payload = handler.respond_json.call_args.args[0]
+        self.assertEqual(handler.respond_json.call_args.kwargs["status"], 400)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["action"]["status"], "error")
+        self.assertIn("停用没有完成", payload["error"])
+        self.assertEqual(payload["snapshot"]["last_error"], {"action": "uninstall", "message": "boom"})
+        self.assertEqual(payload["snapshot"]["user_state"]["title"], "需要处理")
+        self.assertEqual(payload["snapshot"]["user_state"]["primary_action"], "diagnostics")
+
     def test_favicon_request_returns_empty_success(self) -> None:
         handler = object.__new__(ControlHandler)
         handler.path = "/favicon.ico"
@@ -1403,6 +1434,54 @@ class ControlUiTests(unittest.TestCase):
         self.assertTrue(result["wait_for_disconnect"])
         self.assertEqual(result["reload_after_ms"], 0)
         self.assertEqual(result["reload_timeout_ms"], 8000)
+
+    def test_restart_saved_control_ui_terminates_owned_old_process_after_scheduling_replacement(self) -> None:
+        save_control_ui_port(str(self.codex_home), "127.0.0.1", 28886)
+        identity = control_ui_identity(str(self.codex_home), None)
+        ping = {
+            "status": "ok",
+            "server": "codex_fast_proxy_control_ui",
+            "pid": 9999,
+            "codex_home": identity["codex_home"],
+            "provider": None,
+        }
+
+        with (
+            mock.patch("codex_fast_proxy.control_ui.fetch_control_ui_ping", return_value=ping),
+            mock.patch("codex_fast_proxy.control_ui.schedule_control_ui_restart", return_value={
+                "status": "scheduled",
+                "url": "http://127.0.0.1:28886/",
+                "pid": 1234,
+            }) as schedule_restart,
+            mock.patch("codex_fast_proxy.runtime_process.terminate_process") as terminate,
+        ):
+            result = restart_saved_control_ui(str(self.codex_home), None)
+
+        schedule_restart.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", 28886)
+        terminate.assert_called_once_with(9999)
+        self.assertEqual(result["status"], "scheduled")
+        self.assertEqual(result["old_pid"], 9999)
+        self.assertTrue(result["terminated_old"])
+
+    def test_restart_saved_control_ui_refuses_foreign_saved_port(self) -> None:
+        save_control_ui_port(str(self.codex_home), "127.0.0.1", 28886)
+
+        with (
+            mock.patch("codex_fast_proxy.control_ui.fetch_control_ui_ping", return_value={
+                "status": "ok",
+                "server": "codex_fast_proxy_control_ui",
+                "pid": 9999,
+                "codex_home": "/other/.codex",
+                "provider": None,
+            }),
+            mock.patch("codex_fast_proxy.control_ui.schedule_control_ui_restart") as schedule_restart,
+            mock.patch("codex_fast_proxy.runtime_process.terminate_process") as terminate,
+        ):
+            result = restart_saved_control_ui(str(self.codex_home), None)
+
+        schedule_restart.assert_not_called()
+        terminate.assert_not_called()
+        self.assertEqual(result, {"status": "not_running", "reason": "identity_mismatch", "port": 28886})
 
     def test_provider_key_payload_returns_secret_only_on_explicit_request(self) -> None:
         manager.write_provider_auth_secret(self.paths, "acme", "provider-secret")
@@ -2644,6 +2723,17 @@ class ControlUiTests(unittest.TestCase):
             port = find_existing_control_ui("127.0.0.1", 8786, identity=identity, attempts=4)
 
         self.assertEqual(port, 8788)
+
+    def test_control_ui_identity_requires_matching_revision(self) -> None:
+        identity = control_ui_identity(str(self.codex_home), "acme")
+
+        self.assertIn("control_ui_revision", identity)
+        self.assertTrue(control_ui_identity_matches(dict(identity), identity))
+        stale = {
+            "codex_home": identity["codex_home"],
+            "provider": identity["provider"],
+        }
+        self.assertFalse(control_ui_identity_matches(stale, identity))
 
     def test_hook_control_ui_start_uses_short_best_effort_path(self) -> None:
         with (

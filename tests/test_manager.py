@@ -4591,6 +4591,36 @@ class ManagerConfigTests(unittest.TestCase):
         }
         self.assertIn("is starting for acme", manager.autostart_hook_context(starting) or "")
 
+    def test_update_command_restarts_existing_control_ui_after_code_update(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        args = argparse.Namespace(
+            codex_home=str(codex_home),
+            provider=None,
+            repo=None,
+            remote="origin",
+            branch="main",
+            skip_self_update=False,
+        )
+
+        with (
+            mock.patch("codex_fast_proxy.manager.update_installation", return_value={
+                "status": "updated",
+                "code_update": {"status": "updated"},
+            }),
+            mock.patch("codex_fast_proxy.control_ui.restart_saved_control_ui", return_value={
+                "status": "scheduled",
+                "url": "http://127.0.0.1:28886/",
+                "old_pid": 9999,
+            }) as restart_ui,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(manager.command_update(args), 0)
+
+        restart_ui.assert_called_once_with(str(codex_home), None)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["control_ui"]["status"], "scheduled")
+        self.assertEqual(result["control_ui"]["old_pid"], 9999)
+
     def test_quiet_autostart_hook_summary_writes_context_for_hook(self) -> None:
         codex_home = self.temp_dir / ".codex"
         args = argparse.Namespace(codex_home=str(codex_home), quiet=True, hook_summary=True, verbose_proxy=False)

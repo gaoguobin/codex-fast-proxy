@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import hashlib
 import json
 import os
 import secrets
@@ -31,6 +32,15 @@ from .storage import ensure_private_dir, open_private_append, read_json, write_j
 RESERVED_PORTS = {DEFAULT_PORT, LEGACY_DEFAULT_PORT}
 PORT_SEARCH_ATTEMPTS = 100
 CONTROL_UI_SERVER = "codex_fast_proxy_control_ui"
+CONTROL_UI_REVISION_FILES = (
+    "control_ui.py",
+    "control_ui_render.py",
+    "actions.py",
+    "auth_store.py",
+    "manager.py",
+    "runtime_process.py",
+    "state.py",
+)
 
 
 @dataclass(frozen=True)
@@ -240,13 +250,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             if result.get("shutdown_control_ui"):
                 self.shutdown_soon(float(result.get("shutdown_after_seconds") or 0.2))
         except Exception as exc:
-            snapshot = collect_snapshot(self.server)
-            snapshot["last_error"] = {"action": action, "message": str(exc)}
-            self.respond_json({
-                "status": "error",
-                "error": user_error_message(action, snapshot, str(exc)),
-                "snapshot": snapshot,
-            }, status=400)
+            self.respond_json(action_error_payload(action, self.server, str(exc)), status=400)
 
     def run_action(self, action: str) -> dict[str, Any]:
         from .actions import (
@@ -399,6 +403,25 @@ def collect_snapshot(server: ControlServer) -> dict[str, Any]:
     from .state import collect_status
 
     return collect_status(server.codex_home, server.provider, apply_idle_pending=True)
+
+
+def action_error_payload(action: str, server: ControlServer, detail: str) -> dict[str, Any]:
+    snapshot = collect_snapshot(server)
+    message = user_error_message(action, snapshot, detail)
+    snapshot["last_error"] = {"action": action, "message": detail}
+    snapshot["user_state"] = {
+        "code": "action_failed",
+        "title": "需要处理",
+        "message": message,
+        "primary_action": "diagnostics",
+        "primary_label": "打开高级诊断",
+    }
+    return {
+        "status": "error",
+        "action": {"status": "error", "error": message},
+        "error": message,
+        "snapshot": snapshot,
+    }
 
 
 def doctor_payload(codex_home: str | None, provider: str | None) -> dict[str, Any]:
@@ -779,10 +802,27 @@ def control_ui_runtime_paths(codex_home: str | None) -> tuple[Path, Path, Path]:
     )
 
 
+def compute_control_ui_revision() -> str:
+    digest = hashlib.sha256()
+    source_dir = Path(__file__).resolve().parent
+    for filename in CONTROL_UI_REVISION_FILES:
+        path = source_dir / filename
+        digest.update(filename.encode("utf-8"))
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(str(path).encode("utf-8", errors="replace"))
+    return digest.hexdigest()[:16]
+
+
+CONTROL_UI_REVISION = compute_control_ui_revision()
+
+
 def control_ui_identity(codex_home: str | None, provider: str | None) -> dict[str, str | None]:
     return {
         "codex_home": normalized_control_path(paths_for(codex_home).codex_home),
         "provider": provider or None,
+        "control_ui_revision": CONTROL_UI_REVISION,
     }
 
 
@@ -894,6 +934,39 @@ def schedule_control_ui_restart(
     }
 
 
+def restart_saved_control_ui(codex_home: str | None, provider: str | None, host: str = "127.0.0.1") -> dict[str, Any]:
+    port = saved_control_ui_port(codex_home, host)
+    if port is None:
+        return {"status": "not_running", "reason": "no_saved_port"}
+    ping = fetch_control_ui_ping(host, port)
+    if not ping:
+        return {"status": "not_running", "reason": "not_responding", "port": port}
+    expected_owner = {
+        "codex_home": normalized_control_path(paths_for(codex_home).codex_home),
+        "provider": provider or None,
+    }
+    if not control_ui_identity_matches(ping, expected_owner):
+        return {"status": "not_running", "reason": "identity_mismatch", "port": port}
+    pid = ping.get("pid")
+    if not isinstance(pid, int):
+        return {"status": "not_running", "reason": "missing_pid", "port": port}
+
+    restart = schedule_control_ui_restart(codex_home, provider, host, port)
+    if restart.get("status") != "scheduled":
+        return restart
+
+    from .runtime_process import terminate_process
+
+    restart["old_pid"] = pid
+    try:
+        terminate_process(pid)
+        restart["terminated_old"] = True
+    except OSError as exc:
+        restart["terminated_old"] = False
+        restart["terminate_error"] = str(exc)
+    return restart
+
+
 def find_existing_control_ui(
     host: str,
     port: int,
@@ -951,6 +1024,22 @@ def probe_control_ui_path(
     require_server_marker: bool,
     identity: dict[str, str | None] | None = None,
 ) -> bool:
+    data = fetch_control_ui_json(host, port, path, timeout)
+    if data is None:
+        return False
+    if require_server_marker:
+        return data.get("server") == CONTROL_UI_SERVER and control_ui_identity_matches(data, identity)
+    return True
+
+
+def fetch_control_ui_ping(host: str, port: int, timeout: float = 0.2) -> dict[str, Any] | None:
+    data = fetch_control_ui_json(host, port, "/api/ping", timeout)
+    if not data or data.get("server") != CONTROL_UI_SERVER:
+        return None
+    return data
+
+
+def fetch_control_ui_json(host: str, port: int, path: str, timeout: float) -> dict[str, Any] | None:
     try:
         connection = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
@@ -958,23 +1047,21 @@ def probe_control_ui_path(
             response = connection.getresponse()
             body = response.read()
             if response.status != 200:
-                return False
+                return None
             data = json.loads(body.decode("utf-8"))
             if not isinstance(data, dict) or data.get("status") != "ok":
-                return False
-            if require_server_marker:
-                return data.get("server") == CONTROL_UI_SERVER and control_ui_identity_matches(data, identity)
-            return True
+                return None
+            return data
         finally:
             connection.close()
     except (OSError, ValueError, json.JSONDecodeError):
-        return False
+        return None
 
 
 def control_ui_identity_matches(data: dict[str, Any], identity: dict[str, str | None] | None) -> bool:
     if identity is None:
         return True
-    return data.get("codex_home") == identity["codex_home"] and data.get("provider") == identity["provider"]
+    return all(data.get(key) == value for key, value in identity.items())
 
 
 def is_loopback_host(value: str) -> bool:

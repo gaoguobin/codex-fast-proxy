@@ -1605,6 +1605,16 @@ def command_update(args: argparse.Namespace) -> int:
         branch=args.branch,
         refresh_code=not args.skip_self_update,
     )
+    code_update = result.get("code_update") if isinstance(result.get("code_update"), dict) else {}
+    if code_update.get("status") == "updated":
+        from .control_ui import restart_saved_control_ui
+
+        try:
+            control_ui_restart = restart_saved_control_ui(args.codex_home, args.provider)
+        except Exception as exc:
+            control_ui_restart = {"status": "error", "error": str(exc)}
+        if control_ui_restart.get("status") != "not_running":
+            result["control_ui"] = control_ui_restart
     print(json_line(result))
     return 2 if result.get("status") == "blocked" else 0
 
