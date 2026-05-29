@@ -472,6 +472,41 @@ def write_install_manifest(
     return manifest
 
 
+def read_settings_or_none(paths: ProxyPaths) -> ProxySettings | None:
+    try:
+        return read_settings(paths)
+    except (ConfigError, OSError, KeyError, TypeError, ValueError):
+        return None
+
+
+def uninstall_settings_candidates(*settings_items: ProxySettings | None) -> list[ProxySettings]:
+    candidates = []
+    seen = set()
+    for settings in settings_items:
+        if settings is None:
+            continue
+        key = (settings.base_url, settings.upstream_base)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(settings)
+    return candidates
+
+
+def settings_for_proxy_base_url(
+    base_url: str | None,
+    candidates: list[ProxySettings],
+) -> ProxySettings | None:
+    return next((settings for settings in candidates if base_url == settings.base_url), None)
+
+
+def settings_for_upstream_base_url(
+    base_url: str | None,
+    candidates: list[ProxySettings],
+) -> ProxySettings | None:
+    return next((settings for settings in candidates if base_url == settings.upstream_base), None)
+
+
 def validate_provider_name(provider: str) -> str:
     name = provider.strip()
     if not name:
@@ -1618,11 +1653,14 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     paths = paths_for(args.codex_home)
     manifest = read_json(paths.manifest_path)
     manifest_settings = settings_from_dict(manifest["settings"]) if manifest else None
+    current_settings = read_settings_or_none(paths)
+    settings_candidates = uninstall_settings_candidates(manifest_settings, current_settings)
     confirmation = uninstall_needs_chatgpt_direct_confirmation(
         paths,
         manifest,
         manifest_settings,
         getattr(args, "force", False),
+        current_settings,
     )
     if confirmation and not getattr(args, "confirm_chatgpt_direct_uninstall", False):
         return {
@@ -1649,10 +1687,8 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     restore_status = "no_manifest"
     backup_path = None
     can_stop = args.force or manifest is None
-    try:
-        hook_result = remove_startup_hook(paths)
-    except ConfigError as exc:
-        hook_result = {"status": "error", "error": str(exc), "path": str(paths.hooks_path)}
+    hook_result: dict[str, Any] = {"status": "not_attempted"}
+    restored_settings = manifest_settings
 
     if manifest:
         config_path = Path(manifest["config_path"])
@@ -1667,16 +1703,17 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             restore_status = "restored"
             can_stop = True
         else:
-            settings = manifest_settings
             config = load_toml_config(config_path)
             config_base_url = provider_base_url(config, manifest_provider)
-            if config_base_url == settings.base_url:
-                set_provider_base_url(config_path, manifest_provider, settings.upstream_base)
-                restore_hook_feature_flag(config_path, backup_path, hook_result)
+            matched_proxy_settings = settings_for_proxy_base_url(config_base_url, settings_candidates)
+            matched_upstream_settings = settings_for_upstream_base_url(config_base_url, settings_candidates)
+            if matched_proxy_settings:
+                restored_settings = matched_proxy_settings
+                set_provider_base_url(config_path, manifest_provider, matched_proxy_settings.upstream_base)
                 restore_status = "restored_base_url"
                 can_stop = True
-            elif config_base_url == settings.upstream_base:
-                restore_hook_feature_flag(config_path, backup_path, hook_result)
+            elif matched_upstream_settings:
+                restored_settings = matched_upstream_settings
                 restore_status = "already_restored_base_url"
                 can_stop = True
             elif args.force:
@@ -1687,6 +1724,12 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 restore_status = "skipped_config_changed"
 
     if restore_status != "skipped_config_changed":
+        try:
+            hook_result = remove_startup_hook(paths)
+        except ConfigError as exc:
+            hook_result = {"status": "error", "error": str(exc), "path": str(paths.hooks_path)}
+        if manifest and restore_status in {"restored_base_url", "already_restored_base_url"}:
+            restore_hook_feature_flag(Path(manifest["config_path"]), backup_path, hook_result)
         state_keys = hook_result.get("removed_state_keys", []) if isinstance(hook_result, dict) else []
         if isinstance(state_keys, list):
             remove_hook_states_by_keys(paths.config_path, [key for key in state_keys if isinstance(key, str)])
@@ -1711,7 +1754,7 @@ def uninstall_result(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "backup_path": backup_path,
         "files": files_status,
     }
-    warning = direct_upstream_auth_warning(paths, manifest_settings, restore_status)
+    warning = direct_upstream_auth_warning(paths, restored_settings, restore_status)
     if warning:
         result["direct_upstream_auth_warning"] = warning
     if args.defer_stop and restore_status != "skipped_config_changed":

@@ -3554,6 +3554,7 @@ class ManagerConfigTests(unittest.TestCase):
 
         self.assertFalse(stop_called)
         self.assertTrue((paths_for(codex_home).app_home).exists())
+        self.assertIn("autostart", paths_for(codex_home).hooks_path.read_text(encoding="utf-8"))
 
     def test_uninstall_preserves_user_config_changes_when_proxy_base_url_is_still_active(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -3611,6 +3612,54 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(config["model_providers"]["acme"]["api_key_env_var"], "ACME_API_KEY")
         self.assertTrue(stop_called)
         self.assertFalse((paths_for(codex_home).app_home).exists())
+
+    def test_uninstall_recovers_when_saved_proxy_port_changes_after_install(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n[model_providers.acme]\nbase_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+
+        original_start_background = manager.start_background
+        original_stop_process = manager.stop_process
+        stop_called = False
+
+        def fake_start_background(paths, settings, verbose_proxy):
+            return {"status": "started", "pid": 1234}
+
+        def fake_stop_process(paths, force=False):
+            nonlocal stop_called
+            stop_called = True
+            return {"status": "stopped", "pid": 1234}
+
+        manager.start_background = fake_start_background
+        manager.stop_process = fake_stop_process
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(self.install_args(codex_home)), 0)
+            installed_manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+            old_settings = manager.read_settings(paths)
+            new_settings = manager.ProxySettings(**{**old_settings.__dict__, "port": manager.DEFAULT_PORT + 1})
+            manager.write_settings(paths, new_settings, bump_revision=True)
+            set_provider_base_url(config_path, "acme", new_settings.base_url)
+
+            uninstall_args = argparse.Namespace(codex_home=str(codex_home), force=False, keep_state=False, defer_stop=False)
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(command_uninstall(uninstall_args), 0)
+            result = json.loads(output.getvalue())
+        finally:
+            manager.start_background = original_start_background
+            manager.stop_process = original_stop_process
+
+        self.assertNotEqual(installed_manifest["settings"]["base_url"], new_settings.base_url)
+        self.assertEqual(result["config_restore"], "restored_base_url")
+        self.assertEqual(provider_base_url(load_toml_config(config_path), "acme"), "https://api.acme.test/v1")
+        self.assertTrue(stop_called)
+        self.assertFalse(has_startup_hook(paths))
+        self.assertFalse(paths.app_home.exists())
 
     def test_stop_refuses_when_config_still_points_to_proxy(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -4224,6 +4273,15 @@ class ManagerConfigTests(unittest.TestCase):
             service_tier="priority",
         )
         manager.write_settings(paths, settings)
+        manager.write_json(paths.manifest_path, {
+            "provider": "acme",
+            "config_path": str(paths.config_path),
+            "hooks_path": str(paths.hooks_path),
+            "backup_path": "",
+            "config_hash_before": None,
+            "config_hash_after": manager.sha256_file(paths.config_path),
+            "settings": {**settings.__dict__, "base_url": settings.base_url},
+        })
         launched_ports: list[int] = []
 
         class FakeProcess:
@@ -4282,6 +4340,10 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["port_selection"]["failed_ports"], [18787])
         self.assertEqual(saved_settings.port, manager.DEFAULT_PORT)
         self.assertEqual(provider_base_url(config, "acme"), f"http://127.0.0.1:{manager.DEFAULT_PORT}/v1")
+        saved_manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved_manifest["settings"]["port"], manager.DEFAULT_PORT)
+        self.assertEqual(saved_manifest["settings"]["base_url"], f"http://127.0.0.1:{manager.DEFAULT_PORT}/v1")
+        self.assertEqual(saved_manifest["config_hash_after"], manager.sha256_file(paths.config_path))
 
     def test_launch_background_treats_concurrent_winner_as_already_running(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -4697,6 +4759,64 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(stop_calls, 0)
         self.assertNotIn("provider-secret", output_text)
         self.assertNotIn("chatgpt-token", output_text)
+
+    def test_deferred_uninstall_confirmation_uses_current_settings_after_port_change(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        (codex_home / "auth.json").write_text(
+            json.dumps({"tokens": {"access_token": "chatgpt-token"}}),
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+        install_args.upstream_api_key_env = "ACME_API_KEY"
+
+        previous_env = os.environ.get("ACME_API_KEY")
+        original_start_background = manager.start_background
+        os.environ["ACME_API_KEY"] = "provider-secret"
+        manager.start_background = lambda _paths, _settings, _verbose_proxy: {"status": "started", "pid": 1234}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+            installed_config = config_path.read_text(encoding="utf-8")
+            installed_hooks = paths.hooks_path.read_text(encoding="utf-8")
+            old_settings = manager.read_settings(paths)
+            new_settings = manager.ProxySettings(**{**old_settings.__dict__, "port": manager.DEFAULT_PORT + 1})
+            manager.write_settings(paths, new_settings, bump_revision=True)
+            set_provider_base_url(config_path, "acme", new_settings.base_url)
+            updated_config = config_path.read_text(encoding="utf-8")
+
+            uninstall_args = argparse.Namespace(
+                codex_home=str(codex_home),
+                force=False,
+                keep_state=False,
+                defer_stop=True,
+            )
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(command_uninstall(uninstall_args), 4)
+            result = json.loads(output.getvalue())
+        finally:
+            if previous_env is None:
+                os.environ.pop("ACME_API_KEY", None)
+            else:
+                os.environ["ACME_API_KEY"] = previous_env
+            manager.start_background = original_start_background
+
+        self.assertNotEqual(installed_config, updated_config)
+        self.assertEqual(result["status"], "confirmation_required")
+        self.assertEqual(result["startup_hook"]["status"], "unchanged")
+        self.assertEqual(config_path.read_text(encoding="utf-8"), updated_config)
+        self.assertEqual(paths.hooks_path.read_text(encoding="utf-8"), installed_hooks)
+        self.assertTrue(paths.app_home.exists())
+        self.assertNotIn("provider-secret", output.getvalue())
+        self.assertNotIn("chatgpt-token", output.getvalue())
 
     def test_deferred_uninstall_warns_chatgpt_auth_direct_upstream_risk_after_confirmation(self) -> None:
         codex_home = self.temp_dir / ".codex"

@@ -169,8 +169,19 @@ def uninstall_needs_chatgpt_direct_confirmation(
     manifest: dict[str, Any] | None,
     settings: Any | None,
     force: bool,
+    current_settings: Any | None = None,
 ) -> dict[str, Any] | None:
-    warning = direct_upstream_auth_risk(paths, settings)
+    candidates = []
+    seen = set()
+    for candidate in (settings, current_settings):
+        if candidate is None:
+            continue
+        key = (candidate.base_url, candidate.upstream_base)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(candidate)
+    warning = next((direct_upstream_auth_risk(paths, candidate) for candidate in candidates), None)
     if not warning or not manifest or not settings:
         return None
 
@@ -184,9 +195,10 @@ def uninstall_needs_chatgpt_direct_confirmation(
     config = load_toml_config(config_path)
     config_provider = str(manifest.get("provider") or settings.provider)
     config_base_url = provider_base_url(config, config_provider)
-    if config_base_url == settings.base_url:
-        return warning
-    if force and config_base_url != settings.upstream_base:
+    matching_settings = next((candidate for candidate in candidates if config_base_url == candidate.base_url), None)
+    if matching_settings:
+        return direct_upstream_auth_risk(paths, matching_settings)
+    if force and not any(config_base_url == candidate.upstream_base for candidate in candidates):
         return warning
     return None
 

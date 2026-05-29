@@ -10,7 +10,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,7 @@ from .runtime_status import (
     settings_restart_pending,
 )
 from .status_rules import LEGACY_SERVICE_TIER_POLICY, effective_service_tier_policy
-from .storage import append_private_text, ensure_private_dir, open_private_append, read_json, write_private_text
+from .storage import append_private_text, ensure_private_dir, open_private_append, read_json, sha256_file, write_json, write_private_text
 
 
 @dataclass(frozen=True)
@@ -219,11 +219,21 @@ def persist_proxy_port(
         config_provider = provider_name_for_base_url(config, old_settings.base_url)
         if config_provider:
             set_provider_base_url(paths.config_path, config_provider, new_settings.base_url)
+            sync_install_manifest_settings(paths, config_provider, new_settings)
         return read_settings(paths)
     except Exception:
         restore_bytes(paths.config_path, config_bytes_before)
         restore_bytes(paths.settings_path, settings_bytes_before)
         raise
+
+
+def sync_install_manifest_settings(paths: ProxyPaths, provider: str, settings: ProxySettings) -> None:
+    manifest = read_json(paths.manifest_path)
+    if not manifest or manifest.get("provider") != provider:
+        return
+    manifest["settings"] = {**asdict(settings), "base_url": settings.base_url}
+    manifest["config_hash_after"] = sha256_file(paths.config_path)
+    write_json(paths.manifest_path, manifest)
 
 
 def proxy_health(settings: ProxySettings, timeout: float = 0.5) -> dict[str, Any] | None:

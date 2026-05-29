@@ -939,6 +939,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("button.setAttribute('aria-busy', 'true');", html)
         self.assertIn("button.removeAttribute('aria-busy');", html)
         self.assertIn("return { ok, error: caughtError, renderedSnapshot, data: responseData };", html)
+        self.assertIn("if (!options.suppressGlobalError) {", html)
+        self.assertNotIn("if (!renderedSnapshot && !options.suppressGlobalError)", html)
         self.assertIn("startActionProgress(button, action, options)", html)
         self.assertIn("!options.suppressGlobalProgress", html)
         self.assertIn("cursor: not-allowed;", html)

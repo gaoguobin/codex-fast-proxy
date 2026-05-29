@@ -4867,7 +4867,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }} catch (error) {{
         caughtError = error;
         renderedSnapshot = Boolean(error && error.renderedSnapshot);
-        if (!renderedSnapshot && !options.suppressGlobalError) {{
+        if (!options.suppressGlobalError) {{
           $('state').textContent = t('value.needsAttention', '需要处理');
           $('message').textContent = (error && error.message) ? error.message : String(error);
         }}
