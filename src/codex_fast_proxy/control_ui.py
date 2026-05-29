@@ -330,6 +330,11 @@ class ControlHandler(BaseHTTPRequestHandler):
         else:
             raise ValueError("Unknown action.")
 
+        if not shutdown_control_ui and not control_ui_restart_scheduled(result) and control_ui_source_changed():
+            result["control_ui_reload_required"] = True
+            result["control_ui"] = self.restart_current_control_ui()
+            shutdown_control_ui = result["control_ui"].get("status") == "scheduled"
+
         snapshot = result.get("final_status") if isinstance(result.get("final_status"), dict) else collect_snapshot(self.server)
         if isinstance(result.get("user_state"), dict):
             snapshot["user_state"] = result["user_state"]
@@ -816,6 +821,15 @@ def compute_control_ui_revision() -> str:
 
 
 CONTROL_UI_REVISION = compute_control_ui_revision()
+
+
+def control_ui_source_changed() -> bool:
+    return compute_control_ui_revision() != CONTROL_UI_REVISION
+
+
+def control_ui_restart_scheduled(result: dict[str, Any]) -> bool:
+    control_ui = result.get("control_ui")
+    return isinstance(control_ui, dict) and control_ui.get("status") == "scheduled"
 
 
 def control_ui_identity(codex_home: str | None, provider: str | None) -> dict[str, str | None]:

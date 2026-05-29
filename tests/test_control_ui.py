@@ -1486,6 +1486,36 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(response["action"]["control_ui"]["pid"], 4321)
         self.assertTrue(response["action"]["control_ui"]["wait_for_disconnect"])
 
+    def test_update_control_action_restarts_when_source_changes_after_action(self) -> None:
+        handler = object.__new__(ControlHandler)
+        handler.server = mock.Mock(
+            codex_home=str(self.codex_home),
+            provider=None,
+            server_address=("127.0.0.1", 8786),
+        )
+        handler.read_body_json = mock.Mock(return_value={})
+
+        with (
+            mock.patch("codex_fast_proxy.actions.run_update", return_value={
+                "status": "updated",
+                "final_status": {"needs_restart": False},
+                "user_state": {"title": "更新完成"},
+            }),
+            mock.patch("codex_fast_proxy.control_ui.control_ui_source_changed", return_value=True),
+            mock.patch.object(handler, "restart_current_control_ui", return_value={
+                "status": "scheduled",
+                "url": "http://127.0.0.1:8786/",
+                "same_port": True,
+                "pid": 4321,
+                "wait_for_disconnect": True,
+            }),
+        ):
+            response = handler.run_action("update")
+
+        self.assertTrue(response["shutdown_control_ui"])
+        self.assertTrue(response["action"]["control_ui_reload_required"])
+        self.assertEqual(response["action"]["control_ui"]["url"], "http://127.0.0.1:8786/")
+
     def test_post_action_exception_returns_visible_error_snapshot(self) -> None:
         handler = object.__new__(ControlHandler)
         handler.path = "/api/actions/uninstall"
