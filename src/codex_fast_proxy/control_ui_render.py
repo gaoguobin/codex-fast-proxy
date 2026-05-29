@@ -4020,6 +4020,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       if (dangerZone) dangerZone.hidden = userState.code !== 'confirmation_required';
       const uninstall = $('uninstall');
       if (uninstall) uninstall.hidden = userState.code === 'confirmation_required';
+      const finishCleanup = $('finishCleanup');
+      if (finishCleanup) finishCleanup.hidden = userState.code !== 'cleanup_pending';
       const saveSpeed = $('saveSpeed');
       if (saveSpeed) saveSpeed.disabled = !snapshot.base_url;
     }}

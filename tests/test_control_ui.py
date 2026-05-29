@@ -1031,6 +1031,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("正在保存并验证...", html)
         self.assertIn("resetControls(userState, snapshot);", html)
         self.assertIn("resetSummary(snapshot);", html)
+        self.assertIn("finishCleanup.hidden = userState.code !== 'cleanup_pending'", html)
         self.assertIn("if (!renderedSnapshot) button.textContent = oldText;", html)
         self.assertNotIn("button.textContent = oldText;", html.replace("if (!renderedSnapshot) button.textContent = oldText;", ""))
         self.assertIn('value="https://api.acme.test/v1"', html)
