@@ -82,6 +82,8 @@ for _ in range(80):
         time.sleep(0.1)
 """
 DELAYED_INSTALL_CLEANUP_SCRIPT = """
+import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -114,6 +116,68 @@ def remove_skill_link(path, target):
         return
 
 
+def stop_control_ui_processes(codex_home):
+    if sys.platform == "win32":
+        script = r'''
+$CodexHome = [System.IO.Path]::GetFullPath($args[0]).TrimEnd('\\').ToLowerInvariant()
+$SelfPid = [int]$args[1]
+Get-CimInstance Win32_Process | Where-Object {
+    if (-not $_.CommandLine) { return $false }
+    $Command = $_.CommandLine.ToLowerInvariant()
+    $_.ProcessId -ne $SelfPid -and
+        $Command.Contains('-m codex_fast_proxy ui') -and
+        $Command.Contains('--codex-home') -and
+        $Command.Contains($CodexHome)
+} | ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
+'''
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", script, str(codex_home), str(os.getpid())],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
+        except OSError:
+            return
+        return
+
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid=,args="],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+
+    home = str(codex_home)
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        command = parts[1]
+        if pid == os.getpid():
+            continue
+        if "-m codex_fast_proxy ui" not in command or "--codex-home" not in command or home not in command:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+
+
 delay = float(sys.argv[1])
 app_home = Path(sys.argv[2])
 repo_root = Path(sys.argv[3])
@@ -123,6 +187,7 @@ skill_link = Path(sys.argv[6])
 skill_target = Path(sys.argv[7])
 
 time.sleep(delay)
+stop_control_ui_processes(app_home.parent)
 remove_skill_link(skill_link, skill_target)
 subprocess.run(
     [sys.executable, "-m", "pip", "uninstall", "-y", package],
