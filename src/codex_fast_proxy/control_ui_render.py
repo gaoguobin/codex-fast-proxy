@@ -1435,13 +1435,13 @@ def render_overview_speed_panel(snapshot: dict[str, Any]) -> str:
           <p class="speed-hint" data-i18n="speed.inlineHint">快速会在请求未指定 service_tier 时使用 priority；标准保持原始请求。</p>
         </div>
         <form id="speedForm" class="speed-preference-form" aria-label="速度模式">
-          <fieldset>
-            <div class="segments compact-segments">
-              <label><input type="radio" name="speedMode" value="fast"{fast_checked}><span data-i18n="value.fast">快速</span></label>
-              <label><input type="radio" name="speedMode" value="standard"{standard_checked}><span data-i18n="value.standard">标准</span></label>
+          <fieldset class="speed-mode-fieldset">
+            <div class="speed-mode-segments" role="radiogroup" aria-label="速度模式">
+              <label class="speed-mode-option"><input type="radio" name="speedMode" value="fast"{fast_checked}><span class="speed-mode-dot" aria-hidden="true"></span><span data-i18n="value.fast">快速</span></label>
+              <label class="speed-mode-option"><input type="radio" name="speedMode" value="standard"{standard_checked}><span class="speed-mode-dot" aria-hidden="true"></span><span data-i18n="value.standard">标准</span></label>
             </div>
           </fieldset>
-          <button id="saveSpeed" class="secondary" type="submit" data-i18n="button.saveSpeed">保存</button>
+          <button id="saveSpeed" class="secondary speed-save-button" type="submit" data-i18n="button.saveSpeed">保存</button>
         </form>
       </section>
 """
@@ -2823,11 +2823,85 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       align-items: center;
       display: flex;
       flex: 0 0 auto;
-      gap: 8px;
+      gap: 10px;
     }}
-    .speed-preference-form button {{
-      min-height: 32px;
-      padding: 6px 10px;
+    .speed-mode-fieldset {{
+      min-width: 0;
+    }}
+    .speed-mode-segments {{
+      background: var(--control-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: inline-grid;
+      grid-template-columns: repeat(2, minmax(92px, 1fr));
+      min-height: 38px;
+      overflow: hidden;
+    }}
+    .speed-mode-option {{
+      align-items: center;
+      color: var(--muted-strong);
+      cursor: pointer;
+      display: inline-flex;
+      font-size: 14px;
+      gap: 8px;
+      justify-content: center;
+      min-height: 38px;
+      min-width: 0;
+      padding: 8px 13px;
+      position: relative;
+      transition: background .16s ease, color .16s ease;
+      white-space: nowrap;
+    }}
+    .speed-mode-option + .speed-mode-option {{
+      border-left: 1px solid var(--border);
+    }}
+    .speed-mode-option:hover {{
+      background: var(--surface-hover);
+      color: var(--text);
+    }}
+    .speed-mode-option:has(input:checked) {{
+      background: var(--green-soft);
+      color: var(--green-text);
+    }}
+    .speed-mode-option:has(input:focus-visible) {{
+      outline: 2px solid var(--green);
+      outline-offset: -2px;
+    }}
+    .speed-mode-option input {{
+      border: 0;
+      height: 1px;
+      margin: 0;
+      min-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      padding: 0;
+      pointer-events: none;
+      position: absolute;
+      width: 1px;
+    }}
+    .speed-mode-dot {{
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      display: inline-flex;
+      flex: 0 0 auto;
+      height: 10px;
+      opacity: .72;
+      position: relative;
+      width: 10px;
+    }}
+    .speed-mode-option:has(input:checked) .speed-mode-dot::after {{
+      background: currentColor;
+      border-radius: 50%;
+      content: "";
+      height: 4px;
+      left: 2px;
+      position: absolute;
+      top: 2px;
+      width: 4px;
+    }}
+    .speed-save-button {{
+      min-height: 38px;
+      padding: 8px 14px;
     }}
     form {{
       display: grid;
@@ -2867,40 +2941,6 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       margin-bottom: 6px;
     }}
     .actions.compact {{ margin-top: 4px; }}
-    .segments {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }}
-    .segments label {{
-      align-items: center;
-      border: 1px solid var(--border-strong);
-      border-radius: var(--radius);
-      cursor: pointer;
-      display: flex;
-      flex: 1 1 140px;
-      gap: 9px;
-      min-height: 38px;
-      padding: 9px 11px;
-    }}
-    .segments label:has(input:checked) {{
-      background: var(--green-soft);
-      border-color: rgba(16, 163, 127, .36);
-      color: var(--green-text);
-    }}
-    .segments input {{
-      margin: 0;
-      padding: 0;
-    }}
-    .segments.compact-segments {{
-      gap: 6px;
-    }}
-    .segments.compact-segments label {{
-      flex: 1 1 76px;
-      font-size: 14px;
-      min-height: 34px;
-      padding: 7px 9px;
-    }}
     .subsection-title {{
       border-top: 1px solid var(--border);
       font-size: 15px;
@@ -3396,6 +3436,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         border-top: 1px solid var(--border);
       }}
       .overview-preference, .speed-preference-form, .provider-card {{ align-items: stretch; flex-direction: column; }}
+      .speed-mode-fieldset, .speed-mode-segments, .speed-save-button {{ width: 100%; }}
       .provider-panel-header {{ align-items: stretch; flex-direction: column; }}
       .provider-card-actions {{ justify-content: flex-start; }}
       .actions button {{ width: 100%; }}
