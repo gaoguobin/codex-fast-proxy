@@ -1271,6 +1271,7 @@ class ControlUiTests(unittest.TestCase):
             result = run_update(str(self.codex_home))
 
         self.assertNotEqual(result["user_state"]["code"], "restart_deferred_active")
+        self.assertTrue(result["control_ui_reload_required"])
 
     def test_update_action_reports_deferred_proxy_refresh_when_codex_turn_is_active(self) -> None:
         with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
@@ -1290,6 +1291,7 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertEqual(result["user_state"]["code"], "restart_deferred_active")
         self.assertEqual(result["user_state"]["title"], "更新完成，等待当前请求结束")
+        self.assertTrue(result["control_ui_reload_required"])
 
     def test_check_update_action_is_read_only_and_reports_local_changes(self) -> None:
         with mock.patch("codex_fast_proxy.manager.check_update", return_value={

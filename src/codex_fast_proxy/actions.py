@@ -190,6 +190,8 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
 
     final_status = result.get("final_status") if isinstance(result.get("final_status"), dict) else {}
     code_update = result.get("code_update") if isinstance(result.get("code_update"), dict) else {}
+    if code_update.get("status") == "updated":
+        result["control_ui_reload_required"] = True
     if result.get("status") == "already_current":
         result["user_state"] = state(
             "already_current",
@@ -205,7 +207,6 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
             "更新已完成，但当前 Codex 进程需要重启后才会使用新的代理状态。",
         )
     elif code_update.get("status") == "updated":
-        result["control_ui_reload_required"] = True
         result["user_state"] = state(
             "updated",
             "更新完成",
