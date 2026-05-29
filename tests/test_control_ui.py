@@ -1207,6 +1207,16 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("key 权限", message)
         self.assertNotIn("HTTP 404", message)
 
+    def test_enable_error_includes_specific_reason(self) -> None:
+        message = user_error_message(
+            "enable",
+            {},
+            "Existing proxy process 1234 is running with different or unhealthy settings.",
+        )
+
+        self.assertIn("启用没有完成", message)
+        self.assertIn("Existing proxy process 1234", message)
+
     def test_provider_errors_map_common_upstream_failures(self) -> None:
         cases = [
             ("Responses API side-path verification returned HTTP 401.", "接口密钥无效"),
@@ -1831,6 +1841,42 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(stored_auth["providers"]["acme"]["api_key"], "provider-secret")
         self.assertEqual(stored_auth["providers"]["acme"]["base_url"], "https://api.acme.test/v1")
         self.assertNotIn("provider-secret", result_text)
+
+    def test_first_run_enable_reuses_stopped_proxy_settings(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            service_tier_policy="auto",
+            upstream_api_key_file=True,
+        )
+        manager.write_settings(self.paths, settings)
+        manager.write_provider_auth_secret(self.paths, "acme", "provider-secret")
+
+        def fake_start(_paths: manager.ProxyPaths, new_settings: manager.ProxySettings, _verbose: bool) -> dict[str, object]:
+            self.assertEqual(new_settings.port, 18787)
+            self.assertEqual(new_settings.upstream_base, "https://api.acme.test/v1")
+            return {"status": "already_running", "pid": 1234, "healthy": True}
+
+        with (
+            mock.patch("codex_fast_proxy.manager.verify_upstream_responses", return_value={"status": "verified"}),
+            mock.patch("codex_fast_proxy.manager.start_background", side_effect=fake_start),
+            mock.patch("codex_fast_proxy.manager.install_startup_hook", return_value={"status": "installed"}),
+            mock.patch("codex_fast_proxy.manager.auto_select_proxy_port") as auto_select,
+        ):
+            auto_select.side_effect = AssertionError("stopped proxy settings should be reused")
+            result = run_first_run_enable(str(self.codex_home))
+
+        config = manager.load_toml_config(self.paths.config_path)
+        saved_settings = manager.read_settings(self.paths)
+
+        self.assertEqual(result["status"], "enabled")
+        self.assertEqual(result["install"]["port_selection"]["preserved_existing"], True)
+        self.assertEqual(saved_settings.port, 18787)
+        self.assertEqual(manager.provider_base_url(config, "acme"), "http://127.0.0.1:18787/v1")
 
     def test_first_run_enable_fails_before_config_change_when_provider_key_is_missing(self) -> None:
         with self.assertRaises(manager.ConfigError):

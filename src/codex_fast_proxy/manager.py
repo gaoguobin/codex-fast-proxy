@@ -602,16 +602,16 @@ def install_result(args: argparse.Namespace) -> dict[str, Any]:
     provider = choose_provider(config, args.provider)
     existing_settings_data = read_json(paths.settings_path)
     existing_settings = settings_from_dict(existing_settings_data) if existing_settings_data else None
+    reusable_settings = existing_settings if existing_settings and existing_settings.provider == provider else None
     existing_enabled = bool(
-        existing_settings
-        and existing_settings.provider == provider
-        and provider_base_url(config, provider) == existing_settings.base_url
+        reusable_settings
+        and provider_base_url(config, provider) == reusable_settings.base_url
     )
     service_tier_policy = args.service_tier_policy or (
-        existing_settings.service_tier_policy if existing_enabled and existing_settings else DEFAULT_SERVICE_TIER_POLICY
+        reusable_settings.service_tier_policy if reusable_settings else DEFAULT_SERVICE_TIER_POLICY
     )
-    current_auth_env = existing_settings.upstream_api_key_env if existing_enabled and existing_settings else None
-    current_auth_file = existing_settings.upstream_api_key_file if existing_enabled and existing_settings else False
+    current_auth_env = reusable_settings.upstream_api_key_env if reusable_settings else None
+    current_auth_file = reusable_settings.upstream_api_key_file if reusable_settings else False
     upstream_api_key_env, upstream_api_key_file, _auth_source_requested = resolve_upstream_auth_options(
         current_auth_env,
         current_auth_file,
@@ -620,15 +620,23 @@ def install_result(args: argparse.Namespace) -> dict[str, Any]:
     )
     arg_port = getattr(args, "port", None)
     requested_port = int(arg_port) if arg_port is not None else (
-        existing_settings.port if existing_enabled and existing_settings else DEFAULT_PORT
+        reusable_settings.port if reusable_settings else DEFAULT_PORT
     )
     settings = ProxySettings(
         provider=provider,
-        host=args.host,
+        host=reusable_settings.host if reusable_settings and args.host == DEFAULT_HOST else args.host,
         port=requested_port,
-        proxy_base=normalized_base_path(args.proxy_base),
+        proxy_base=(
+            reusable_settings.proxy_base
+            if reusable_settings and normalized_base_path(args.proxy_base) == DEFAULT_PROXY_BASE
+            else normalized_base_path(args.proxy_base)
+        ),
         upstream_base="",
-        service_tier=args.service_tier,
+        service_tier=(
+            reusable_settings.service_tier
+            if reusable_settings and args.service_tier == DEFAULT_SERVICE_TIER
+            else args.service_tier
+        ),
         service_tier_policy=service_tier_policy,
         upstream_api_key_env=upstream_api_key_env,
         upstream_api_key_file=upstream_api_key_file,
@@ -638,10 +646,10 @@ def install_result(args: argparse.Namespace) -> dict[str, Any]:
         "preferred": requested_port,
         "selected": requested_port,
         "auto_selected": False,
-        "preserved_existing": bool(existing_enabled),
+        "preserved_existing": bool(reusable_settings),
     }
     selected_port = requested_port
-    if not existing_enabled:
+    if not reusable_settings:
         selected_port, port_selection = auto_select_proxy_port(settings.host, requested_port)
     settings = replace(settings, port=selected_port, upstream_base=upstream_base)
 

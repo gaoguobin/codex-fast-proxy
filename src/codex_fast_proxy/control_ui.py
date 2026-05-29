@@ -569,7 +569,7 @@ def user_error_message(action: str, snapshot: dict[str, Any], detail: str | None
     if action == "set-speed-mode":
         return f"速度模式没有保存，当前设置保持不变。{suffix}"
     if action == "enable":
-        return "启用没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
+        return f"启用没有完成，当前设置保持不变。{suffix}" if suffix else "启用没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
     if action == "update":
         return "更新没有完成。请打开高级诊断，或让 Codex 检查原因。"
     if action == "check-update":
