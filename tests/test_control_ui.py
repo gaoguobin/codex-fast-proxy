@@ -2562,7 +2562,7 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertEqual(args.command, "ui")
         self.assertEqual(args.host, "127.0.0.1")
-        self.assertEqual(args.port, 8786)
+        self.assertIsNone(args.port)
 
     def test_ui_command_uses_control_ui_launcher(self) -> None:
         with mock.patch("codex_fast_proxy.control_ui.open_control_ui") as open_ui:
@@ -2572,7 +2572,7 @@ class ControlUiTests(unittest.TestCase):
             )
 
         self.assertEqual(exit_code, 0)
-        open_ui.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", 8786)
+        open_ui.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", None)
 
     def test_ui_command_returns_error_when_no_control_port_is_available(self) -> None:
         with mock.patch("codex_fast_proxy.control_ui.open_control_ui") as open_ui:
@@ -2586,9 +2586,8 @@ class ControlUiTests(unittest.TestCase):
     def test_open_control_ui_returns_external_browser_instruction_by_default(self) -> None:
         with (
             mock.patch("codex_fast_proxy.control_ui.find_existing_control_ui", return_value=None),
-            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
             mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value={"status": "started"}),
-            mock.patch("codex_fast_proxy.control_ui.wait_for_status", return_value=True),
+            mock.patch("codex_fast_proxy.control_ui.wait_for_control_ui_start", return_value="ready"),
         ):
             result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
 
@@ -2600,15 +2599,26 @@ class ControlUiTests(unittest.TestCase):
         self.assertFalse(result["reused_existing"])
         self.assertIn("approval", result["approval_reason"])
 
+    def test_open_control_ui_uses_cold_default_and_persists_selected_port(self) -> None:
+        with (
+            mock.patch("codex_fast_proxy.control_ui.find_existing_control_ui", return_value=None),
+            mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value={"status": "started"}) as start_server,
+            mock.patch("codex_fast_proxy.control_ui.wait_for_control_ui_start", return_value="ready"),
+        ):
+            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", None)
+
+        start_server.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", manager.DEFAULT_CONTROL_UI_PORT)
+        state = json.loads((self.paths.app_home / "control-ui.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["url"], f"http://127.0.0.1:{manager.DEFAULT_CONTROL_UI_PORT}/")
+        self.assertEqual(state["port"], manager.DEFAULT_CONTROL_UI_PORT)
+
     def test_open_control_ui_reuses_existing_server(self) -> None:
         with (
             mock.patch("codex_fast_proxy.control_ui.find_existing_control_ui", return_value=8789) as find_existing,
-            mock.patch("codex_fast_proxy.control_ui.find_available_port") as find_port,
             mock.patch("codex_fast_proxy.control_ui.start_background_server") as start_server,
         ):
             result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
 
-        find_port.assert_not_called()
         start_server.assert_not_called()
         find_existing.assert_called_once_with(
             "127.0.0.1",
@@ -2636,9 +2646,8 @@ class ControlUiTests(unittest.TestCase):
     def test_hook_control_ui_start_uses_short_best_effort_path(self) -> None:
         with (
             mock.patch("codex_fast_proxy.control_ui.find_existing_control_ui", return_value=None) as find_existing,
-            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
             mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value={"status": "started", "pid": 1234}),
-            mock.patch("codex_fast_proxy.control_ui.wait_for_status") as wait_for_status,
+            mock.patch("codex_fast_proxy.control_ui.wait_for_control_ui_start", return_value="timeout") as wait_for_start,
         ):
             result = ensure_control_ui_for_hook(str(self.codex_home), None, "127.0.0.1", 8786)
 
@@ -2649,7 +2658,7 @@ class ControlUiTests(unittest.TestCase):
             attempts=8,
             probe_timeout=0.05,
         )
-        wait_for_status.assert_not_called()
+        wait_for_start.assert_called_once()
         self.assertEqual(result["status"], "starting")
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertTrue(result["started_background_process"])
@@ -2663,12 +2672,12 @@ class ControlUiTests(unittest.TestCase):
     def test_open_control_ui_reports_when_ports_are_unavailable(self) -> None:
         with (
             mock.patch("codex_fast_proxy.control_ui.find_existing_control_ui", return_value=None),
-            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=None),
-            mock.patch("codex_fast_proxy.control_ui.start_background_server") as start_server,
+            mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value={"status": "started"}) as start_server,
+            mock.patch("codex_fast_proxy.control_ui.wait_for_control_ui_start", return_value="bind_failed"),
         ):
             result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
 
-        start_server.assert_not_called()
+        self.assertEqual(start_server.call_count, 100)
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["code"], "control_ui_port_unavailable")
         self.assertIsNone(result["url"])
@@ -2677,9 +2686,8 @@ class ControlUiTests(unittest.TestCase):
     def test_open_control_ui_reports_when_background_server_does_not_start(self) -> None:
         with (
             mock.patch("codex_fast_proxy.control_ui.find_existing_control_ui", return_value=None),
-            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
             mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value={"status": "started"}),
-            mock.patch("codex_fast_proxy.control_ui.wait_for_status", return_value=False),
+            mock.patch("codex_fast_proxy.control_ui.wait_for_control_ui_start", return_value="timeout"),
         ):
             result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
 

@@ -10,17 +10,17 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from .auth import detect_login_mode, read_secret_from_auth
 from .auth_store import provider_auth_secret
-from .config import load_toml_config, provider_name_for_base_url
+from .config import load_toml_config, provider_name_for_base_url, set_provider_base_url
 from .core import ConfigError
-from .defaults import INTERNAL_UPSTREAM_API_KEY_ENV, PORT_SEARCH_ATTEMPTS
+from .defaults import INTERNAL_UPSTREAM_API_KEY_ENV, PROXY_PORT_RANGES
 from .lifecycle import codex_activity, codex_has_active_turns
-from .models import ProxyPaths, ProxySettings, settings_from_dict
+from .models import ProxyPaths, ProxySettings, read_settings, settings_from_dict, write_settings
 from .ports import find_available_port
 from .proxy import RUNTIME_ID, compact_json
 from .runtime_status import (
@@ -60,6 +60,10 @@ class ConcurrentProxyAlreadyRunning(ConfigError):
     def __init__(self, health: dict[str, Any]) -> None:
         super().__init__("A matching codex-fast-proxy instance became healthy first.")
         self.health = health
+
+
+class ProxyBindFailure(ConfigError):
+    pass
 
 
 def current_process(paths: ProxyPaths) -> tuple[int | None, bool]:
@@ -138,16 +142,88 @@ def wait_for_proxy_port_release(settings: ProxySettings, timeout: float = 5.0, i
 
 
 def auto_select_proxy_port(host: str, preferred: int) -> tuple[int, dict[str, Any]]:
-    selected = find_available_port(host, preferred, attempts=PORT_SEARCH_ATTEMPTS)
+    selected = find_proxy_port(host, preferred)
     if selected is None:
         raise ConfigError(
-            f"没有找到可用的本地数据代理端口，请关闭占用 {host}:{preferred}-{preferred + PORT_SEARCH_ATTEMPTS - 1} 的旧进程后重试。"
+            "没有找到可用的本地数据代理端口，请关闭占用本地端口的旧进程后重试。"
         )
     return selected, {
         "preferred": preferred,
         "selected": selected,
         "auto_selected": selected != preferred,
     }
+
+
+def replacement_proxy_port(host: str, failed_ports: set[int]) -> int | None:
+    return find_proxy_port(host, None, reserved_ports=failed_ports)
+
+
+def find_proxy_port(host: str, preferred: int | None, *, reserved_ports: set[int] | None = None) -> int | None:
+    reserved = reserved_ports or set()
+    if preferred is not None and preferred not in reserved:
+        selected = find_available_port(host, preferred, attempts=1, reserved_ports=reserved)
+        if selected is not None:
+            return selected
+    for start, end in PROXY_PORT_RANGES:
+        selected = find_available_port(host, start, attempts=end - start + 1, reserved_ports=reserved)
+        if selected is not None:
+            return selected
+    return None
+
+
+def is_bind_failure_text(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "address already in use",
+            "address is already in use",
+            "permissionerror",
+            "winerror 10013",
+            "errno 98",
+            "errno 48",
+            "eaddrinuse",
+        )
+    )
+
+
+def read_text_since(path: Path, offset: int, *, limit: int = 12000) -> str:
+    if not path.exists():
+        return ""
+    with path.open("rb") as file:
+        file.seek(offset)
+        data = file.read()
+    if len(data) > limit:
+        data = data[-limit:]
+    return data.decode("utf-8", errors="replace")
+
+
+def restore_bytes(path: Path, content: bytes | None) -> None:
+    if content is None:
+        path.unlink(missing_ok=True)
+        return
+    path.write_bytes(content)
+
+
+def persist_proxy_port(
+    paths: ProxyPaths,
+    old_settings: ProxySettings,
+    new_settings: ProxySettings,
+    *,
+    config_bytes_before: bytes | None,
+    settings_bytes_before: bytes | None,
+) -> ProxySettings:
+    try:
+        write_settings(paths, new_settings, bump_revision=True)
+        config = load_toml_config(paths.config_path)
+        config_provider = provider_name_for_base_url(config, old_settings.base_url)
+        if config_provider:
+            set_provider_base_url(paths.config_path, config_provider, new_settings.base_url)
+        return read_settings(paths)
+    except Exception:
+        restore_bytes(paths.config_path, config_bytes_before)
+        restore_bytes(paths.settings_path, settings_bytes_before)
+        raise
 
 
 def proxy_health(settings: ProxySettings, timeout: float = 0.5) -> dict[str, Any] | None:
@@ -592,6 +668,63 @@ def launch_background(
     *,
     start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
 ) -> dict[str, Any]:
+    failed_ports: set[int] = set()
+    current_settings = settings
+    port_selection: dict[str, Any] | None = None
+    config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
+    settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
+
+    while True:
+        try:
+            result = _launch_background_once(
+                paths,
+                current_settings,
+                verbose_proxy,
+                start_policy=start_policy,
+            )
+        except ProxyBindFailure as exc:
+            failed_ports.add(current_settings.port)
+            selected = replacement_proxy_port(current_settings.host, failed_ports)
+            if selected is None:
+                restore_bytes(paths.config_path, config_bytes_before)
+                restore_bytes(paths.settings_path, settings_bytes_before)
+                raise ConfigError(
+                    "codex-fast-proxy could not bind any fallback local proxy port."
+                ) from exc
+            next_settings = replace(current_settings, port=selected)
+            current_settings = persist_proxy_port(
+                paths,
+                current_settings,
+                next_settings,
+                config_bytes_before=config_bytes_before,
+                settings_bytes_before=settings_bytes_before,
+            )
+            port_selection = {
+                "preferred": settings.port,
+                "selected": current_settings.port,
+                "auto_selected": True,
+                "reason": "bind_failed",
+                "failed_ports": sorted(failed_ports),
+            }
+            continue
+        except Exception:
+            if port_selection:
+                restore_bytes(paths.config_path, config_bytes_before)
+                restore_bytes(paths.settings_path, settings_bytes_before)
+            raise
+        if port_selection:
+            result["port_selection"] = port_selection
+        result["port"] = current_settings.port
+        return result
+
+
+def _launch_background_once(
+    paths: ProxyPaths,
+    settings: ProxySettings,
+    verbose_proxy: bool,
+    *,
+    start_policy: ProxyStartPolicy = INTERACTIVE_PROXY_START_POLICY,
+) -> dict[str, Any]:
     ensure_private_dir(paths.app_home)
     ensure_private_dir(paths.state_dir)
 
@@ -650,6 +783,7 @@ def launch_background(
         command.append("--verbose")
 
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    stderr_offset = paths.stderr_path.stat().st_size if paths.stderr_path.exists() else 0
     with open_private_append(paths.stdout_path, binary=True) as stdout, open_private_append(paths.stderr_path, binary=True) as stderr:
         process = subprocess.Popen(
             command,
@@ -704,7 +838,10 @@ def launch_background(
                 reason="health_check_deferred",
                 health_timeout=start_policy.health_timeout,
             )
-        error_text = paths.stderr_path.read_text(encoding="utf-8", errors="replace") if paths.stderr_path.exists() else ""
+        error_text = read_text_since(paths.stderr_path, stderr_offset)
+        if process.poll() is not None and is_bind_failure_text(error_text):
+            terminate_process(process.pid)
+            raise ProxyBindFailure(error_text.strip())
         detail = f" {error_text.strip()}" if error_text.strip() else ""
         terminate_process(process.pid)
         raise ConfigError(f"codex-fast-proxy did not become healthy.{detail}")

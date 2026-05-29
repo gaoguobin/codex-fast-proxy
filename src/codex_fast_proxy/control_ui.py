@@ -15,13 +15,20 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .control_ui_render import CONTROL_TOKEN_HEADER, render_page
-from .models import paths_for
-from .ports import find_available_port
+from .defaults import (
+    CONTROL_UI_PORT_RANGES,
+    DEFAULT_CONTROL_UI_PORT,
+    DEFAULT_PORT,
+    LEGACY_CONTROL_UI_PORT,
+    LEGACY_DEFAULT_PORT,
+)
+from .models import paths_for, settings_from_dict
+from .ports import iter_port_candidates
 from .skill_link import skill_namespace_path, skill_target_path
-from .storage import ensure_private_dir, open_private_append, write_private_text
+from .storage import ensure_private_dir, open_private_append, read_json, write_json, write_private_text
 
 
-RESERVED_PORTS = {8787}
+RESERVED_PORTS = {DEFAULT_PORT, LEGACY_DEFAULT_PORT}
 PORT_SEARCH_ATTEMPTS = 100
 CONTROL_UI_SERVER = "codex_fast_proxy_control_ui"
 
@@ -31,7 +38,8 @@ class ControlUiOpenPolicy:
     existing_attempts: int
     existing_probe_timeout: float
     port_search_attempts: int
-    ready_timeout: float | None
+    ready_timeout: float
+    return_starting_on_timeout: bool = False
 
 
 INTERACTIVE_CONTROL_UI_POLICY = ControlUiOpenPolicy(
@@ -44,7 +52,8 @@ AUTOSTART_CONTROL_UI_POLICY = ControlUiOpenPolicy(
     existing_attempts=8,
     existing_probe_timeout=0.05,
     port_search_attempts=8,
-    ready_timeout=None,
+    ready_timeout=0.5,
+    return_starting_on_timeout=True,
 )
 DELAYED_RMTREE_SCRIPT = """
 import shutil
@@ -411,7 +420,11 @@ def provider_key_payload(codex_home: str | None, provider: str | None) -> dict[s
 
 
 def serve_control_ui(codex_home: str | None, provider: str | None, host: str, port: int) -> int:
-    server = ControlServer((host, port), ControlHandler, codex_home=codex_home, provider=provider, token=secrets.token_urlsafe(24))
+    try:
+        server = ControlServer((host, port), ControlHandler, codex_home=codex_home, provider=provider, token=secrets.token_urlsafe(24))
+    except OSError as exc:
+        print(f"control-ui bind failed on {host}:{port}: {exc}", file=sys.stderr, flush=True)
+        return 2
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -479,20 +492,118 @@ def user_error_message(action: str, snapshot: dict[str, Any], detail: str | None
     return "操作没有完成，当前设置保持不变。请打开高级诊断，或让 Codex 检查原因。"
 
 
+def control_ui_state_path(codex_home: str | None) -> Path:
+    return paths_for(codex_home).app_home / "control-ui.json"
+
+
+def current_proxy_port(codex_home: str | None) -> int | None:
+    settings_data = read_json(paths_for(codex_home).settings_path)
+    if not settings_data:
+        return None
+    try:
+        return settings_from_dict(settings_data).port
+    except Exception:
+        return None
+
+
+def default_control_ui_port(codex_home: str | None) -> int:
+    return LEGACY_CONTROL_UI_PORT if current_proxy_port(codex_home) == LEGACY_DEFAULT_PORT else DEFAULT_CONTROL_UI_PORT
+
+
+def saved_control_ui_port(codex_home: str | None, host: str) -> int | None:
+    state = read_json(control_ui_state_path(codex_home))
+    if not isinstance(state, dict) or state.get("host") != host:
+        return None
+    try:
+        return int(state["port"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def preferred_control_ui_port(codex_home: str | None, host: str, requested_port: int | None) -> int:
+    if requested_port is not None:
+        return requested_port
+    return saved_control_ui_port(codex_home, host) or default_control_ui_port(codex_home)
+
+
+def reserved_control_ui_ports(codex_home: str | None) -> set[int]:
+    reserved = set(RESERVED_PORTS)
+    proxy_port = current_proxy_port(codex_home)
+    if proxy_port is not None:
+        reserved.add(proxy_port)
+    return reserved
+
+
+def save_control_ui_port(codex_home: str | None, host: str, port: int) -> None:
+    path = control_ui_state_path(codex_home)
+    ensure_private_dir(path.parent)
+    write_json(path, {"host": host, "port": port, "updated_at": time.time()})
+
+
+def control_ui_bind_failed(start_result: dict[str, Any]) -> bool:
+    stderr = start_result.get("stderr")
+    offset = start_result.get("stderr_offset")
+    if not isinstance(stderr, str) or not isinstance(offset, int):
+        return False
+    text = read_text_since(Path(stderr), offset)
+    lowered = text.lower()
+    return any(
+        token in lowered
+        for token in (
+            "bind failed",
+            "address already in use",
+            "permissionerror",
+            "winerror 10013",
+            "errno 98",
+            "errno 48",
+        )
+    )
+
+
+def read_text_since(path: Path, offset: int, *, limit: int = 12000) -> str:
+    if not path.exists():
+        return ""
+    with path.open("rb") as file:
+        file.seek(offset)
+        data = file.read()
+    if len(data) > limit:
+        data = data[-limit:]
+    return data.decode("utf-8", errors="replace")
+
+
+def wait_for_control_ui_start(
+    host: str,
+    port: int,
+    start_result: dict[str, Any],
+    *,
+    timeout: float,
+    identity: dict[str, str | None],
+) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if probe_control_ui(host, port, timeout=0.2, fallback_status=True, identity=identity):
+            return "ready"
+        if control_ui_bind_failed(start_result):
+            return "bind_failed"
+        time.sleep(0.05)
+    return "timeout"
+
+
 def open_control_ui(
     codex_home: str | None,
     provider: str | None,
     host: str,
-    port: int,
+    port: int | None,
     *,
     reuse_existing: bool = True,
     policy: ControlUiOpenPolicy = INTERACTIVE_CONTROL_UI_POLICY,
 ) -> dict[str, Any]:
     identity = control_ui_identity(codex_home, provider)
+    preferred_port = preferred_control_ui_port(codex_home, host, port)
     existing_port = (
         find_existing_control_ui(
             host,
-            port,
+            preferred_port,
             identity=identity,
             attempts=policy.existing_attempts,
             probe_timeout=policy.existing_probe_timeout,
@@ -502,21 +613,51 @@ def open_control_ui(
     )
     if existing_port is not None:
         url = f"http://{host}:{existing_port}/"
+        save_control_ui_port(codex_home, host, existing_port)
         return ready_control_ui_result(url, started_background_process=False, reused_existing=True)
 
-    selected_port = find_available_port(host, port, attempts=policy.port_search_attempts, reserved_ports=RESERVED_PORTS)
-    if selected_port is None:
-        port_range = f"{host}:{port}-{port + policy.port_search_attempts - 1}"
-        return {
-            "status": "error",
-            "code": "control_ui_port_unavailable",
-            "url": None,
-            "error": f"没有找到可用的本地控制台端口，请关闭占用 {port_range} 的旧进程后重试。",
-            "open_instruction": None,
-        }
-    url = f"http://{host}:{selected_port}/"
-    start_result = start_background_server(codex_home, provider, host, selected_port)
-    if start_result.get("status") == "error":
+    failed_ports: list[int] = []
+    reserved_ports = reserved_control_ui_ports(codex_home)
+    candidates = iter_port_candidates(preferred_port, CONTROL_UI_PORT_RANGES, reserved_ports=reserved_ports)
+    for index, selected_port in enumerate(candidates):
+        if index >= policy.port_search_attempts:
+            break
+        url = f"http://{host}:{selected_port}/"
+        start_result = start_background_server(codex_home, provider, host, selected_port)
+        if start_result.get("status") == "error":
+            return {
+                "status": "error",
+                "code": "control_ui_start_failed",
+                "url": url,
+                "error": f"控制面板未能在 {url} 启动，请让 Codex 查看高级诊断后重试。",
+                "open_instruction": None,
+                "start": start_result,
+            }
+        start_state = wait_for_control_ui_start(
+            host,
+            selected_port,
+            start_result,
+            timeout=policy.ready_timeout,
+            identity=identity,
+        )
+        if start_state == "ready":
+            save_control_ui_port(codex_home, host, selected_port)
+            result = ready_control_ui_result(url, started_background_process=True, reused_existing=False)
+            if selected_port != preferred_port:
+                result["port_selection"] = {
+                    "preferred": preferred_port,
+                    "selected": selected_port,
+                    "auto_selected": True,
+                    "reason": "bind_failed",
+                    "failed_ports": failed_ports,
+                }
+            return result
+        if start_state == "bind_failed":
+            failed_ports.append(selected_port)
+            continue
+        if policy.return_starting_on_timeout:
+            save_control_ui_port(codex_home, host, selected_port)
+            return starting_control_ui_result(url, start_result)
         return {
             "status": "error",
             "code": "control_ui_start_failed",
@@ -525,22 +666,17 @@ def open_control_ui(
             "open_instruction": None,
             "start": start_result,
         }
-    if policy.ready_timeout is None:
-        return starting_control_ui_result(url, start_result)
-    if not wait_for_status(host, selected_port, timeout=policy.ready_timeout, identity=identity):
-        return {
-            "status": "error",
-            "code": "control_ui_start_failed",
-            "url": url,
-            "error": f"控制面板未能在 {url} 启动，请让 Codex 查看高级诊断后重试。",
-            "open_instruction": None,
-            "start": start_result,
-        }
 
-    return ready_control_ui_result(url, started_background_process=True, reused_existing=False)
+    return {
+        "status": "error",
+        "code": "control_ui_port_unavailable",
+        "url": None,
+        "error": "没有找到可用的本地控制台端口，请关闭占用本地端口的旧进程后重试。",
+        "open_instruction": None,
+    }
 
 
-def ensure_control_ui_for_hook(codex_home: str | None, provider: str | None, host: str, port: int) -> dict[str, Any]:
+def ensure_control_ui_for_hook(codex_home: str | None, provider: str | None, host: str, port: int | None) -> dict[str, Any]:
     return open_control_ui(
         codex_home,
         provider,
@@ -600,6 +736,7 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
     stdout_path, stderr_path, pid_path = control_ui_runtime_paths(codex_home)
     ensure_private_dir(stdout_path.parent.parent)
     ensure_private_dir(stdout_path.parent)
+    stderr_offset = stderr_path.stat().st_size if stderr_path.exists() else 0
     stdout = open_private_append(stdout_path, binary=True)
     stderr = open_private_append(stderr_path, binary=True)
     kwargs: dict[str, Any] = {
@@ -618,6 +755,7 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
             "error": str(exc),
             "stdout": str(stdout_path),
             "stderr": str(stderr_path),
+            "stderr_offset": stderr_offset,
         }
     finally:
         stdout.close()
@@ -628,6 +766,7 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
         "pid": process.pid,
         "stdout": str(stdout_path),
         "stderr": str(stderr_path),
+        "stderr_offset": stderr_offset,
     }
 
 

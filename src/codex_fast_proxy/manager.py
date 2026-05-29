@@ -58,6 +58,7 @@ from .core import (
     validate_upstream_base,
 )
 from .defaults import (
+    DEFAULT_CONTROL_UI_PORT,
     DEFAULT_HOST,
     DEFAULT_PORT,
     DEFAULT_PROXY_BASE,
@@ -207,6 +208,21 @@ def auto_select_proxy_port(host: str, preferred: int) -> tuple[int, dict[str, An
     return _call_runtime("auto_select_proxy_port", host, preferred, sync=("find_available_port",))
 
 
+def settings_after_start_result(paths: ProxyPaths, settings: ProxySettings, start_result: dict[str, Any] | None) -> ProxySettings:
+    if not start_result:
+        return settings
+    port = start_result.get("port")
+    if not isinstance(port, int) or port == settings.port:
+        return settings
+    try:
+        updated = read_settings(paths)
+    except ConfigError:
+        return replace(settings, port=port)
+    if updated.provider == settings.provider and updated.upstream_base == settings.upstream_base:
+        return updated
+    return replace(settings, port=port)
+
+
 def proxy_runtime_state(
     paths: ProxyPaths,
     settings: ProxySettings | None,
@@ -286,6 +302,7 @@ def launch_background(
             "os",
             "subprocess",
             "is_port_available",
+            "find_available_port",
             "current_process",
             "proxy_health",
             "already_running_result",
@@ -353,7 +370,7 @@ def autostart_control_ui(paths: ProxyPaths) -> dict[str, Any]:
 
     from .control_ui import ensure_control_ui_for_hook
 
-    return ensure_control_ui_for_hook(str(paths.codex_home), None, DEFAULT_HOST, 8786)
+    return ensure_control_ui_for_hook(str(paths.codex_home), None, DEFAULT_HOST, None)
 
 
 def resolve_upstream_base(
@@ -639,6 +656,9 @@ def install_result(args: argparse.Namespace) -> dict[str, Any]:
             write_provider_auth_entry(paths, provider, base_url=settings.upstream_base)
         write_settings(paths, settings)
         start_result = start_background(paths, settings, args.verbose_proxy)
+        settings = settings_after_start_result(paths, settings, start_result)
+        if start_result.get("port_selection"):
+            port_selection = start_result["port_selection"]
 
         set_provider_base_url(paths.config_path, provider, settings.base_url)
         if args.activate_provider or active_provider is None:
@@ -787,6 +807,7 @@ def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
                 start_result = already_running_result(paths, new_settings, _pid, health, runtime_matches=runtime_matches is not False)
         else:
             start_result = start_background(paths, new_settings, args.verbose_proxy)
+        new_settings = settings_after_start_result(paths, new_settings, start_result)
         set_provider_base_url(paths.config_path, config_provider, new_settings.base_url)
         hook_result = install_startup_hook(paths)
         config_hash_after = sha256_file(paths.config_path)
@@ -982,6 +1003,7 @@ def save_provider(
                 False,
                 reason="provider_saved",
             )
+            new_settings = settings_after_start_result(paths, new_settings, start_result)
         except Exception:
             if start_result and start_result.get("status") in {"started", "restarted"}:
                 stop_process(paths, force=True)
@@ -1125,6 +1147,7 @@ def switch_provider(
             False,
             reason="provider_switched",
         )
+        new_settings = settings_after_start_result(paths, new_settings, start_result)
     except Exception:
         if start_result and start_result.get("status") in {"started", "restarted"}:
             stop_process(paths, force=True)
@@ -1193,6 +1216,7 @@ def command_start(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     settings = read_settings(paths)
     result = start_background(paths, settings, args.verbose_proxy)
+    settings = settings_after_start_result(paths, settings, result)
     config = load_toml_config(paths.config_path)
     config_provider = provider_name_for_base_url(config, settings.base_url)
     hook_result = install_startup_hook(paths) if config_provider else {
@@ -1321,8 +1345,9 @@ def command_status(args: argparse.Namespace) -> int:
 def command_ui(args: argparse.Namespace) -> int:
     from .control_ui import open_control_ui, serve_control_ui
 
+    port = args.port if args.port is not None else DEFAULT_CONTROL_UI_PORT
     if args.foreground:
-        return serve_control_ui(args.codex_home, args.provider, args.host, args.port)
+        return serve_control_ui(args.codex_home, args.provider, args.host, port)
     result = open_control_ui(
         args.codex_home,
         args.provider,
@@ -1791,7 +1816,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_shared_options(ui)
     ui.add_argument("--provider")
     ui.add_argument("--host", default="127.0.0.1")
-    ui.add_argument("--port", type=int, default=8786)
+    ui.add_argument("--port", type=int)
     ui.add_argument("--foreground", action="store_true")
 
     doctor = subparsers.add_parser("doctor", help="Check Codex config and proxy environment.")

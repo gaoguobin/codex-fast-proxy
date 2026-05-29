@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 from . import __version__
 from .auth import resolve_env
+from .defaults import DEFAULT_PORT
 from .status_rules import EFFECTIVE_SERVICE_TIER_POLICIES, SERVICE_TIER_POLICIES
 from .storage import append_private_text, ensure_private_dir, write_private_text
 
@@ -634,7 +635,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Transparent local proxy that enables Codex Fast mode for compatible providers."
     )
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--provider")
     parser.add_argument("--settings-revision")
     parser.add_argument("--proxy-base", default="/v1")

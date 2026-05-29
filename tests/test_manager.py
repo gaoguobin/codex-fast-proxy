@@ -4205,6 +4205,84 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["pid"], 1234)
         self.assertEqual(launched, [1])
 
+    def test_launch_background_falls_back_and_persists_port_after_bind_failure(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(paths, settings)
+        launched_ports: list[int] = []
+
+        class FakeProcess:
+            def __init__(self, pid: int, exited: bool) -> None:
+                self.pid = pid
+                self.exited = exited
+
+            def poll(self) -> int | None:
+                return 1 if self.exited else None
+
+        original_is_port_available = manager.is_port_available
+        original_find_available_port = manager.find_available_port
+        original_proxy_health = manager.proxy_health
+        original_wait_for_proxy_health = manager.wait_for_proxy_health
+        original_popen = manager.subprocess.Popen
+        original_terminate_process = manager.terminate_process
+
+        def fake_find_available_port(_host, preferred, attempts=100, reserved_ports=()):
+            return manager.DEFAULT_PORT if preferred == manager.DEFAULT_PORT else None
+
+        def fake_popen(command, **kwargs):
+            port = int(command[command.index("--port") + 1])
+            launched_ports.append(port)
+            if port == 18787:
+                kwargs["stderr"].write(b"PermissionError: [WinError 10013] bind failed\n")
+                kwargs["stderr"].flush()
+                return FakeProcess(1111, True)
+            return FakeProcess(2222, False)
+
+        def fake_wait_for_proxy_health(launch_settings, process, **_kwargs):
+            if launch_settings.port == 18787:
+                raise ConfigError("codex-fast-proxy exited before becoming healthy.")
+            return {"ok": True, "pid": process.pid}
+
+        manager.is_port_available = lambda _host, _port: False
+        manager.find_available_port = fake_find_available_port
+        manager.proxy_health = lambda _settings: None
+        manager.wait_for_proxy_health = fake_wait_for_proxy_health
+        manager.subprocess.Popen = fake_popen
+        manager.terminate_process = lambda _pid: None
+        try:
+            result = manager.launch_background(paths, settings, verbose_proxy=False)
+        finally:
+            manager.is_port_available = original_is_port_available
+            manager.find_available_port = original_find_available_port
+            manager.proxy_health = original_proxy_health
+            manager.wait_for_proxy_health = original_wait_for_proxy_health
+            manager.subprocess.Popen = original_popen
+            manager.terminate_process = original_terminate_process
+
+        saved_settings = manager.read_settings(paths)
+        config = load_toml_config(paths.config_path)
+        self.assertEqual(launched_ports, [18787, manager.DEFAULT_PORT])
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["port"], manager.DEFAULT_PORT)
+        self.assertEqual(result["port_selection"]["failed_ports"], [18787])
+        self.assertEqual(saved_settings.port, manager.DEFAULT_PORT)
+        self.assertEqual(provider_base_url(config, "acme"), f"http://127.0.0.1:{manager.DEFAULT_PORT}/v1")
+
     def test_launch_background_treats_concurrent_winner_as_already_running(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)

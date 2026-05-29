@@ -23,3 +23,22 @@ def find_available_port(
                 continue
             return port
     return None
+
+
+def iter_port_candidates(
+    preferred: int | None,
+    ranges: Iterable[tuple[int, int]],
+    *,
+    reserved_ports: Iterable[int] = (),
+) -> Iterable[int]:
+    seen: set[int] = set()
+    reserved = set(reserved_ports)
+    if preferred is not None and preferred not in reserved:
+        seen.add(preferred)
+        yield preferred
+    for start, end in ranges:
+        for port in range(start, end + 1):
+            if port in seen or port in reserved:
+                continue
+            seen.add(port)
+            yield port
