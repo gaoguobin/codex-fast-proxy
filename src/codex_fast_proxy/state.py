@@ -72,7 +72,7 @@ def control_ui_flags(snapshot: dict[str, Any]) -> dict[str, bool]:
             and not terminal
         ),
         "manual_apply_available": (
-            bool(snapshot.get("settings_pending"))
+            bool(snapshot.get("needs_restart"))
             and codex_active_turn_count(snapshot) > 0
             and proxy_is_idle(snapshot)
         ),
@@ -267,6 +267,14 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
 
     if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
         view = ("working", "运行正常", "Codex 已准备好继续使用当前模型服务。", "uninstall", "停用并恢复")
+    elif snapshot.get("config_matches") and snapshot.get("needs_restart") and active_turn and proxy_is_idle(snapshot):
+        view = (
+            "restart_confirm_required",
+            "等待记录未结束",
+            "检测到未结束的 Codex turn 记录。确认当前没有请求后，可以立即应用新版代理。",
+            "refresh",
+            "刷新状态",
+        )
     elif snapshot.get("config_matches") and snapshot.get("needs_restart") and active_turn:
         view = (
             "restart_deferred_active",

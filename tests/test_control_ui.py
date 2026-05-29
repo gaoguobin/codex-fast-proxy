@@ -268,10 +268,45 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(snapshot["user_state"]["code"], "restart_deferred_active")
         self.assertEqual(snapshot["proxy_activity"]["active_streams"], 1)
 
+    def test_status_snapshot_requires_confirmation_for_idle_runtime_stale_turn(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        manager.set_provider_base_url(self.paths.config_path, "acme", settings.base_url)
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+
+        def runtime_probe(_paths, _settings):
+            return 9999, True, {
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.new.test/v1",
+                "service_tier": "priority",
+                "runtime_id": "old-runtime",
+                "activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            }, True, False, False
+
+        snapshot = collect_status(str(self.codex_home), runtime_probe=runtime_probe, apply_idle_pending=True)
+
+        self.assertTrue(snapshot["needs_restart"])
+        self.assertEqual(snapshot["user_state"]["code"], "restart_confirm_required")
+        self.assertTrue(snapshot["ui_flags"]["manual_apply_available"])
+
     def test_pending_restart_with_idle_proxy_offers_manual_apply(self) -> None:
         snapshot = {
             "base_url": "http://127.0.0.1:18787/v1",
             "settings_pending": True,
+            "needs_restart": True,
             "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
             "codex_activity": {"active_turns": 1, "idle": False},
             "providers": [],
@@ -295,6 +330,28 @@ class ControlUiTests(unittest.TestCase):
         }
         self.assertNotIn('id="applyPendingNow"', render_page(active_proxy_snapshot, "token"))
 
+    def test_runtime_stale_with_idle_proxy_offers_manual_apply(self) -> None:
+        snapshot = {
+            "base_url": "http://127.0.0.1:18787/v1",
+            "settings_pending": False,
+            "needs_restart": True,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            "codex_activity": {"active_turns": 1, "idle": False},
+            "providers": [],
+            "user_state": {
+                "code": "restart_confirm_required",
+                "title": "等待记录未结束",
+                "message": "检测到未结束的 Codex turn 记录。",
+                "primary_action": "refresh",
+                "primary_label": "刷新状态",
+            },
+        }
+
+        html = render_page(snapshot, "token")
+
+        self.assertIn('id="applyPendingNow"', html)
+        self.assertIn("等待记录未结束", html)
+
     def test_apply_pending_now_clears_stale_turn_and_restarts(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
@@ -311,6 +368,7 @@ class ControlUiTests(unittest.TestCase):
             "turn_id": "turn-1",
         })
         initial_snapshot = {
+            "needs_restart": True,
             "settings_pending": True,
             "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
             "codex_activity": {"active_turns": 1, "idle": False},
@@ -334,6 +392,45 @@ class ControlUiTests(unittest.TestCase):
         start.assert_called_once()
         self.assertEqual(json.loads(self.paths.turns_path.read_text(encoding="utf-8"))["active_turns"], {})
 
+    def test_apply_pending_now_handles_runtime_stale_without_settings_pending(self) -> None:
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.new.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(self.paths, settings)
+        record_codex_hook_event(self.paths, {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "session-1",
+            "turn_id": "turn-1",
+        })
+        initial_snapshot = {
+            "needs_restart": True,
+            "settings_pending": False,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            "codex_activity": {"active_turns": 1, "idle": False},
+        }
+        final_snapshot = {
+            "needs_restart": False,
+            "settings_pending": False,
+            "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": True},
+            "codex_activity": {"active_turns": 0, "idle": True},
+        }
+
+        with (
+            mock.patch("codex_fast_proxy.state.collect_status", side_effect=[initial_snapshot, final_snapshot]),
+            mock.patch("codex_fast_proxy.manager.start_background", return_value={"status": "restarted"}) as start,
+        ):
+            result = run_apply_pending_now(str(self.codex_home))
+
+        self.assertEqual(result["status"], "applied_pending_settings")
+        self.assertEqual(result["clear_result"]["cleared"], 1)
+        self.assertEqual(result["final_status"]["user_state"]["code"], "working")
+        start.assert_called_once()
+
     def test_apply_pending_now_refuses_when_proxy_is_active(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
@@ -350,6 +447,7 @@ class ControlUiTests(unittest.TestCase):
             "turn_id": "turn-1",
         })
         initial_snapshot = {
+            "needs_restart": True,
             "settings_pending": True,
             "proxy_activity": {"active_requests": 0, "active_streams": 0, "idle": False},
             "codex_activity": {"active_turns": 1, "idle": False},
@@ -1953,7 +2051,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["start_result"]["reason"], "provider_switched")
         self.assertEqual(calls, [("stop", True), ("launch", "other")])
 
-    def test_switch_provider_ignores_proxy_activity_without_active_codex_turn(self) -> None:
+    def test_switch_provider_defers_when_proxy_reports_active_work_without_turn(self) -> None:
         settings = manager.ProxySettings(
             provider="acme",
             host="127.0.0.1",
@@ -1999,10 +2097,11 @@ class ControlUiTests(unittest.TestCase):
 
         saved_settings = manager.read_settings(self.paths)
         self.assertEqual(result["status"], "provider_switched")
-        self.assertEqual(result["start_result"]["status"], "restarted")
+        self.assertEqual(result["start_result"]["status"], "deferred")
+        self.assertEqual(result["start_result"]["defer_reason"], "active_proxy_requests")
         self.assertEqual(saved_settings.provider, "other")
-        stop.assert_called_once()
-        launch.assert_called_once()
+        stop.assert_not_called()
+        launch.assert_not_called()
 
     def test_switch_provider_waits_for_all_active_codex_turns(self) -> None:
         settings = manager.ProxySettings(

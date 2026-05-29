@@ -37,7 +37,7 @@ def active_restart_deferred(result: dict[str, Any]) -> bool:
     return (
         isinstance(start_result, dict)
         and start_result.get("status") == "deferred"
-        and start_result.get("defer_reason") == "active_codex_turns"
+        and start_result.get("defer_reason") in {"active_codex_turns", "active_proxy_requests"}
     )
 
 
@@ -69,11 +69,11 @@ def run_apply_pending_now(codex_home: str | None) -> dict[str, Any]:
     from .state import collect_status, proxy_is_idle
 
     snapshot = collect_status(codex_home, apply_idle_pending=False)
-    if not snapshot.get("settings_pending"):
+    if not snapshot.get("needs_restart"):
         snapshot["user_state"] = state(
             "working",
             "无需应用",
-            "当前没有等待应用的新设置。",
+            "当前没有等待应用的新状态。",
             "refresh",
             "刷新状态",
         )

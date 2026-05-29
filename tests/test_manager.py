@@ -3975,6 +3975,42 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["reason"], "runtime_changed")
         self.assertEqual(calls, ["stop", "start"])
 
+    def test_start_defers_runtime_stale_when_proxy_reports_active_work(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+
+        with (
+            mock.patch("codex_fast_proxy.manager.current_process", return_value=(9999, True)),
+            mock.patch("codex_fast_proxy.manager.proxy_health", return_value={
+                "ok": True,
+                "pid": 9999,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+                "service_tier_policy": "auto",
+                "service_tier_effective_policy": "preserve",
+                "runtime_id": "old-runtime",
+                "activity": {"active_requests": 1, "active_streams": 0, "idle": False},
+            }),
+            mock.patch("codex_fast_proxy.manager.stop_process", side_effect=AssertionError("should not stop")),
+            mock.patch("codex_fast_proxy.manager.launch_background", side_effect=AssertionError("should not launch")),
+        ):
+            result = manager.start_background(paths, settings, verbose_proxy=False)
+
+        self.assertEqual(result["status"], "deferred")
+        self.assertEqual(result["reason"], "runtime_changed")
+        self.assertEqual(result["defer_reason"], "active_proxy_requests")
+        self.assertEqual(result["activity"]["active_requests"], 1)
+
     def test_start_restarts_when_running_settings_changed(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)

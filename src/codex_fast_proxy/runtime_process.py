@@ -282,8 +282,18 @@ def proxy_activity(health: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def runtime_has_active_work(paths: ProxyPaths, _health: dict[str, Any] | None) -> bool:
-    return codex_has_active_turns(paths)
+def active_proxy_work_count(activity: dict[str, Any]) -> int:
+    try:
+        return int(activity.get("active_requests") or 0) + int(activity.get("active_streams") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def runtime_has_active_work(paths: ProxyPaths, health: dict[str, Any] | None) -> bool:
+    if codex_has_active_turns(paths):
+        return True
+    activity = proxy_activity(health)
+    return active_proxy_work_count(activity) > 0 or activity.get("idle") is False
 
 
 def proxy_health_pid(health: dict[str, Any] | None) -> int | None:
@@ -362,10 +372,11 @@ def deferred_restart_result(
 ) -> dict[str, Any]:
     activity = proxy_activity(health)
     turn_activity = codex_activity(paths)
+    defer_reason = "active_codex_turns" if turn_activity["active_turns"] else "active_proxy_requests"
     return {
         "status": "deferred",
         "reason": reason,
-        "defer_reason": "active_codex_turns",
+        "defer_reason": defer_reason,
         "pid": pid,
         "needs_restart": True,
         "provider": settings.provider,

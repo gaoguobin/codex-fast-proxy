@@ -836,6 +836,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "zh": {
         "working": {"title": "运行正常", "message": "Codex 已准备好继续使用当前模型服务。"},
         "restart_required": {"title": "已启用，重启后接管", "message": "当前对话可以继续。Codex 重启后，新会话会走本地代理，并按速度模式处理请求。"},
+        "restart_confirm_required": {"title": "等待记录未结束", "message": "检测到未结束的 Codex turn 记录。确认当前没有请求后，可以立即应用新版代理。"},
         "restart_deferred_active": {"title": "已保存，等待当前请求结束", "message": "当前 Codex 请求仍在进行。新设置已保存，请求结束后控制面板会自动应用。"},
         "cleanup_pending": {"title": "已停用", "message": "Codex 已恢复到原模型服务。你可以重新启用，或完成清理并移除本地代理状态。"},
         "ready_to_enable": {"title": "准备启用", "message": "点击启用后，会自动准备当前模型服务路径，并提前准备 ChatGPT 账户登录兼容性。"},
@@ -855,6 +856,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "en": {
         "working": {"title": "Running normally", "message": "Codex is ready to keep using the current model service."},
         "restart_required": {"title": "Enabled after restart", "message": "You can continue this conversation. After restarting Codex, new sessions will use the local proxy and the selected speed mode."},
+        "restart_confirm_required": {"title": "Waiting record remains", "message": "An unfinished Codex turn record remains. Confirm there are no current requests, then apply the updated proxy."},
         "restart_deferred_active": {"title": "Saved, waiting for the current request", "message": "A Codex request is still running. The new settings are saved and will be applied automatically after it finishes."},
         "cleanup_pending": {"title": "Disabled", "message": "Codex was restored to the original model service. You can enable again or finish cleanup to remove local proxy state."},
         "ready_to_enable": {"title": "Ready to enable", "message": "Enabling will prepare the current model service route and ChatGPT account compatibility."},
@@ -874,6 +876,7 @@ UI_STATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "ja": {
         "working": {"title": "正常に動作中", "message": "Codex は現在のモデルサービスを引き続き使用できます。"},
         "restart_required": {"title": "再起動後に有効化", "message": "この会話は続行できます。Codex 再起動後、新しいセッションはローカルプロキシと選択した速度モードを使用します。"},
+        "restart_confirm_required": {"title": "待機記録が残っています", "message": "未完了の Codex turn 記録があります。現在のリクエストがないことを確認してから、新しいプロキシを適用してください。"},
         "restart_deferred_active": {"title": "保存済み、現在のリクエスト待ち", "message": "Codex リクエストがまだ進行中です。新しい設定は保存され、完了後に自動適用されます。"},
         "cleanup_pending": {"title": "無効化済み", "message": "Codex は元のモデルサービスに復元されました。再度有効化するか、クリーンアップを完了してローカルプロキシ状態を削除できます。"},
         "ready_to_enable": {"title": "有効化の準備完了", "message": "有効化すると、現在のモデルサービス経路と ChatGPT アカウント互換性を準備します。"},
@@ -1094,7 +1097,7 @@ def proxy_is_idle(snapshot: dict[str, Any]) -> bool:
 
 def manual_apply_available(snapshot: dict[str, Any]) -> bool:
     fallback = bool(
-        snapshot.get("settings_pending")
+        snapshot.get("needs_restart")
         and codex_active_turn_count(snapshot) > 0
         and proxy_is_idle(snapshot)
     )
@@ -4686,7 +4689,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const shouldShowManualApply = uiFlag(
         snapshot,
         'manual_apply_available',
-        Boolean(snapshot.settings_pending && activeCodexTurnCount(snapshot) > 0 && proxyLooksIdle(snapshot))
+        Boolean(snapshot.needs_restart && activeCodexTurnCount(snapshot) > 0 && proxyLooksIdle(snapshot))
       );
       return hasRuntimeControls !== shouldShowRuntimeControls ||
         hasCodexConfigPanel !== shouldShowCodexConfigPanel ||
