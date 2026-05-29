@@ -8,7 +8,7 @@ Use these instructions when an engineer asks Codex to install or enable Codex Mo
 Paste this into Codex:
 
 ```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
+Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/codex/control-ui-main-refactor/.codex/INSTALL.md
 ```
 
 ## What this installs
@@ -46,7 +46,7 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 $repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
 $skillsRoot = Join-Path (Join-Path $HOME '.agents') 'skills'
 $skillNamespace = Join-Path $skillsRoot 'codex-fast-proxy'
-$installRef = 'main'
+$installRef = 'codex/control-ui-main-refactor'
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw 'git is required before installing codex-fast-proxy.'
@@ -80,7 +80,7 @@ fi
 
 repo_root="$HOME/.codex/codex-fast-proxy"
 skill_namespace="$HOME/.agents/skills/codex-fast-proxy"
-install_ref="main"
+install_ref="codex/control-ui-main-refactor"
 
 if [ -e "$repo_root" ]; then
   echo "codex-fast-proxy is already installed. Follow UPDATE.md instead." >&2
@@ -220,4 +220,4 @@ autostarts may emit a short non-secret hook context summary.
 
 If the repository already exists, fetch and follow:
 
-- `https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md`
+- `https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/codex/control-ui-main-refactor/.codex/UPDATE.md`
