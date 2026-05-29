@@ -121,12 +121,14 @@ def stop_control_ui_processes(codex_home):
         script = r'''
 $CodexHome = [System.IO.Path]::GetFullPath($args[0]).TrimEnd('\\').ToLowerInvariant()
 $SelfPid = [int]$args[1]
+$ModuleNeedle = ('-m ' + 'codex_fast_proxy ' + 'ui')
+$CodexHomeNeedle = ('--' + 'codex-home')
 Get-CimInstance Win32_Process | Where-Object {
     if (-not $_.CommandLine) { return $false }
     $Command = $_.CommandLine.ToLowerInvariant()
     $_.ProcessId -ne $SelfPid -and
-        $Command.Contains('-m codex_fast_proxy ui') -and
-        $Command.Contains('--codex-home') -and
+        $Command.Contains($ModuleNeedle) -and
+        $Command.Contains($CodexHomeNeedle) -and
         $Command.Contains($CodexHome)
 } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
@@ -141,7 +143,7 @@ Get-CimInstance Win32_Process | Where-Object {
                 check=False,
                 timeout=10,
             )
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             return
         return
 
