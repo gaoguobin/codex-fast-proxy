@@ -29,9 +29,6 @@ EVENT_DETAIL_FIELDS = (
     "service_tier_effective_policy",
     "stream",
     "json_error",
-    "content_encoding",
-    "content_encoding_decoded",
-    "content_encoding_error",
     "response_content_type",
     "error_type",
 )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gzip
 import json
 import shutil
 import sys
@@ -22,7 +21,6 @@ from codex_fast_proxy.proxy import (  # noqa: E402
     FastProxyServer,
     FastProxyHandler,
     copy_request_headers,
-    decode_request_body,
     parse_args,
     response_output_delta,
     runtime_details,
@@ -44,9 +42,6 @@ class FakeHeaders:
 
     def items(self):
         return self.values.items()
-
-    def get(self, name: str, default: str | None = None) -> str | None:
-        return self.values.get(name, default)
 
 
 class FakeLineResponse:
@@ -181,35 +176,6 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(event["service_tier_before"], "<absent>")
         self.assertEqual(event["service_tier_after"], "<absent>")
 
-    def test_decodes_gzip_request_body_before_service_tier_patch(self) -> None:
-        payload = {"model": "gpt-5.4", "stream": True}
-        raw_body = json.dumps(payload).encode("utf-8")
-        body, event, drop_content_encoding = decode_request_body(
-            FakeHeaders({"Content-Encoding": "gzip"}),
-            gzip.compress(raw_body),
-        )
-
-        self.assertEqual(body, raw_body)
-        self.assertTrue(drop_content_encoding)
-        self.assertEqual(event["content_encoding"], "gzip")
-        self.assertTrue(event["content_encoding_decoded"])
-        self.assertIsNone(event["content_encoding_error"])
-
-        patched, patch_event = service_tier_patch("POST", "/v1/responses", body, "application/json", "priority")
-        self.assertEqual(json.loads(patched)["service_tier"], "priority")
-        self.assertTrue(patch_event["injected"])
-
-    def test_keeps_body_when_content_encoding_is_unknown(self) -> None:
-        body, event, drop_content_encoding = decode_request_body(
-            FakeHeaders({"Content-Encoding": "zstd"}),
-            b"encoded",
-        )
-
-        self.assertEqual(body, b"encoded")
-        self.assertFalse(drop_content_encoding)
-        self.assertEqual(event["content_encoding"], "zstd")
-        self.assertIn("unsupported_zstd", event["content_encoding_error"])
-
     def test_leaves_non_responses_paths_untouched(self) -> None:
         body = b'{"model":"gpt-5.4"}'
         patched, event = service_tier_patch("POST", "/v1/chat/completions", body, "application/json", "priority")
@@ -244,20 +210,18 @@ class ProxyPatchTests(unittest.TestCase):
                 "Authorization": "Bearer secret",
                 "Connection": "keep-alive",
                 "Content-Length": "1",
-                "Content-Encoding": "gzip",
                 "Host": "127.0.0.1:8787",
                 "Accept": "text/event-stream",
             }
         )
 
-        copied = copy_request_headers(headers, "www.packyapi.com", 42, drop_content_encoding=True)
+        copied = copy_request_headers(headers, "www.packyapi.com", 42)
 
         self.assertEqual(copied["Authorization"], "Bearer secret")
         self.assertEqual(copied["Accept"], "text/event-stream")
         self.assertEqual(copied["Host"], "www.packyapi.com")
         self.assertEqual(copied["Content-Length"], "42")
         self.assertNotIn("Connection", copied)
-        self.assertNotIn("Content-Encoding", copied)
 
     def test_upstream_auth_override_replaces_auth_and_drops_cookie(self) -> None:
         headers = FakeHeaders(
