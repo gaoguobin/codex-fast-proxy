@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import http.client
 import json
@@ -11,6 +12,7 @@ import sys
 import threading
 import time
 import uuid
+import zlib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -107,11 +109,16 @@ def copy_request_headers(
     upstream_host: str,
     body_length: int | None,
     upstream_api_key: str | None = None,
+    *,
+    drop_content_encoding: bool = False,
 ) -> dict[str, str]:
+    skipped_headers = HOP_BY_HOP_HEADERS | {"host", "content-length"}
+    if drop_content_encoding:
+        skipped_headers |= {"content-encoding"}
     copied = {
         name: value
         for name, value in headers.items()
-        if name.lower() not in HOP_BY_HOP_HEADERS | {"host", "content-length"}
+        if name.lower() not in skipped_headers
     }
     if upstream_api_key is not None:
         copied = {
@@ -124,6 +131,56 @@ def copy_request_headers(
     if body_length is not None:
         copied["Content-Length"] = str(body_length)
     return copied
+
+
+def decode_deflate(data: bytes) -> bytes:
+    try:
+        return zlib.decompress(data)
+    except zlib.error:
+        return zlib.decompress(data, -zlib.MAX_WBITS)
+
+
+def decode_brotli(data: bytes) -> bytes:
+    try:
+        import brotli  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ValueError("unsupported_br") from exc
+    return brotli.decompress(data)
+
+
+def decode_request_body(headers: Any, body: bytes) -> tuple[bytes, dict[str, Any], bool]:
+    event = {
+        "content_encoding": None,
+        "content_encoding_decoded": False,
+        "content_encoding_error": None,
+    }
+    encoding_header = headers.get("Content-Encoding") or headers.get("content-encoding") or ""
+    encodings = [item.strip().lower() for item in encoding_header.split(",") if item.strip()]
+    if not body or not encodings or encodings == ["identity"]:
+        return body, event, False
+
+    event["content_encoding"] = ",".join(encodings)
+    decoded = body
+    try:
+        for encoding in reversed(encodings):
+            if encoding in {"identity", ""}:
+                continue
+            if encoding in {"gzip", "x-gzip"}:
+                decoded = gzip.decompress(decoded)
+                continue
+            if encoding == "deflate":
+                decoded = decode_deflate(decoded)
+                continue
+            if encoding == "br":
+                decoded = decode_brotli(decoded)
+                continue
+            raise ValueError(f"unsupported_{encoding}")
+    except Exception as exc:
+        event["content_encoding_error"] = str(exc) or type(exc).__name__
+        return body, event, False
+
+    event["content_encoding_decoded"] = True
+    return decoded, event, True
 
 
 def copy_response_headers(headers: Iterable[tuple[str, str]], chunked: bool) -> list[tuple[str, str]]:
@@ -363,6 +420,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         self.server.request_started()
         try:
             request_body = self.read_request_body()
+            request_body, encoding_event, drop_content_encoding = decode_request_body(self.headers, request_body)
             request_body, patch_event = service_tier_patch(
                 self.command,
                 self.path,
@@ -371,6 +429,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
                 self.server.service_tier,
                 getattr(self.server, "service_tier_effective_policy", "inject_missing"),
             )
+            patch_event.update(encoding_event)
 
             upstream_path = upstream_request_path(
                 self.path,
@@ -382,6 +441,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
                 self.server.upstream_netloc,
                 len(request_body) if request_body or self.command.upper() in BODY_METHODS else None,
                 getattr(self.server, "upstream_api_key", None),
+                drop_content_encoding=drop_content_encoding,
             )
 
             connection = self.server.open_connection()
@@ -515,6 +575,9 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "service_tier_effective_policy": getattr(self.server, "service_tier_effective_policy", "inject_missing"),
             "stream": patch_event["stream"],
             "json_error": patch_event["json_error"],
+            "content_encoding": patch_event.get("content_encoding"),
+            "content_encoding_decoded": patch_event.get("content_encoding_decoded"),
+            "content_encoding_error": patch_event.get("content_encoding_error"),
             "response_content_type": response_content_type,
             "error_type": error_type,
         }
