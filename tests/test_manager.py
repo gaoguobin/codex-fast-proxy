@@ -179,6 +179,22 @@ class ManagerConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             manager.link_skill_namespace(repo_root, skills_root)
 
+    def test_link_skill_namespace_accepts_windows_junction_when_exists_is_false(self) -> None:
+        repo_root = self.temp_dir / "repo"
+        (repo_root / "skills").mkdir(parents=True)
+        skills_root = self.temp_dir / "skills-root"
+        link = manager.skill_namespace_path(skills_root)
+
+        with (
+            mock.patch("codex_fast_proxy.skill_link.path_is_junction", side_effect=lambda path: path == link),
+            mock.patch("codex_fast_proxy.skill_link.path_points_to", return_value=True),
+            mock.patch("codex_fast_proxy.skill_link.subprocess.run", side_effect=AssertionError("mklink called")),
+        ):
+            result = manager.link_skill_namespace(repo_root, skills_root)
+
+        self.assertEqual(result["status"], "already_linked")
+        self.assertEqual(result["path"], str(link))
+
     def test_unlink_skill_namespace_refuses_plain_directory(self) -> None:
         repo_root = self.temp_dir / "repo"
         target = repo_root / "skills"
@@ -194,6 +210,23 @@ class ManagerConfigTests(unittest.TestCase):
                 manager.unlink_skill_namespace(repo_root, skills_root)
         finally:
             skill_link.path_points_to = original_points_to
+
+    def test_unlink_skill_namespace_removes_windows_junction_when_exists_is_false(self) -> None:
+        repo_root = self.temp_dir / "repo"
+        (repo_root / "skills").mkdir(parents=True)
+        skills_root = self.temp_dir / "skills-root"
+        link = manager.skill_namespace_path(skills_root)
+
+        with (
+            mock.patch("codex_fast_proxy.skill_link.path_is_junction", side_effect=lambda path: path == link),
+            mock.patch("codex_fast_proxy.skill_link.path_points_to", return_value=True),
+            mock.patch.object(Path, "rmdir") as rmdir,
+        ):
+            result = manager.unlink_skill_namespace(repo_root, skills_root)
+
+        rmdir.assert_called_once_with()
+        self.assertEqual(result["status"], "unlinked")
+        self.assertEqual(result["link_type"], "junction")
 
     def test_benchmark_default_timeout_allows_long_codex_runs(self) -> None:
         args = manager.build_parser().parse_args(["benchmark"])

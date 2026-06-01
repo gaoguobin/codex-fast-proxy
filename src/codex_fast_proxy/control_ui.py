@@ -103,11 +103,39 @@ def remove_tree(path):
             time.sleep(0.1)
 
 
+def path_is_junction(path):
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
+def path_exists_or_link(path):
+    return path.exists() or path.is_symlink() or path_is_junction(path)
+
+
+def comparable_path(path):
+    try:
+        resolved = str(path.resolve(strict=True))
+    except OSError:
+        if not path_is_junction(path):
+            return None
+        try:
+            resolved = str(path.readlink())
+        except OSError:
+            return None
+    if resolved.startswith("\\\\?\\UNC\\"):
+        resolved = "\\\\" + resolved[8:]
+    elif resolved.startswith("\\\\?\\"):
+        resolved = resolved[4:]
+    return os.path.normcase(os.path.normpath(resolved))
+
+
 def remove_skill_link(path, target):
     try:
-        if not path.exists() and not path.is_symlink():
+        if not path_exists_or_link(path):
             return
-        if path.resolve(strict=True) != target.resolve(strict=True):
+        source_path = comparable_path(path)
+        target_path = comparable_path(target)
+        if source_path is None or source_path != target_path:
             return
         if path.is_symlink():
             path.unlink()

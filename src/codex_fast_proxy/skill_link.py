@@ -20,11 +20,31 @@ def skill_target_path(repo_root: str | Path) -> Path:
     return Path(repo_root).expanduser().resolve() / "skills"
 
 
-def path_points_to(path: Path, target: Path) -> bool:
+def comparable_path(path: Path) -> str | None:
     try:
-        return path.resolve(strict=True) == target.resolve(strict=True)
+        resolved = str(path.resolve(strict=True))
     except OSError:
-        return False
+        if not is_windows_platform() or not path_is_junction(path):
+            return None
+        try:
+            resolved = str(path.readlink())
+        except OSError:
+            return None
+    if resolved.startswith("\\\\?\\UNC\\"):
+        resolved = "\\\\" + resolved[8:]
+    elif resolved.startswith("\\\\?\\"):
+        resolved = resolved[4:]
+    return os.path.normcase(os.path.normpath(resolved))
+
+
+def path_points_to(path: Path, target: Path) -> bool:
+    source_path = comparable_path(path)
+    target_path = comparable_path(target)
+    return source_path is not None and source_path == target_path
+
+
+def path_exists_or_link(path: Path) -> bool:
+    return path.exists() or path.is_symlink() or path_is_junction(path)
 
 
 def is_windows_platform() -> bool:
@@ -56,7 +76,7 @@ def link_skill_namespace(repo_root: str | Path, skills_root: str | Path | None =
     link = skill_namespace_path(skills_root)
     if not target.is_dir():
         raise ConfigError(f"Skill target does not exist: {target}")
-    if link.exists() or link.is_symlink():
+    if path_exists_or_link(link):
         if path_points_to(link, target):
             return {"status": "already_linked", "path": str(link), "target": str(target)}
         raise ConfigError(f"Skill namespace already exists and does not point to {target}: {link}")
@@ -83,7 +103,7 @@ def link_skill_namespace(repo_root: str | Path, skills_root: str | Path | None =
 def unlink_skill_namespace(repo_root: str | Path, skills_root: str | Path | None = None) -> dict[str, str]:
     target = skill_target_path(repo_root)
     link = skill_namespace_path(skills_root)
-    if not link.exists() and not link.is_symlink():
+    if not path_exists_or_link(link):
         return {"status": "missing", "path": str(link), "target": str(target)}
     if not path_points_to(link, target):
         raise ConfigError(f"Refusing to remove skill namespace with unexpected target: {link}")
