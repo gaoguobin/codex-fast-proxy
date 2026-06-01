@@ -82,7 +82,7 @@ for _ in range(80):
     except OSError:
         time.sleep(0.1)
 """
-DELAYED_INSTALL_CLEANUP_SCRIPT = """
+DELAYED_INSTALL_CLEANUP_SCRIPT = r"""
 import os
 import signal
 import shutil

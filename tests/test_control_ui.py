@@ -33,6 +33,7 @@ from codex_fast_proxy.actions import (  # noqa: E402
 )
 from codex_fast_proxy.control_ui import (  # noqa: E402
     ControlHandler,
+    DELAYED_INSTALL_CLEANUP_SCRIPT,
     control_ui_identity,
     control_ui_identity_matches,
     control_ui_runtime_paths,
@@ -3032,6 +3033,9 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(command[3], str(self.paths.app_home))
         self.assertEqual(result["status"], "scheduled")
         self.assertEqual(result["pid"], 1234)
+
+    def test_delayed_install_cleanup_script_is_valid_python(self) -> None:
+        compile(DELAYED_INSTALL_CLEANUP_SCRIPT, "<delayed-install-cleanup>", "exec")
 
     def test_schedule_install_cleanup_unlinks_skill_uninstalls_package_and_delays_removal(self) -> None:
         cleanup = {
