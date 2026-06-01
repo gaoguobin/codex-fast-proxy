@@ -12,6 +12,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
+try:
+    import zstandard
+except ImportError:
+    zstandard = None
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -21,6 +26,7 @@ from codex_fast_proxy.proxy import (  # noqa: E402
     FastProxyServer,
     FastProxyHandler,
     copy_request_headers,
+    decode_request_body,
     parse_args,
     response_output_delta,
     runtime_details,
@@ -223,6 +229,21 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertEqual(copied["Content-Length"], "42")
         self.assertNotIn("Connection", copied)
 
+    def test_request_headers_can_omit_decoded_content_encoding(self) -> None:
+        headers = FakeHeaders(
+            {
+                "Content-Encoding": "zstd",
+                "Content-Type": "application/json",
+                "Content-Length": "10",
+            }
+        )
+
+        copied = copy_request_headers(headers, "api.example.test", 42, omit_headers=("content-encoding",))
+
+        self.assertEqual(copied["Content-Type"], "application/json")
+        self.assertEqual(copied["Content-Length"], "42")
+        self.assertNotIn("Content-Encoding", copied)
+
     def test_upstream_auth_override_replaces_auth_and_drops_cookie(self) -> None:
         headers = FakeHeaders(
             {
@@ -267,6 +288,63 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertTrue(payload["upstream_api_key_file"])
         self.assertEqual(payload["upstream_api_key_source"], "provider_auth_file")
         self.assertNotIn("CODEX_FAST_PROXY_UPSTREAM_API_KEY", json.dumps(payload))
+
+    @unittest.skipIf(zstandard is None, "zstandard is not installed")
+    def test_zstd_responses_body_is_forwarded_as_plain_json(self) -> None:
+        temp_root = ROOT / ".test_tmp"
+        temp_root.mkdir(exist_ok=True)
+        temp_dir = temp_root / f"zstd-decode-{uuid.uuid4().hex}"
+        temp_dir.mkdir()
+        try:
+            log_path = temp_dir / "fast_proxy.jsonl"
+            raw_body = json.dumps({"model": "gpt-test", "stream": True}).encode("utf-8")
+            compressed = zstandard.ZstdCompressor().compress(raw_body)
+            connection = FakeConnection()
+            handler = FastProxyHandler.__new__(FastProxyHandler)
+            handler.command = "POST"
+            handler.path = "/v1/responses"
+            handler.headers = {
+                "Content-Encoding": "zstd",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(compressed)),
+            }
+            handler.rfile = BytesIO(compressed)
+            handler.server = SimpleNamespace(
+                proxy_base="/v1",
+                upstream_base_path="/v1",
+                upstream_netloc="api.example.test",
+                service_tier="priority",
+                log_path=log_path,
+                log_lock=threading.Lock(),
+                verbose=False,
+                open_connection=lambda: connection,
+                request_started=lambda: None,
+                request_finished=lambda: None,
+            )
+            handler.forward_response = lambda _response, **_kwargs: None
+            handler.respond_bad_gateway = lambda: None
+
+            FastProxyHandler.proxy(handler)
+            event = json.loads(log_path.read_text(encoding="utf-8"))
+        finally:
+            shutil.rmtree(temp_dir)
+
+        forwarded = json.loads(connection.body.decode("utf-8"))
+        self.assertEqual(forwarded["service_tier"], "priority")
+        self.assertNotIn("Content-Encoding", connection.headers)
+        self.assertEqual(connection.headers["Content-Length"], str(len(connection.body)))
+        self.assertEqual(event["request_content_encoding"], "zstd")
+        self.assertTrue(event["request_body_decoded"])
+        self.assertIsNone(event["request_body_decode_error"])
+        self.assertTrue(event["service_tier_injected"])
+
+    def test_invalid_zstd_body_is_preserved_with_decode_error(self) -> None:
+        body, event = decode_request_body(b"not-zstd", "zstd")
+
+        self.assertEqual(body, b"not-zstd")
+        self.assertEqual(event["request_content_encoding"], "zstd")
+        self.assertFalse(event["request_body_decoded"])
+        self.assertIsNotNone(event["request_body_decode_error"])
 
     def test_sse_payload_bytes_are_forwarded_without_event_rewrite(self) -> None:
         response = FakeLineResponse([b"event: response.output_text.delta\n", b"data: {\"x\":1}\n", b"\n"])

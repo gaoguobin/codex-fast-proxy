@@ -13,6 +13,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit
@@ -22,6 +23,11 @@ from .auth import resolve_env
 from .defaults import DEFAULT_PORT
 from .status_rules import EFFECTIVE_SERVICE_TIER_POLICIES, SERVICE_TIER_POLICIES
 from .storage import append_private_text, ensure_private_dir, write_private_text
+
+try:
+    import zstandard
+except ImportError:  # pragma: no cover - exercised only by stale installs.
+    zstandard = None
 
 
 HOP_BY_HOP_HEADERS = {
@@ -107,11 +113,13 @@ def copy_request_headers(
     upstream_host: str,
     body_length: int | None,
     upstream_api_key: str | None = None,
+    omit_headers: Iterable[str] = (),
 ) -> dict[str, str]:
+    omitted = {name.lower() for name in omit_headers}
     copied = {
         name: value
         for name, value in headers.items()
-        if name.lower() not in HOP_BY_HOP_HEADERS | {"host", "content-length"}
+        if name.lower() not in HOP_BY_HOP_HEADERS | {"host", "content-length"} | omitted
     }
     if upstream_api_key is not None:
         copied = {
@@ -124,6 +132,44 @@ def copy_request_headers(
     if body_length is not None:
         copied["Content-Length"] = str(body_length)
     return copied
+
+
+def content_encodings(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(part.strip().lower() for part in value.split(",") if part.strip())
+
+
+def decompress_zstd(data: bytes) -> bytes:
+    if zstandard is None:
+        raise RuntimeError("zstandard_unavailable")
+    decompressor = zstandard.ZstdDecompressor()
+    with decompressor.stream_reader(BytesIO(data)) as reader:
+        return reader.read()
+
+
+def decode_request_body(body: bytes, content_encoding: str | None) -> tuple[bytes, dict[str, Any]]:
+    encodings = content_encodings(content_encoding)
+    event = {
+        "request_content_encoding": ",".join(encodings) if encodings else None,
+        "request_body_decoded": False,
+        "request_body_decode_error": None,
+    }
+
+    if not body or not encodings:
+        return body, event
+
+    if encodings != ("zstd",):
+        return body, event
+
+    try:
+        decoded = decompress_zstd(body)
+    except Exception as exc:
+        event["request_body_decode_error"] = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        return body, event
+
+    event["request_body_decoded"] = True
+    return decoded, event
 
 
 def copy_response_headers(headers: Iterable[tuple[str, str]], chunked: bool) -> list[tuple[str, str]]:
@@ -360,9 +406,15 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "stream": None,
             "json_error": None,
         }
+        decode_event = {
+            "request_content_encoding": None,
+            "request_body_decoded": False,
+            "request_body_decode_error": None,
+        }
         self.server.request_started()
         try:
             request_body = self.read_request_body()
+            request_body, decode_event = decode_request_body(request_body, self.headers.get("Content-Encoding"))
             request_body, patch_event = service_tier_patch(
                 self.command,
                 self.path,
@@ -382,6 +434,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
                 self.server.upstream_netloc,
                 len(request_body) if request_body or self.command.upper() in BODY_METHODS else None,
                 getattr(self.server, "upstream_api_key", None),
+                ("content-encoding",) if decode_event["request_body_decoded"] else (),
             )
 
             connection = self.server.open_connection()
@@ -400,7 +453,16 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             self.respond_bad_gateway()
         finally:
             self.server.request_finished()
-            self.write_event(request_id, started_at, status, patch_event, response_content_type, error_type, timing)
+            self.write_event(
+                request_id,
+                started_at,
+                status,
+                decode_event,
+                patch_event,
+                response_content_type,
+                error_type,
+                timing,
+            )
 
     def respond_health(self) -> None:
         payload = {
@@ -494,6 +556,7 @@ class FastProxyHandler(BaseHTTPRequestHandler):
         request_id: str,
         started_at: float,
         status: int,
+        decode_event: dict[str, Any],
         patch_event: dict[str, Any],
         response_content_type: str | None,
         error_type: str | None,
@@ -507,6 +570,9 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "status": status,
             "duration_ms": round((time.perf_counter() - started_at) * 1000, 1),
             **timing,
+            "request_content_encoding": decode_event["request_content_encoding"],
+            "request_body_decoded": decode_event["request_body_decoded"],
+            "request_body_decode_error": decode_event["request_body_decode_error"],
             "eligible": patch_event["eligible"],
             "service_tier_before": patch_event["service_tier_before"],
             "service_tier_after": patch_event["service_tier_after"],
