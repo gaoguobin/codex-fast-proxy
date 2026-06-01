@@ -41,6 +41,7 @@ CONTROL_UI_REVISION_FILES = (
     "runtime_process.py",
     "state.py",
 )
+CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
 
 
 @dataclass(frozen=True)
@@ -313,11 +314,20 @@ class ControlHandler(BaseHTTPRequestHandler):
         action = self.path.rsplit("/", 1)[-1]
         try:
             result = self.run_action(action)
+        except Exception as exc:
+            try:
+                self.respond_json(action_error_payload(action, self.server, str(exc)), status=400)
+            except CLIENT_DISCONNECT_ERRORS:
+                return
+            return
+
+        try:
             self.respond_json({"status": "ok", **result})
+        except CLIENT_DISCONNECT_ERRORS:
+            pass
+        finally:
             if result.get("shutdown_control_ui"):
                 self.shutdown_soon(float(result.get("shutdown_after_seconds") or 0.2))
-        except Exception as exc:
-            self.respond_json(action_error_payload(action, self.server, str(exc)), status=400)
 
     def run_action(self, action: str) -> dict[str, Any]:
         from .actions import (
@@ -929,24 +939,28 @@ def schedule_path_cleanup(path: Path, delay: float = 1.0) -> dict[str, Any]:
 
 
 def schedule_install_cleanup(cleanup: dict[str, Any], delay: float = 4.0) -> dict[str, Any]:
+    app_home = Path(str(cleanup["app_home"]))
     repo_root = Path(str(cleanup["repo_root"]))
+    log_path = app_home / "state" / "install_cleanup.stderr.log"
     command = [
         sys.executable,
         "-c",
         DELAYED_INSTALL_CLEANUP_SCRIPT,
         str(delay),
-        str(cleanup["app_home"]),
+        str(app_home),
         str(repo_root),
         str(cleanup["backup_dir"]),
         str(cleanup["package"]),
         str(skill_namespace_path()),
         str(skill_target_path(repo_root)),
     ]
+    ensure_private_dir(log_path.parent)
+    log_file = open_private_append(log_path, binary=True)
     kwargs: dict[str, Any] = {
         "cwd": str(Path.home()),
         "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
+        "stdout": log_file,
+        "stderr": log_file,
         "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
         "start_new_session": not is_windows_platform(),
     }
@@ -954,13 +968,16 @@ def schedule_install_cleanup(cleanup: dict[str, Any], delay: float = 4.0) -> dic
         process = subprocess.Popen(command, **kwargs)
     except OSError as exc:
         return {"status": "error", "mode": cleanup.get("mode"), "error": str(exc)}
+    finally:
+        log_file.close()
     return {
         "status": "scheduled",
         "mode": cleanup.get("mode"),
-        "app_home": str(cleanup["app_home"]),
+        "app_home": str(app_home),
         "repo_root": str(repo_root),
         "backup_dir": str(cleanup["backup_dir"]),
         "package": str(cleanup["package"]),
+        "log": str(log_path),
         "pid": process.pid,
         "delay_seconds": delay,
     }

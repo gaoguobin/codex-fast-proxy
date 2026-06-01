@@ -1563,6 +1563,22 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(payload["snapshot"]["user_state"]["title"], "需要处理")
         self.assertEqual(payload["snapshot"]["user_state"]["primary_action"], "diagnostics")
 
+    def test_post_action_still_shuts_down_when_client_disconnects(self) -> None:
+        handler = object.__new__(ControlHandler)
+        handler.path = "/api/actions/uninstall"
+        handler.server = mock.Mock(codex_home=str(self.codex_home), provider=None)
+        handler.write_allowed = mock.Mock(return_value=True)
+        handler.run_action = mock.Mock(return_value={
+            "shutdown_control_ui": True,
+            "shutdown_after_seconds": 2.5,
+        })
+        handler.respond_json = mock.Mock(side_effect=ConnectionAbortedError())
+        handler.shutdown_soon = mock.Mock()
+
+        handler.do_POST()
+
+        handler.shutdown_soon.assert_called_once_with(2.5)
+
     def test_favicon_request_returns_empty_success(self) -> None:
         handler = object.__new__(ControlHandler)
         handler.path = "/favicon.ico"
@@ -3046,9 +3062,13 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn(str(self.codex_home / "codex-fast-proxy"), command)
         self.assertIn(str(self.paths.backup_dir), command)
         self.assertIn("codex-fast-proxy", command)
+        self.assertNotEqual(popen.call_args.kwargs["stdout"], subprocess.DEVNULL)
+        self.assertIs(popen.call_args.kwargs["stdout"], popen.call_args.kwargs["stderr"])
+        self.assertTrue(popen.call_args.kwargs["stdout"].closed)
         self.assertEqual(result["status"], "scheduled")
         self.assertEqual(result["mode"], "deep_install_removal")
         self.assertEqual(result["delay_seconds"], 0.1)
+        self.assertEqual(result["log"], str(self.paths.app_home / "state" / "install_cleanup.stderr.log"))
 
     def test_schedule_control_ui_restart_reuses_current_port(self) -> None:
         with mock.patch("codex_fast_proxy.control_ui.subprocess.Popen") as popen:
